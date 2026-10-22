@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.3" office:mimetype="application/vnd.oasis.opendocument.text">
+  <office:styles><style:default-style style:family="paragraph"><style:text-properties fo:font-family="Arial" fo:font-size="14pt"/></style:default-style></office:styles>
+  <office:body><office:text><text:p>Fixture AB</text:p><text:p>Fabricated sample: ä ö å €</text:p><text:p>Unchanged neighboring text.</text:p></office:text></office:body>
+</office:document>
