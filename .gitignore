@@ -1,0 +1,30 @@
+# Build
+/target/
+
+# Binaries fetched at build time
+pdfium.dll
+*.dll
+
+# Secrets and personal settings
+.env
+.env.*
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Edited outputs
+*_edited.pdf
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local contributor configuration
+/AGENTS.md
+/CLAUDE.md
+/.claude/
+/TEST_REPORT.md
+/MANUAL_TEST.md
