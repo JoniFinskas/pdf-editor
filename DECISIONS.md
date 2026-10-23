@@ -511,3 +511,7 @@ valid after the source is edited/deleted. Annotations keep their dedicated tools
 ## Object-level redaction
 
 Remove whole intersecting native PDF objects instead of clipping text runs or rasterizing every page. This conservatively removes complete images and nested form groups when partially intersected. Rebuild the catalog and page tree with only page geometry, content and cleaned resources; discard document extras that can retain removed data. Reject marked content with properties rather than preserving unverified alternate text. Validate extraction and object bounds before drawing covers. Redaction is one atomic undo step; source files and session history are not erased.
+
+## Redaction resource validation
+
+Clean nested encoding, CID system, decoder parameter and transparency group dictionaries by semantic role, including indirect dictionaries without a Type entry. This prevents auxiliary references from retaining removed data. Reject retained PDF function resources and forms that inherit resources: unsupported function serialization can change colors, and binding a shared form to one parent's resources can change other pages. Both cases retain the original bytes and undo state on failure.
