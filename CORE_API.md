@@ -206,3 +206,12 @@ Paragraph fallback substitution stays inside the paragraph even when the ordinar
 
 ## Corpus validation executable
 The opt-in corpus-runner binary exercises existing core APIs inside Docker only. It adds no public library functions and suppresses parser diagnostics and panic text.
+
+## Form designer
+
+- `DesignFieldKind`: Text, Date, Checkbox, Radio with options, or Dropdown with options.
+- `NewFormField`: zero-based page, unique name, required flag, PDF-point rectangle and kind. Radio group rectangles are divided vertically between their options.
+- `Engine::designed_fields(document)`: bounded widget list with object IDs, revision, page, name, required flag, kind and rectangle.
+- `Engine::design_form(document, FormDesignEdit)`: atomically add a field, update a current widget's rectangle/name/required flag, or delete it. A radio child's name/required flag belongs to its group. Empty ancestors are pruned. History supports undo/redo; stale references and invalid rectangles fail without changes.
+
+Date fields are ordinary text widgets with a YYYY-MM-DD tooltip, without JavaScript or validation actions. Dropdowns and radio buttons use native PDF fields. The Forms window's Design tab provides a draggable rectangle, resize corner and exact PDF-point coordinate controls; Apply commits the draft. Refresh retrieves current fields after edits.

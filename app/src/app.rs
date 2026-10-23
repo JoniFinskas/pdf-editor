@@ -1072,9 +1072,20 @@ impl EditorApp {
                     self.replace.count = Some(count);
                 }
             }
-            Reply::FormFields(fields) => {
+            Reply::FormFields(fields, designed) => {
                 self.busy = self.busy.saturating_sub(1);
                 self.forms.fields = fields;
+                self.forms.designer.refresh(designed);
+                self.forms.designer.page_sizes = self
+                    .doc
+                    .as_ref()
+                    .map(|doc| {
+                        doc.pages
+                            .iter()
+                            .map(|page| (page.info.width, page.info.height))
+                            .collect()
+                    })
+                    .unwrap_or_default();
             }
             Reply::Printed(printed) => {
                 self.busy = self.busy.saturating_sub(1);
@@ -5612,7 +5623,7 @@ mod tests {
                 "Bookmarks",
                 "Draw and shapes",
                 "Signatures",
-                "Fill form",
+                "Forms",
                 "Find and replace",
                 "Merge, split and extract",
                 "Markup and notes",

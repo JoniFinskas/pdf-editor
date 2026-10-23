@@ -41,6 +41,7 @@ pub enum Request {
     Extract(String, PathBuf),
     Split(String, PathBuf),
     FormFields,
+    DesignForm(pdf_editor_core::FormDesignEdit),
     FillField(pdf_editor_core::FormField, pdf_editor_core::FieldValue),
     PlacePicture(pdf_editor_core::Picture, pdf_editor_core::Placement),
     Find(String),
@@ -130,7 +131,10 @@ pub enum Reply {
     Exported(String),
     PasswordRequired(PathBuf),
     ReplacementCount(String, usize),
-    FormFields(Vec<pdf_editor_core::FormField>),
+    FormFields(
+        Vec<pdf_editor_core::FormField>,
+        Vec<pdf_editor_core::DesignedField>,
+    ),
     Thumbnail {
         generation: u64,
         page: u16,
@@ -637,7 +641,17 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             Err(e) => failed(e),
         },
         Request::FormFields => match engine.form_fields(state.doc.as_ref()?) {
-            Ok(fields) => Some(Reply::FormFields(fields)),
+            Ok(fields) => match engine.designed_fields(state.doc.as_ref()?) {
+                Ok(designed) => Some(Reply::FormFields(fields, designed)),
+                Err(e) => failed(e),
+            },
+            Err(e) => failed(e),
+        },
+        Request::DesignForm(edit) => match engine.design_form(state.doc.as_mut()?, edit) {
+            Ok(()) => {
+                state.generation += 1;
+                Some(changed(state, ChangeKind::Edit, None, 1))
+            }
             Err(e) => failed(e),
         },
         Request::FillField(field, value) => {

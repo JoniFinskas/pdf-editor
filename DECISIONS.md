@@ -507,3 +507,12 @@ validation. Preserve grouped Form objects as groups and fail unsupported copies
 without accepting partial changes. Copy/paste keeps one private in-memory PDF
 snapshot per tab, never writes the operating-system clipboard or disk, and remains
 valid after the source is edited/deleted. Annotations keep their dedicated tools.
+
+## Form designer
+
+Create standard AcroForm widgets with bounded names/options and explicit appearances.
+Use real parent/Kids radio groups so PDFium enforces exclusive selection. Preserve
+existing field values and appearances while moving or resizing widget rectangles.
+Date fields remain script-free text with a date-format tooltip. The designer uses
+a separate draft canvas and coordinate controls; an explicit Apply commits one
+undoable change. Refresh replaces stale selections after document mutations.

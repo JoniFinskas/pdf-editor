@@ -10,13 +10,23 @@ use pdf_editor_core::{FieldValue, FormField};
 pub struct Forms {
     pub open: bool,
     pub fields: Vec<FormField>,
+    pub designer: crate::form_design::Designer,
+    design: bool,
 }
 impl Forms {
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, idle: bool) -> Option<Request> {
         let mut request = None;
-        ToolWindow::new("Fill form", Icon::Form)
-            .width(420.0)
+        ToolWindow::new("Forms", Icon::Form)
+            .width(if self.design { 560.0 } else { 420.0 })
             .show(ctx, p, &mut self.open, |ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.design, false, "Fill");
+                    ui.selectable_value(&mut self.design, true, "Design");
+                });
+                if self.design {
+                    request = self.designer.show(ui, p, idle);
+                    return;
+                }
                 ui.horizontal(|ui| {
                     widgets::hint(ui, p, "Refresh after applying to load updated values.");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
