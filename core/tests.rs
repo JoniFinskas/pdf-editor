@@ -3712,3 +3712,31 @@ fn bates_numbers_keep_padding_ranges_and_atomic_overflow() {
     bates.digits = 0;
     assert!(bates.label(0).is_err());
 }
+
+#[test]
+fn object_layer_order_round_trips_and_undo_restores() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut pdf = parse(&generated("Layer order", false, 0, 0.0, false, false)).unwrap();
+    let page = *pdf.get_pages().get(&1).unwrap();
+    let mut content = pdf.get_page_content_with_limit(page, MAX_STREAM).unwrap();
+    content.extend(b"\nq 1 0 0 rg 60 60 60 60 re f Q q 0 0 1 rg 80 80 60 60 re f Q");
+    let stream = pdf.add_object(Stream::new(dictionary! {}, content));
+    pdf.get_dictionary_mut(page).unwrap().set("Contents", stream);
+    let mut doc = e.candidate(&e.open(&fixture("unicode-cid.pdf")).unwrap(), pdf).unwrap();
+    let before = doc.bytes.clone();
+    let raster = e.render(&doc, 0, 1.0).unwrap();
+    let items = e.page_items(&doc, 0).unwrap();
+    let red = items[items.len()-2].clone();
+    e.edit_page_items(&mut doc, &[red.clone()], ObjectAction::BringToFront).unwrap();
+    let after = e.page_items(&doc, 0).unwrap();
+    assert_eq!(after.last().unwrap().bounds.left, red.bounds.left);
+    assert_ne!(e.render(&doc, 0, 1.0).unwrap().rgba, raster.rgba);
+    assert!(e.edit_page_items(&mut doc, &[red], ObjectAction::SendToBack).is_err());
+    assert!(doc.undo());
+    assert_eq!(doc.bytes, before);
+    assert!(doc.redo());
+    let last = e.page_items(&doc, 0).unwrap().pop().unwrap();
+    e.edit_page_items(&mut doc, &[last], ObjectAction::SendToBack).unwrap();
+    assert_eq!(e.page_items(&doc, 0).unwrap()[0].bounds.left, 60.0);
+}

@@ -3339,6 +3339,8 @@ impl EditorApp {
                                     ui.close();
                                 }
                                 for (label, action) in [
+                                    ("Bring to front", pdf_editor_core::ObjectAction::BringToFront),
+                                    ("Send to back", pdf_editor_core::ObjectAction::SendToBack),
                                     (
                                         "Duplicate",
                                         pdf_editor_core::ObjectAction::Duplicate {

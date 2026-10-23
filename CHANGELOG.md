@@ -3,6 +3,7 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Add Bring to front and Send to back object actions with stable relative order and undo.
 - Expose text and object movement modes, Compare, and a labelled Tools menu; preserve selection when leaving text editing to move an object.
 - Run Open, Save As and Compare file pickers outside the UI frame loop.
 - Keep error dismiss buttons stable for wrapped messages; expire notifications automatically and bound repeated errors.

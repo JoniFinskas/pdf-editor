@@ -25,6 +25,8 @@ pub enum ObjectAction {
         bounds: Bounds,
     },
     Delete,
+    BringToFront,
+    SendToBack,
 }
 
 /// In-memory PDF object clipboard; never sent to the operating-system clipboard.
@@ -156,7 +158,7 @@ impl Engine {
             }
             let (dx, dy) = match action {
                 ObjectAction::Move { dx, dy } | ObjectAction::Duplicate { dx, dy } => (dx, dy),
-                ObjectAction::Delete | ObjectAction::Resize { .. } => (0.0, 0.0),
+                ObjectAction::Delete | ObjectAction::Resize { .. } | ObjectAction::BringToFront | ObjectAction::SendToBack => (0.0, 0.0),
             };
             if !dx.is_finite() || !dy.is_finite() || dx.abs() > 100000.0 || dy.abs() > 100000.0 {
                 return Err(err("Invalid object movement"));
@@ -226,8 +228,28 @@ impl Engine {
             }
             .into_iter();
             let mut wrappers = Vec::new();
+            if matches!(action, ObjectAction::BringToFront | ObjectAction::SendToBack) {
+                let count = page.objects().len();
+                if count > 20000 || indices.iter().any(|i| *i >= count) {
+                    return Err(err("Invalid object order selection"));
+                }
+                let selected: std::collections::HashSet<_> = indices.iter().copied().collect();
+                let mut order: Vec<_> = (0..count).collect();
+                order.sort_by_key(|i| selected.contains(i) == matches!(action, ObjectAction::BringToFront));
+                if order.iter().copied().eq(0..count) { return Ok(()); }
+                let mut objects = Vec::with_capacity(count);
+                for index in (0..count).rev() {
+                    objects.push(Some(page.objects_mut().remove_object_at_index(index)?));
+                }
+                objects.reverse();
+                for index in order {
+                    page.objects_mut().add_object(objects[index].take().ok_or_else(|| err("Invalid object order"))?)?;
+                }
+                indices.clear();
+            }
             for index in indices {
                 match action {
+                    ObjectAction::BringToFront | ObjectAction::SendToBack => unreachable!(),
                     ObjectAction::Resize { .. } => {
                         let (sx, sy, tx, ty) = resize.unwrap();
                         page.objects()
