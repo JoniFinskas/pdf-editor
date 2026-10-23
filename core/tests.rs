@@ -3582,3 +3582,68 @@ fn privacy_preview_modes_and_stale_apply() {
         assert_eq!(original, doc.bytes);
     }
 }
+
+#[test]
+fn bates_numbers_keep_padding_ranges_and_atomic_overflow() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    let original = doc.bytes.clone();
+    let options = RangeStamp {
+        stamp: TextStamp {
+            template: "unused\n".into(),
+            font: "Arial".into(),
+            size: 12.,
+            color: [0, 0, 0],
+            opacity: 1.,
+            x: 30.,
+            y: 20.,
+        },
+        pages: "2,1".into(),
+        date: String::new(),
+        placement: StampPlacement::Footer,
+    };
+    let mut bates = BatesNumber {
+        prefix: "CASE-".into(),
+        start: 9,
+        digits: 4,
+    };
+    e.stamp_bates(&mut doc, &options, &bates).unwrap();
+    for (page, label) in [(0, "CASE-0009"), (1, "CASE-0010")] {
+        assert!(
+            e.text_objects(&doc, page)
+                .unwrap()
+                .iter()
+                .any(|t| t.text == label)
+        );
+    }
+    doc.undo();
+    assert_eq!(doc.bytes, original);
+    doc.redo();
+    let saved = temp(&format!(
+        "bates-{}.pdf",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    doc.save_as(&saved).unwrap();
+    let reopened = e.open(&saved).unwrap();
+    assert_eq!(e.find_text(&reopened, "CASE-0009").unwrap().len(), 1);
+    assert_eq!(e.find_text(&reopened, "CASE-0010").unwrap().len(), 1);
+    doc.undo();
+    bates.start = u64::MAX;
+    bates.digits = 20;
+    assert!(e.stamp_bates(&mut doc, &options, &bates).is_err());
+    assert_eq!(doc.bytes, original);
+    bates.start = 9999;
+    bates.digits = 4;
+    assert!(e.stamp_bates(&mut doc, &options, &bates).is_err());
+    assert_eq!(doc.bytes, original);
+    bates.prefix = "bad\nprefix".into();
+    bates.start = 1;
+    assert!(e.stamp_bates(&mut doc, &options, &bates).is_err());
+    assert_eq!(doc.bytes, original);
+    bates.digits = 0;
+    assert!(bates.label(0).is_err());
+}

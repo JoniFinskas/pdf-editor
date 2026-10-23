@@ -64,7 +64,7 @@ mod spelling;
 pub use spelling::{SpellingIssue, check_spelling, replace_spelling};
 mod startup;
 pub use search::SearchMatch;
-pub use stamps::{RangeStamp, StampPlacement, TextStamp, stamp_date_today};
+pub use stamps::{BatesNumber, RangeStamp, StampPlacement, TextStamp, stamp_date_today};
 pub use startup::startup_path;
 #[cfg(test)]
 mod tests;

@@ -354,3 +354,5 @@ is not a complete visual-concealment audit.
 Sanitization also rejects XFA forms, retained annotation appearances, unused retained Form
 streams, Forms without their own resources, and aliased attachment/script/metadata payloads.
 These cases leave the original document unchanged.
+
+Enable Bates numbering in the stamping tool to add a prefix and fixed-width sequence, with the same page range and placement controls. Numbering follows document order. Overflow or insufficient digits aborts the entire operation.

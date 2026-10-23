@@ -609,3 +609,6 @@ and provide clickable page/rectangle rows before applying true redaction.
 ## Windows spelling feedback
 
 Use the built-in Windows spell checking API and installed Finnish or English dictionaries. No dictionary downloads, cloud requests or automatic corrections. Debounce edits for 300 ms and run checks off the UI thread. Discard stale results after text or language changes. Underline returned ranges and offer replacements from the text field context menu. Missing dictionaries show an actionable message. Limit input to 64 KiB, issues to 256 and suggestions to eight per issue. Enable COM and Globalization features on the existing pinned Windows dependency; no new package.
+
+### Bates numbering
+Bates labels have a strict digit width (1–20), a literal prefix and checked u64 arithmetic. Selected pages are numbered in document order regardless of range input order. Sequence validation precedes all content changes.

@@ -296,3 +296,5 @@ Redaction rebuilds a clean page graph, dropping document-wide annotations, forms
 - `check_spelling(text, language)` returns bounded spelling issues using installed Windows dictionaries (`en-US` or `fi-FI`); UTF-16 results are converted to UTF-8 byte ranges. Unsupported platforms/dictionaries return a readable error. Run on a background thread.
 - `SpellingIssue` contains a byte range, original word and up to eight suggestions.
 - `replace_spelling(text, issue, replacement)` checks the current word and Unicode boundaries before replacement; stale results fail without changing text.
+
+`BatesNumber { prefix, start, digits }` formats fixed-width decimal labels. `label(offset)` rejects invalid prefixes, widths outside 1–20, overflow or a number wider than the chosen width. `Engine::stamp_bates(doc, range_stamp, bates)` numbers selected pages in document order, preserving leading zeroes in one atomic undo step; the text template is ignored.

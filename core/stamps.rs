@@ -30,6 +30,35 @@ pub struct RangeStamp {
     pub date: String,
     pub placement: StampPlacement,
 }
+#[derive(Clone, Debug)]
+pub struct BatesNumber {
+    pub prefix: String,
+    pub start: u64,
+    pub digits: u8,
+}
+impl BatesNumber {
+    pub fn label(&self, offset: usize) -> Result<String> {
+        if self.prefix.len() > 128
+            || self.prefix.chars().any(char::is_control)
+            || !(1..=20).contains(&self.digits)
+        {
+            return Err(err("Invalid Bates prefix or digit count (1-20)"));
+        }
+        let number = self
+            .start
+            .checked_add(offset as u64)
+            .ok_or_else(|| err("Bates number overflow"))?;
+        if number.to_string().len() > usize::from(self.digits) {
+            return Err(err("Bates number exceeds digit count"));
+        }
+        Ok(format!(
+            "{}{:0width$}",
+            self.prefix,
+            number,
+            width = usize::from(self.digits)
+        ))
+    }
+}
 /// UTC date captured once when opening the stamping tool or starting a batch.
 pub fn stamp_date_today() -> String {
     let days = std::time::SystemTime::now()
@@ -59,6 +88,7 @@ fn stamp_matrix(
     let bbox = pages::inherited(pdf, page, b"CropBox")?
         .or(pages::inherited(pdf, page, b"MediaBox")?)
         .ok_or_else(|| err("Missing page bounds"))?;
+    let (_, bbox) = pdf.dereference(&bbox)?;
     let a = bbox.as_array()?;
     if a.len() != 4 {
         return Err(err("Invalid page bounds"));
@@ -115,11 +145,29 @@ impl Engine {
         )
     }
     pub fn stamp_page_range(&self, doc: &mut Document, options: &RangeStamp) -> Result<()> {
+        self.stamp_range_internal(doc, options, None)
+    }
+    /// Number selected pages in document order. One undo step; overflow is atomic.
+    pub fn stamp_bates(
+        &self,
+        doc: &mut Document,
+        options: &RangeStamp,
+        bates: &BatesNumber,
+    ) -> Result<()> {
+        self.stamp_range_internal(doc, options, Some(bates))
+    }
+    fn stamp_range_internal(
+        &self,
+        doc: &mut Document,
+        options: &RangeStamp,
+        bates: Option<&BatesNumber>,
+    ) -> Result<()> {
         let stamp = &options.stamp;
         guarded(|| {
-            if stamp.template.is_empty()
-                || stamp.template.len() > 4096
-                || stamp.template.chars().any(char::is_control)
+            if (bates.is_none()
+                && (stamp.template.is_empty()
+                    || stamp.template.len() > 4096
+                    || stamp.template.chars().any(char::is_control)))
                 || ![stamp.size, stamp.opacity, stamp.x, stamp.y]
                     .iter()
                     .all(|v| v.is_finite())
@@ -130,7 +178,9 @@ impl Engine {
             }
             let mut pdf = parse(&doc.bytes)?;
             let pages = pdf.get_pages();
-            if options.date.len() > 128 || options.date.chars().any(char::is_control) {
+            if bates.is_none()
+                && (options.date.len() > 128 || options.date.chars().any(char::is_control))
+            {
                 return Err(err("Invalid stamp date"));
             }
             let selected = if options.pages.trim().is_empty() {
@@ -143,17 +193,24 @@ impl Engine {
                 .filter(|(n, _)| selected.contains(&((*n - 1) as u16)))
                 .collect();
             let total = self.pages(doc)?.len();
+            if let Some(bates) = bates {
+                bates.label(pages.len().saturating_sub(1))?;
+            }
             let texts: Vec<_> = pages
                 .iter()
                 .map(|(n, _)| n)
-                .map(|n| {
-                    stamp
+                .enumerate()
+                .map(|(index, n)| {
+                    if let Some(bates) = bates {
+                        return bates.label(index);
+                    }
+                    Ok(stamp
                         .template
                         .replace("{page}", &n.to_string())
                         .replace("{pages}", &total.to_string())
-                        .replace("{date}", &options.date)
+                        .replace("{date}", &options.date))
                 })
-                .collect();
+                .collect::<Result<_>>()?;
             let alphabet = texts.join(" ");
             if alphabet.len() > 1_000_000 {
                 return Err(err("Stamp text exceeds document limits"));
