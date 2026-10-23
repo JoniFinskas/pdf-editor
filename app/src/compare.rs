@@ -99,6 +99,8 @@ fn start(paths: [PathBuf; 2], passwords: [String; 2], ctx: egui::Context) -> Ses
 pub struct Compare {
     pub open: bool,
     paths: [Option<PathBuf>; 2],
+    picker: crate::dialogs::Picker,
+    picker_side: usize,
     passwords: [String; 2],
     session: Option<Session>,
     summaries: Vec<Option<(usize, usize)>>,
@@ -114,6 +116,19 @@ pub struct Compare {
 }
 impl Compare {
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette) {
+        if let Some(result) = self.picker.poll() {
+            match result {
+                Ok(Some(path)) => {
+                    self.paths[self.picker_side] = Some(path);
+                    self.session = None; self.textures = [None, None];
+                    self.summaries.clear(); self.errors.clear();
+                    self.requested = None; self.waiting = false;
+                }
+                Ok(None) => {},
+                Err(error) => self.error = Some(error.into()),
+            }
+        }
+        if self.picker.pending() { ctx.request_repaint_after(std::time::Duration::from_millis(50)); }
         if !self.open {
             self.session = None;
             self.textures = [None, None];
@@ -183,9 +198,11 @@ impl Compare {
             widgets::hint(ui,p,"Compare saved files, page by page. Originals and open edits stay unchanged. Pages align by index; inserted pages are not automatically realigned.");
             ui.horizontal_wrapped(|ui|{
                 for i in 0..2 {
-                    if Btn::new(if i==0{"Choose left PDF"}else{"Choose right PDF"}).show(ui,p).clicked()
-                        && let Some(path)=rfd::FileDialog::new().add_filter("PDF",&["pdf"]).pick_file() {
-                        self.paths[i]=Some(path);self.session=None;self.textures=[None,None];self.summaries.clear();self.errors.clear();self.requested=None;self.waiting=false;
+                    if Btn::new(if i==0{"Choose left PDF"}else{"Choose right PDF"}).enabled(!self.picker.pending()).show(ui,p).clicked() {
+                        self.picker_side = i;
+                        if let Err(error) = self.picker.start(|| rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file()) {
+                            self.error = Some(format!("Cannot open file picker: {error}"));
+                        }
                     }
                     ui.label(self.paths[i].as_ref().and_then(|p|p.file_name()).map(|n|n.to_string_lossy().into_owned()).unwrap_or_else(||"No file".into()));
                 }
