@@ -153,7 +153,7 @@ existing files and the original path are never overwritten.
 
 ## Daily and extra tools
 
-Click **Tools** in the second toolbar row for the document menu. Its **Edit** section holds
+The **All tools** panel opens by default on the home screen and beside documents. Press **Ctrl+K** to search names and descriptions, including subfeatures such as flattening forms, Excel export and Bates numbering. Tools that need an open PDF are visible but disabled until a document is opened. Close the panel for more page space; **All tools** reopens it. The small arrow retains the compact document menu. Its **Edit** section holds
 Find and replace, Fill form, Signatures, Images, Markup and notes, Draw and shapes,
 Redact, and OCR current page. **Document** holds Bookmarks sidebar, Merge/split/
 extract, Crop page, Page numbers and watermark, Export pages as images, Compress

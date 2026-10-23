@@ -3,6 +3,7 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Show a searchable All tools panel by default, including tool descriptions and document prerequisites; Ctrl+K focuses its search.
 - Add Bring to front and Send to back object actions with stable relative order and undo.
 - Stop drawing and area-selection tools when switching back to text editing or object movement.
 - Expose text and object movement modes, Compare, and a labelled Tools menu; preserve selection when leaving text editing to move an object.

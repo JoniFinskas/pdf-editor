@@ -117,6 +117,38 @@ impl Tool {
         ),
     ];
 
+    fn description(self) -> &'static str {
+        match self {
+            Self::ImageCreate => "Create a PDF from JPG, PNG or HEIC photos; reorder images and choose page size.",
+            Self::ScanCleanup => "Straighten scanned photos, correct perspective, choose grayscale or black and white.",
+            Self::Replace => "Find text and replace one match or all matches while preserving fonts.",
+            Self::Forms => "Fill, design, move and resize fields; checkboxes, radio groups and dropdowns; flatten forms.",
+            Self::Signatures => "Draw or import a reusable signature, then place and resize it.",
+            Self::Pictures => "Insert PNG or JPG images; move, resize and remove pictures.",
+            Self::Markup => "Highlight, underline, strike through and add editable sticky notes.",
+            Self::Drawing => "Freehand ink, rectangles, ellipses, lines and arrows.",
+            Self::Privacy => "Find emails, phone numbers, IBANs, identity codes or card patterns; preview and redact.",
+            Self::Redact => "Permanently remove text, images and vector content from a selected rectangle.",
+            Self::Ocr => "Recognize scanned text using installed Windows OCR languages.",
+            Self::Bookmarks => "Navigate, add, rename, delete and reorder document bookmarks.",
+            Self::Organize => "Merge PDFs, split by page ranges or extract selected pages to a new file.",
+            Self::Crop => "Change the visible page area using crop bounds.",
+            Self::Stamps => "Page numbers, watermarks, headers, footers, date tokens and Bates numbering.",
+            Self::Export => "Export pages as PNG or JPG with a chosen DPI.",
+            Self::Tables => "Select a table, preview rows and columns, export Excel XLSX or CSV.",
+            Self::Word => "Export paragraphs, fonts, images and simple tables to Word DOCX.",
+            Self::Compress => "Downscale and recompress images; compare file sizes.",
+            Self::Sanitize => "Remove metadata, hidden text, scripts, attachments and optional comments or links.",
+            Self::Compare => "Compare two saved PDFs side by side, with text changes and a pixel overlay.",
+            Self::Print => "Print through the Windows print dialog.",
+        }
+    }
+
+    fn matches(self, label: &str, query: &str) -> bool {
+        let haystack = format!("{label} {}", self.description()).to_lowercase();
+        query.split_whitespace().all(|word| haystack.contains(&word.to_lowercase()))
+    }
+
     /// Stable button key, so tests can find the menu entries.
     fn key(self) -> &'static str {
         match self {
@@ -443,6 +475,9 @@ impl eframe::App for TabbedApp {
 pub struct EditorApp {
     tabbed: bool,
     new_tab_path: Option<PathBuf>,
+    tools_open: bool,
+    tools_query: String,
+    tools_focus: bool,
     picker: crate::dialogs::Picker,
     picker_save: bool,
     recent_files: Vec<PathBuf>,
@@ -784,6 +819,9 @@ impl EditorApp {
         let mut app = Self {
             tabbed: true,
             new_tab_path: None,
+            tools_open: true,
+            tools_query: String::new(),
+            tools_focus: false,
             picker: crate::dialogs::Picker::default(),
             picker_save: false,
             recent_files: config_path
@@ -2110,6 +2148,7 @@ impl EditorApp {
         for command in crate::shortcuts::consume(ctx, ctx.text_edit_focused()) {
             use crate::shortcuts::Command;
             match command {
+                Command::Tools => { self.tools_open = true; self.tools_focus = true; },
                 Command::Open => self.request_open(None),
                 Command::SaveAs => self.save_as(),
                 Command::Undo => self.undo(),
@@ -2269,6 +2308,11 @@ impl EditorApp {
             self.document_bar(ui, p);
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
+                if Btn::new("All tools").id("all-tools").height(30.0)
+                    .look(if self.tools_open { Look::Active } else { Look::Ghost })
+                    .tip("Browse and search every tool (Ctrl+K)").show(ui, p).clicked() {
+                    self.tools_open = !self.tools_open;
+                }
                 self.document_tools(ui, p);
                 let moving = self.doc.as_ref().is_some_and(|d| d.object_mode);
                 for (label, key, enabled) in [("Edit text", "mode-text", false), ("Move / resize objects", "mode-objects", true)] {
@@ -2285,9 +2329,64 @@ impl EditorApp {
         }
     }
 
+    fn tool_catalog(&mut self, ui: &mut Ui, p: &Palette) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("All tools").font(theme::semibold(18.0)).color(p.text));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if Btn::new("Close").id("close-tools").height(28.0).show(ui,p).clicked() { self.tools_open = false; }
+            });
+        });
+        let search = ui.add(TextEdit::singleline(&mut self.tools_query).id(Id::new("tool-search"))
+            .hint_text("Search tools... Ctrl+K").desired_width(f32::INFINITY));
+        if self.tools_focus { search.request_focus(); self.tools_focus = false; }
+        if !self.tools_query.is_empty() && ui.small_button("Clear search").clicked() { self.tools_query.clear(); }
+        let ready = self.busy == 0 && self.engine_alive;
+        let document = self.doc.is_some();
+        if !document { widgets::hint(ui, p, "Open a PDF to enable document tools. You can compare saved files or create a PDF from images here."); }
+        let query = self.tools_query.clone();
+        ScrollArea::vertical().id_salt("all-tools-scroll").auto_shrink([false,false]).show(ui, |ui| {
+            let mut found = 0;
+            {
+                menu_caption(ui, p, "Basics");
+                for (label, key) in [("Edit text / spell check", "catalog-edit"), ("Move, resize, copy or delete objects", "catalog-move"), ("Add text box", "catalog-add-text"), ("Find text", "catalog-find"), ("Pages: rotate, insert, reorder, delete", "catalog-pages"), ("Save As / password options", "catalog-save")] {
+                    if !query.split_whitespace().all(|word| label.to_lowercase().contains(&word.to_lowercase())) { continue; }
+                    found += 1;
+                    if Btn::new(label).id(key).align_left().min_width(ui.available_width()).enabled(document && ready).show(ui,p).clicked() {
+                        match key {
+                            "catalog-edit" => self.set_object_mode(false),
+                            "catalog-move" => self.set_object_mode(true),
+                            "catalog-add-text" => { self.set_object_mode(false); self.text_tool.adding = true; },
+                            "catalog-find" => { self.find.open = true; self.find.focus = true; },
+                            "catalog-pages" => { self.pages_open = true; self.bookmarks.open = false; self.tools_open = false; },
+                            _ => self.save_as(),
+                        }
+                    }
+                }
+                widgets::hint(ui,p,"Use Edit text or Move / resize objects above the page. Right-click an object for copy, delete and layer ordering. Spell checking is available while editing text.");
+            }
+            for (section, tools) in Tool::MENU {
+                if !tools.iter().any(|(tool,label,_)| tool.matches(label, &query)) { continue; }
+                menu_caption(ui, p, section);
+                for &(tool,label,icon) in tools {
+                    if !tool.matches(label, &query) { continue; }
+                    found += 1;
+                    let enabled = ready && (document || matches!(tool, Tool::ImageCreate | Tool::Compare));
+                    if Btn::new(label).with_icon(icon).id(&format!("catalog-{}",tool.key()))
+                        .align_left().min_width(ui.available_width()).enabled(enabled).show(ui,p).clicked() {
+                        self.open_tool(tool);
+                        if tool == Tool::Bookmarks { self.tools_open = false; }
+                    }
+                    ui.add(egui::Label::new(RichText::new(tool.description()).small().color(p.muted)).wrap());
+                    ui.add_space(10.0);
+                }
+            }
+            if found == 0 { ui.label("No matching tools. Try a shorter search."); }
+        });
+    }
+
     fn document_tools(&mut self, ui: &mut Ui, p: &Palette) {
         let idle = self.busy == 0 && self.engine_alive;
-            let recent = Btn::new("Tools").trailing(Icon::ChevronDown)
+            let recent = Btn::icon(Icon::ChevronDown)
                 .id("recent")
                 .min_width(24.0)
                 .height(34.0)
@@ -2483,6 +2582,9 @@ impl EditorApp {
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             brand(ui, p);
+            if Btn::new("All tools").id("all-tools").tip("Browse all tools (Ctrl+K)").show(ui, p).clicked() {
+                self.tools_open = !self.tools_open;
+            }
             for (recent, icon, label, key) in [
                 (false, Icon::Home, "Home", "nav-home"),
                 (true, Icon::Clock, "Recent", "nav-recent"),
@@ -4011,6 +4113,11 @@ impl eframe::App for EditorApp {
         let toolbar_bottom = toolbar.response.rect.bottom();
 
         let document = self.doc.is_some() && !self.settings_open;
+        if self.tools_open && !self.settings_open {
+            egui::Panel::right("all-tools").frame(Frame::new().fill(p.chrome).inner_margin(12))
+                .default_size(290.0).min_size(230.0).max_size(360.0).resizable(true)
+                .show(ui, |ui| self.tool_catalog(ui, &p));
+        }
         if document {
             egui::Panel::bottom("status")
                 .frame(
@@ -4022,7 +4129,7 @@ impl eframe::App for EditorApp {
                 .show_separator_line(false)
                 .exact_size(36.0)
                 .show(ui, |ui| self.status_bar(ui, &p));
-            if self.bookmarks.open {
+            if self.bookmarks.open && !self.tools_open {
                 let mut action = None;
                 let current = self.doc.as_ref().map_or(0, |d| d.current_page as u16);
                 egui::Panel::left("bookmarks")
@@ -4056,7 +4163,7 @@ impl eframe::App for EditorApp {
                     None => {}
                 }
             }
-            if self.pages_open {
+            if self.pages_open && !self.tools_open {
                 egui::Panel::left("thumbnails")
                     .frame(Frame::new().fill(p.chrome))
                     .default_size(200.0)
@@ -5137,6 +5244,9 @@ mod tests {
             EditorApp {
                 tabbed: false,
                 new_tab_path: None,
+            tools_open: true,
+            tools_query: String::new(),
+            tools_focus: false,
             picker: crate::dialogs::Picker::default(),
             picker_save: false,
                 recent_files: vec![],
@@ -6002,7 +6112,7 @@ mod tests {
                 assert!(rect.min.x >= 0.0 && rect.max.x <= width, "{key}: {rect:?}");
                 assert!(rect.max.y <= 56.0, "{key} wrapped: {rect:?}");
             }
-            for key in ["recent", "mode-text", "mode-objects", "compare-visible"] {
+            for key in ["all-tools", "recent", "mode-text", "mode-objects", "compare-visible"] {
                 let rect = ctx.read_response(widgets::tool_id(key)).unwrap().rect;
                 assert!(rect.min.x >= 0.0 && rect.max.x <= width, "{key}: {rect:?}");
             }
@@ -6123,6 +6233,39 @@ mod tests {
         assert_eq!(tabs.active, 0);
         assert!(tabs.tabs[0].1.doc.as_ref().unwrap().dirty());
     }
+    #[test]
+    fn catalog_lists_every_tool_and_filters_descriptions() {
+        let ctx = Context::default();
+        theme::install(&ctx);
+        let (mut app, _, _) = mock_app();
+        opened(&mut app, &ctx);
+        let draw = |app: &mut EditorApp| {
+            let mut output = ctx.run_ui(egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(360.0, 600.0))),
+                ..Default::default()
+            }, |ui| { let p = theme::palette(ui); app.tool_catalog(ui, &p); });
+            output.textures_delta.clear();
+        };
+        for (_, tools) in Tool::MENU {
+            for &(tool, label, _) in tools {
+                app.tools_query = label.to_string();
+                draw(&mut app); draw(&mut app);
+                let response = ctx.read_response(widgets::tool_id(&format!("catalog-{}",tool.key()))).unwrap();
+                assert!(response.enabled());
+                assert!(response.rect.top() >= 0.0 && response.rect.bottom() < 600.0);
+            }
+        }
+        assert!(Tool::Forms.matches("Forms", "flatten"));
+        assert!(Tool::Tables.matches("Tables", "xlsx"));
+        assert!(Tool::Privacy.matches("Search and redact", "IBAN"));
+        assert!(!Tool::Print.matches("Print", "signature"));
+        app.doc = None;
+        app.tools_query = "Compare".into(); draw(&mut app);
+        assert!(ctx.read_response(widgets::tool_id("catalog-tool-compare")).unwrap().enabled());
+        app.tools_query = "Forms".into(); draw(&mut app);
+        assert_eq!(ctx.read_response(widgets::tool_id("catalog-tool-forms")).unwrap().sense, Sense::hover());
+    }
+
     #[test]
     fn visible_modes_and_compare_dispatch_from_toolbar() {
         let ctx = Context::default();
