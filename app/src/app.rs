@@ -247,6 +247,7 @@ pub struct EditorApp {
     compression: crate::compression::Compression,
     stamps: crate::stamps::Stamps,
     export: crate::export::Export,
+    crop: crate::crop::Crop,
     find: FindState,
     worker: Worker,
     engine_alive: bool,
@@ -528,6 +529,7 @@ impl EditorApp {
             compression: Default::default(),
             stamps: Default::default(),
             export: Default::default(),
+            crop: Default::default(),
             find: FindState::default(),
             worker,
             engine_alive: true,
@@ -1831,6 +1833,16 @@ impl EditorApp {
             let mut open = None;
             Popup::menu(&recent).show(|ui| {
                 ui.set_min_width(260.0);
+                if Btn::new("Crop page…")
+                    .enabled(idle)
+                    .min_width(260.0)
+                    .align_left()
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.crop.open = true;
+                    ui.close();
+                }
                 if Btn::new("Export pages as images…")
                     .enabled(idle)
                     .min_width(260.0)
@@ -3232,6 +3244,16 @@ impl eframe::App for EditorApp {
             self.floating_tools(&ctx, central.response.rect, &p);
         }
 
+        if let Some(request) = self.crop.show(
+            &ctx,
+            &p,
+            self.busy == 0,
+            self.doc.as_ref().map_or(0, |d| d.pages.len()),
+        ) {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
         if let Some(request) = self.export.show(&ctx, &p, self.busy == 0) {
             self.commit_edit();
             self.busy += 1;
@@ -3990,6 +4012,7 @@ mod tests {
                 compression: Default::default(),
                 stamps: Default::default(),
                 export: Default::default(),
+                crop: Default::default(),
                 find: FindState::default(),
                 worker,
                 engine_alive: true,

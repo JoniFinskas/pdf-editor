@@ -4,6 +4,7 @@ mod change_state;
 pub use annotations::{Annotation, Markup, MarkupKind};
 mod compression;
 mod content;
+mod crop;
 pub use change_state::ChangeState;
 pub use compression::CompressionReport;
 mod export;

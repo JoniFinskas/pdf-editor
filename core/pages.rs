@@ -21,7 +21,11 @@ pub enum PageEdit {
     },
 }
 
-fn inherited(pdf: &lopdf::Document, mut id: ObjectId, key: &[u8]) -> Result<Option<Object>> {
+pub(crate) fn inherited(
+    pdf: &lopdf::Document,
+    mut id: ObjectId,
+    key: &[u8],
+) -> Result<Option<Object>> {
     for _ in 0..128 {
         let dict = pdf.get_dictionary(id)?;
         if let Ok(value) = dict.get(key) {

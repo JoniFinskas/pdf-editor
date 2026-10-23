@@ -2,6 +2,7 @@
 
 mod app;
 mod compression;
+mod crop;
 mod export;
 mod forms;
 mod icons;

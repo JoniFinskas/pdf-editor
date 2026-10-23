@@ -1775,3 +1775,31 @@ fn page_image_exports_respect_dpi_format_and_existing_files() {
             .is_err()
     );
 }
+
+#[test]
+fn cropping_changes_view_and_preserves_content_for_undo() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    let original = doc.bytes.clone();
+    let crop = Bounds {
+        left: 20.0,
+        bottom: 20.0,
+        right: 300.0,
+        top: 200.0,
+    };
+    e.crop_page(&mut doc, 0, crop).unwrap();
+    let image = e.render(&doc, 0, 1.0).unwrap();
+    assert_eq!((image.width, image.height), (280, 180));
+    let path = temp("cropped.pdf");
+    let _ = fs::remove_file(&path);
+    doc.save_as(&path).unwrap();
+    assert!(image.rgba == e.render(&e.open(&path).unwrap(), 0, 1.0).unwrap().rgba);
+    assert!(
+        e.crop_page(&mut doc, 0, Bounds { left: -1.0, ..crop })
+            .is_err()
+    );
+    doc.undo();
+    assert_eq!(doc.bytes, original);
+    fs::remove_file(path).unwrap();
+}

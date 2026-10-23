@@ -370,3 +370,7 @@ Use one shared embedded font and opacity graphics state across all stamped pages
 ## Part G: PNG/JPG page export
 
 Render page content, forms and annotations at the requested DPI with the existing native raster limits. Encode lossless PNG or quality-90 JPEG; JPEG also records the requested density. Pixel dimensions follow the DPI for both formats. Export uses exclusive filenames and leaves document history unchanged. Batch failure removes only files created by that batch.
+
+## Part G: Cropping
+
+Use the standard PDF CropBox and validate finite, positive dimensions within the inherited MediaBox. Native rendering and page geometry refresh after the edit. The UI explains that cropping hides rather than removes content, and directs removal needs to redaction.

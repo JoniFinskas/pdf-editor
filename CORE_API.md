@@ -154,3 +154,7 @@ Each `Document` owns its byte snapshots, revision, undo/redo stacks and source i
 
 - `Engine::export_page_image(document, page, dpi, format, destination) -> Result<()>`: render one page at 36–600 DPI to a new PNG/JPG within raster and file-size limits.
 - `Engine::export_page_images(document, pages, dpi, format, folder) -> Result<Vec<PathBuf>>`: export an ordered page selection to new numbered image files, cleaning up outputs if the batch fails.
+
+## Page cropping
+
+- `Engine::crop_page(document, page, bounds) -> Result<()>`: set a validated CropBox inside the inherited MediaBox as one undoable change, preserving underlying content.
