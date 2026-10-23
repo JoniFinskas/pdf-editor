@@ -54,6 +54,7 @@ pub struct EditorApp {
     dragging_page: Option<usize>,
     text_tool: TextTool,
     signatures: crate::signatures::Signatures,
+    forms: crate::forms::Forms,
     find: FindState,
     worker: Worker,
     engine_alive: bool,
@@ -325,6 +326,7 @@ impl EditorApp {
             dragging_page: None,
             text_tool: TextTool::default(),
             signatures: Default::default(),
+            forms: Default::default(),
             find: FindState::default(),
             worker,
             engine_alive: true,
@@ -582,6 +584,10 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::FormFields(fields) => {
+                self.busy = self.busy.saturating_sub(1);
+                self.forms.fields = fields;
+            }
             Reply::Printed(printed) => {
                 self.busy = self.busy.saturating_sub(1);
                 if printed {
@@ -1583,6 +1589,19 @@ impl EditorApp {
             let mut open = None;
             Popup::menu(&recent).show(|ui| {
                 ui.set_min_width(260.0);
+                if Btn::new("Fill form…")
+                    .enabled(idle)
+                    .min_width(260.0)
+                    .align_left()
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.commit_edit();
+                    self.forms.open = true;
+                    self.busy += 1;
+                    self.send(Request::FormFields);
+                    ui.close();
+                }
                 if Btn::new("Signatures…")
                     .enabled(idle)
                     .min_width(260.0)
@@ -2860,6 +2879,11 @@ impl eframe::App for EditorApp {
             self.floating_tools(&ctx, central.response.rect, &p);
         }
 
+        if let Some(request) = self.forms.show(&ctx, &p, self.busy == 0) {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
         let signature_folder = self
             .config_path
             .as_ref()
@@ -3541,6 +3565,7 @@ mod tests {
                 dragging_page: None,
                 text_tool: TextTool::default(),
                 signatures: Default::default(),
+                forms: Default::default(),
                 find: FindState::default(),
                 worker,
                 engine_alive: true,

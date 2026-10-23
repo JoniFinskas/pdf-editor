@@ -5,6 +5,8 @@ pub use change_state::ChangeState;
 mod features;
 pub use features::NewText;
 mod fonts;
+mod forms;
+pub use forms::{FieldValue, FormField};
 mod images;
 mod pages;
 mod printing;
@@ -140,8 +142,10 @@ pub struct EditResult {
 /// A PDFium runtime. Load only an explicitly trusted, absolute DLL path.
 pub struct Engine {
     pdfium: &'static Pdfium,
+    raw: &'static dyn PdfiumLibraryBindings,
 }
-static RUNTIME: std::sync::OnceLock<(PathBuf, Pdfium)> = std::sync::OnceLock::new();
+static RUNTIME: std::sync::OnceLock<(PathBuf, Pdfium, Box<dyn PdfiumLibraryBindings>)> =
+    std::sync::OnceLock::new();
 static INIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Editable state uses immutable byte snapshots so failed operations cannot partially apply.
 pub struct Document {
@@ -162,18 +166,22 @@ impl Engine {
             .lock()
             .map_err(|_| err("PDFium initialization failed"))?;
         if RUNTIME.get().is_none() {
+            let raw = Pdfium::bind_to_library(&library)?;
             let pdfium = Pdfium::new(Pdfium::bind_to_library(&library)?);
             RUNTIME
-                .set((library.clone(), pdfium))
+                .set((library.clone(), pdfium, raw))
                 .map_err(|_| err("PDFium initialization failed"))?;
         }
-        let (loaded, pdfium) = RUNTIME
+        let (loaded, pdfium, raw) = RUNTIME
             .get()
             .ok_or_else(|| err("PDFium initialization failed"))?;
         if loaded != &library {
             return Err(err("A different PDFium library is already loaded"));
         }
-        Ok(Self { pdfium })
+        Ok(Self {
+            pdfium,
+            raw: raw.as_ref(),
+        })
     }
     pub fn open(&self, path: &Path) -> Result<Document> {
         guarded(|| {
@@ -430,8 +438,8 @@ fn render_config(page: &PdfPage<'_>, scale: f32) -> Result<PdfRenderConfig> {
     }
     Ok(PdfRenderConfig::new()
         .set_target_size(width as i32, height as i32)
-        .render_form_data(false)
-        .render_annotations(false))
+        .render_form_data(true)
+        .render_annotations(true))
 }
 impl Document {
     pub fn can_undo(&self) -> bool {

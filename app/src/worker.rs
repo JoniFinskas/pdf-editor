@@ -20,6 +20,8 @@ const SAMPLE_SPAN: f32 = 1000.0;
 pub enum Request {
     Open(PathBuf),
     Print,
+    FormFields,
+    FillField(pdf_editor_core::FormField, pdf_editor_core::FieldValue),
     PlacePicture(pdf_editor_core::Picture, pdf_editor_core::Placement),
     Find(String),
     Fonts,
@@ -69,6 +71,7 @@ impl PageTransform {
 
 pub enum Reply {
     Printed(bool),
+    FormFields(Vec<pdf_editor_core::FormField>),
     Thumbnail {
         generation: u64,
         page: u16,
@@ -349,6 +352,19 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                         result.warning,
                         result.objects_changed,
                     ))
+                }
+                Err(e) => failed(e),
+            }
+        }
+        Request::FormFields => match engine.form_fields(state.doc.as_ref()?) {
+            Ok(fields) => Some(Reply::FormFields(fields)),
+            Err(e) => failed(e),
+        },
+        Request::FillField(field, value) => {
+            match engine.fill_field(state.doc.as_mut()?, &field, &value) {
+                Ok(()) => {
+                    state.generation += 1;
+                    Some(changed(state, ChangeKind::Edit, None, 1))
                 }
                 Err(e) => failed(e),
             }

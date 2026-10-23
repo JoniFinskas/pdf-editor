@@ -1115,3 +1115,103 @@ fn signature_round_trip_preserves_text_and_undo() {
     fs::remove_file(output).unwrap();
     fs::remove_file(stored).unwrap();
 }
+
+fn form_fixture() -> Vec<u8> {
+    let mut pdf = parse(&generated("Form", false, 0, 0.0, false, false)).unwrap();
+    let page = *pdf.get_pages().values().next().unwrap();
+    let font =
+        pdf.add_object(dictionary! {"Type"=>"Font", "Subtype"=>"Type1", "BaseFont"=>"Helvetica"});
+    let off = pdf.add_object(Stream::new(dictionary! {"Type"=>"XObject","Subtype"=>"Form","BBox"=>vec![0.into(),0.into(),20.into(),20.into()]}, b"0 0 20 20 re S".to_vec()));
+    let on = pdf.add_object(Stream::new(dictionary! {"Type"=>"XObject","Subtype"=>"Form","BBox"=>vec![0.into(),0.into(),20.into(),20.into()]}, b"0 0 20 20 re S 2 2 m 18 18 l 2 18 m 18 2 l S".to_vec()));
+    let mut fields = vec![];
+    for (i, (name, kind, flags)) in [
+        ("Name", "Tx", 0),
+        ("Agree", "Btn", 0),
+        ("Option", "Btn", 32768),
+        ("Country", "Ch", 131072),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let y = 230 - i as i32 * 50;
+        let mut field = dictionary! {"Type"=>"Annot","Subtype"=>"Widget","FT"=>*kind,"T"=>Object::string_literal(*name),"Ff"=>*flags,"F"=>4,"P"=>page,
+        "Rect"=>vec![50.into(),y.into(),200.into(),(y+25).into()],"DA"=>Object::string_literal("/Helv 12 Tf 0 g")};
+        if *kind == "Btn" {
+            field.set("AP", dictionary! {"N"=>dictionary!{"Off"=>off,"Yes"=>on}});
+            field.set("AS", "Off");
+            field.set("V", "Off");
+        }
+        if *kind == "Ch" {
+            field.set(
+                "Opt",
+                vec![
+                    Object::string_literal("Finland"),
+                    Object::string_literal("UK"),
+                ],
+            );
+        }
+        fields.push(Object::Reference(pdf.add_object(field)));
+    }
+    pdf.get_object_mut(page)
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set("Annots", fields.clone());
+    let acro=pdf.add_object(dictionary! {"Fields"=>fields,"DA"=>Object::string_literal("/Helv 12 Tf 0 g"),"DR"=>dictionary!{"Font"=>dictionary!{"Helv"=>font}}});
+    pdf.catalog_mut().unwrap().set("AcroForm", acro);
+    let mut bytes = vec![];
+    pdf.save_to(&mut bytes).unwrap();
+    bytes
+}
+#[test]
+fn forms_edit_all_supported_types_and_undo() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let path = temp("form.pdf");
+    fs::write(&path, form_fixture()).unwrap();
+    let mut doc = e.open(&path).unwrap();
+    for (index, value) in [
+        (0, FieldValue::Text("Example".into())),
+        (1, FieldValue::Check(true)),
+        (2, FieldValue::Radio(true)),
+        (
+            3,
+            FieldValue::Choice {
+                options: vec![],
+                selected: Some(1),
+            },
+        ),
+    ] {
+        let fields = e.form_fields(&doc).unwrap();
+        assert_eq!(fields.len(), 4);
+        let before = e.render(&doc, 0, 1.0).unwrap().rgba;
+        e.fill_field(&mut doc, &fields[index], &value).unwrap();
+        assert!(
+            before != e.render(&doc, 0, 1.0).unwrap().rgba,
+            "field {index} appearance"
+        );
+        assert!(
+            e.fill_field(&mut doc, &fields[index], &value).is_err(),
+            "stale selection"
+        );
+        doc.undo();
+        assert_eq!(before, e.render(&doc, 0, 1.0).unwrap().rgba);
+        let fields = e.form_fields(&doc).unwrap();
+        e.fill_field(&mut doc, &fields[index], &value).unwrap();
+    }
+    let output = temp("form-filled.pdf");
+    let _ = fs::remove_file(&output);
+    doc.save_as(&output).unwrap();
+    assert_eq!(
+        e.render(&doc, 0, 1.0).unwrap().rgba,
+        e.render(&e.open(&output).unwrap(), 0, 1.0).unwrap().rgba
+    );
+    fs::remove_file(path).unwrap();
+    fs::remove_file(output).unwrap();
+}
+
+#[test]
+#[ignore = "Explicit form fixture regeneration"]
+fn generate_form_fixture() {
+    fs::write(fixture("forms.pdf"), form_fixture()).unwrap();
+}

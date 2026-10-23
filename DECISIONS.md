@@ -314,3 +314,9 @@ Use the native Windows Forms print dialog and Windows print spooler through the 
 Signatures use bounded PNG/JPEG decoding and a transparent drawing pad. Reusable copies live in the config folder's `signatures` directory with exclusive filenames. Placement uses PDF-point controls and an on-page preview; width and height remain independently adjustable before placement. Embedded image and alpha-mask streams are ordinary page content, so Save As flattens signatures without external file dependencies. Undo removes a placement.
 
 Promoted the existing locked `image = 0.25.10` crate to an exact direct dependency with only PNG and JPEG features. Native image decoding is needed for imported signatures and pictures. Release-date evidence in the dependency-age audit: image 2026-03-10, zune-core 0.5.3 2026-08-07, zune-jpeg 0.5.15 2026-03-26; all precede the 2026-10-09 cutoff.
+
+## Part F: Form filling
+
+Use PDFium form interaction APIs for focus, text replacement, button clicks and dropdown selection. The high-level setters only write dictionary values and do not regenerate appearances. A second binding to the same trusted DLL is retained before runtime initialization to access raw APIs; both bindings use the library's shared thread marshaller. Native handles and the callback table are lifetime-bound and released in order. No JavaScript, external-action, upload or network callbacks are installed.
+
+Treat the explicit Off appearance as unchecked: the wrapper's radio fallback compares the group value with its appearance and can otherwise classify Off/Off as selected. Persisted values and visible appearance changes are tested for every supported field type. Form controls remain editable PDF widgets.

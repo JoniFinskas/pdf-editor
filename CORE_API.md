@@ -94,3 +94,8 @@ Keyboard commands are UI dispatch only: Open/Save As use `Engine::open`/`Documen
 - `store_signature(folder, picture) -> Result<PathBuf>`: save a reusable PNG under a new exclusive filename.
 - `signature_files(folder) -> Result<Vec<PathBuf>>`: list saved signature PNGs.
 - `Engine::place_picture(document, picture, Placement) -> Result<()>`: embed transparent image at PDF-point position and size as undoable page content.
+
+## Forms
+
+- `Engine::form_fields(document) -> Result<Vec<FormField>>`: list PDFium text, checkbox, radio and dropdown widgets with names, values, read-only flags and revision identifiers.
+- `Engine::fill_field(document, field, value) -> Result<()>`: apply a revision-checked value using native form interactions, regenerate appearances, verify persisted values, and record one undo step.
