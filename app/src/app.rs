@@ -87,7 +87,7 @@ impl Tool {
             "Edit",
             &[
                 (Tool::Replace, "Find and replace…", Icon::Replace),
-                (Tool::Forms, "Fill form…", Icon::Form),
+                (Tool::Forms, "Forms: fill, design, flatten...", Icon::Form),
                 (Tool::Signatures, "Signatures…", Icon::Signature),
                 (Tool::Pictures, "Images…", Icon::Image),
                 (Tool::ImageCreate, "Images to PDF…", Icon::Image),
@@ -2246,53 +2246,46 @@ impl EditorApp {
         }
     }
 
+    fn set_object_mode(&mut self, enabled: bool) {
+        if self.busy > 0 { return; }
+        let selection = self.doc.as_ref().and_then(|doc| doc.edit.as_ref().map(|edit| (edit.page, edit.line.rect.center())));
+        self.commit_edit();
+        self.text_tool.adding = false;
+        self.text_tool.selection.clear();
+        if let Some(doc) = &mut self.doc {
+            doc.object_mode = enabled;
+            doc.dragging_item = None;
+            if enabled { doc.reopen = selection; }
+            else { doc.selected_item = None; }
+        }
+    }
+
     fn toolbar(&mut self, ui: &mut Ui, p: &Palette) {
         if self.settings_open {
             self.settings_bar(ui, p);
         } else if self.doc.is_some() {
             self.document_bar(ui, p);
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                self.document_tools(ui, p);
+                let moving = self.doc.as_ref().is_some_and(|d| d.object_mode);
+                for (label, key, enabled) in [("Edit text", "mode-text", false), ("Move / resize objects", "mode-objects", true)] {
+                    if Btn::new(label).id(key).height(30.0)
+                        .look(if moving == enabled { Look::Active } else { Look::Ghost })
+                        .enabled(self.busy == 0).show(ui, p).clicked() { self.set_object_mode(enabled); }
+                }
+                widgets::divider(ui, p, 22.0);
+                if Btn::new("Compare PDFs").id("compare-visible").height(30.0).show(ui, p).clicked() { self.open_tool(Tool::Compare); }
+                ui.label(RichText::new(if moving { "Drag to move  /  corner handles resize  /  right-click for actions" } else { "Click text to edit  /  drag empty space to pan" }).small().color(p.muted));
+            });
         } else {
             self.home_bar(ui, p);
         }
     }
 
-    fn document_bar(&mut self, ui: &mut Ui, p: &Palette) {
+    fn document_tools(&mut self, ui: &mut Ui, p: &Palette) {
         let idle = self.busy == 0 && self.engine_alive;
-        let ready = self.setup_error.is_none() && self.engine_alive;
-        // Narrow windows show icons only; every button keeps its tooltip.
-        let compact = ui.available_width() < 1120.0;
-        let text = |label: &'static str| if compact { "" } else { label };
-        ui.horizontal_centered(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            widgets::icon(ui, Icon::File, 24.0, p.accent_strong);
-            ui.add_space(6.0);
-            if let Some(doc) = &self.doc {
-                let name = RichText::new(&doc.name)
-                    .font(theme::semibold(15.0))
-                    .color(p.text);
-                let width = if compact { 120.0 } else { 240.0 };
-                ui.allocate_ui(vec2(width, 30.0), |ui| {
-                    ui.add(egui::Label::new(name).truncate())
-                        .on_hover_text(shown_path(&doc.source));
-                });
-                if doc.dirty() {
-                    ui.add_space(6.0);
-                    widgets::dot(ui, p.accent_strong);
-                    ui.label(RichText::new("Edited").size(13.5).color(p.muted));
-                }
-            }
-            widgets::divider(ui, p, 26.0);
-            if Btn::new(text("Open"))
-                .with_icon(Icon::Folder)
-                .id("open")
-                .enabled(ready && idle)
-                .tip("Open a PDF (Ctrl+O)")
-                .show(ui, p)
-                .clicked()
-            {
-                self.request_open(None);
-            }
-            let recent = Btn::icon(Icon::ChevronDown)
+            let recent = Btn::new("Tools").trailing(Icon::ChevronDown)
                 .id("recent")
                 .min_width(24.0)
                 .height(34.0)
@@ -2363,6 +2356,44 @@ impl EditorApp {
             }
             if let Some(path) = open {
                 self.request_open(Some(path));
+            }
+    }
+
+    fn document_bar(&mut self, ui: &mut Ui, p: &Palette) {
+        let idle = self.busy == 0 && self.engine_alive;
+        let ready = self.setup_error.is_none() && self.engine_alive;
+        // Narrow windows show icons only; every button keeps its tooltip.
+        let compact = ui.available_width() < 1120.0;
+        let text = |label: &'static str| if compact { "" } else { label };
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            widgets::icon(ui, Icon::File, 24.0, p.accent_strong);
+            ui.add_space(6.0);
+            if let Some(doc) = &self.doc {
+                let name = RichText::new(&doc.name)
+                    .font(theme::semibold(15.0))
+                    .color(p.text);
+                let width = if compact { 120.0 } else { 240.0 };
+                ui.allocate_ui(vec2(width, 30.0), |ui| {
+                    ui.add(egui::Label::new(name).truncate())
+                        .on_hover_text(shown_path(&doc.source));
+                });
+                if doc.dirty() {
+                    ui.add_space(6.0);
+                    widgets::dot(ui, p.accent_strong);
+                    ui.label(RichText::new("Edited").size(13.5).color(p.muted));
+                }
+            }
+            widgets::divider(ui, p, 26.0);
+            if Btn::new(text("Open"))
+                .with_icon(Icon::Folder)
+                .id("open")
+                .enabled(ready && idle)
+                .tip("Open a PDF (Ctrl+O)")
+                .show(ui, p)
+                .clicked()
+            {
+                self.request_open(None);
             }
             if Btn::new(text("Save As"))
                 .with_icon(Icon::Save)
@@ -2616,6 +2647,8 @@ impl EditorApp {
         let (current, total) = (doc.current_page + 1, doc.pages.len());
         let hint = if doc.edit.is_some() {
             "Enter or click away applies \u{b7} Esc cancels"
+        } else if doc.object_mode {
+            "Drag objects to move  /  use handles to resize"
         } else {
             "Click text to edit it in place"
         };
@@ -3063,7 +3096,9 @@ impl EditorApp {
                     && objects.generation == doc.generation
                 {
                     doc.reopen = None;
-                    if let Some(line) = objects.lines.iter().rev().find(|l| l.rect.contains(at)) {
+                    if doc.object_mode {
+                        doc.selected_item = objects.items.iter().rev().find(|item| bounds_rect(&objects.transform, item.bounds).contains(at)).cloned();
+                    } else if let Some(line) = objects.lines.iter().rev().find(|l| l.rect.contains(at)) {
                         start_edit = Some(EditState {
                             page: index,
                             line: line.clone(),
@@ -5495,7 +5530,11 @@ mod tests {
                 frame(&mut app, &ctx, vec![]);
                 assert!(app.doc.as_ref().unwrap().edit.is_some());
                 assert!(app.doc.as_ref().unwrap().reopen.is_none());
-                app.cancel_edit();
+                app.set_object_mode(true);
+                frame(&mut app, &ctx, vec![]);
+                assert!(app.doc.as_ref().unwrap().selected_item.is_some());
+                assert!(app.doc.as_ref().unwrap().edit.is_none());
+                app.set_object_mode(false);
                 frame(&mut app, &ctx, vec![]);
                 frame(
                     &mut app,
@@ -5947,9 +5986,9 @@ mod tests {
                         .show(ui, |ui| app.toolbar(ui, &p));
                 },
             );
+            output.textures_delta.clear();
             for key in [
                 "open",
-                "recent",
                 "save-as",
                 "undo",
                 "redo",
@@ -5963,6 +6002,10 @@ mod tests {
                 let rect = ctx.read_response(widgets::tool_id(key)).unwrap().rect;
                 assert!(rect.min.x >= 0.0 && rect.max.x <= width, "{key}: {rect:?}");
                 assert!(rect.max.y <= 56.0, "{key} wrapped: {rect:?}");
+            }
+            for key in ["recent", "mode-text", "mode-objects", "compare-visible"] {
+                let rect = ctx.read_response(widgets::tool_id(key)).unwrap().rect;
+                assert!(rect.min.x >= 0.0 && rect.max.x <= width, "{key}: {rect:?}");
             }
             if width > 1120.0 {
                 // Wide windows label the main actions.
@@ -6081,6 +6124,28 @@ mod tests {
         assert_eq!(tabs.active, 0);
         assert!(tabs.tabs[0].1.doc.as_ref().unwrap().dirty());
     }
+    #[test]
+    fn visible_modes_and_compare_dispatch_from_toolbar() {
+        let ctx = Context::default();
+        theme::install(&ctx);
+        let (mut app, _, _) = mock_app();
+        opened(&mut app, &ctx);
+        let frame = |app: &mut EditorApp, events| {
+            let mut output = ctx.run_ui(egui::RawInput {
+                events, screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(640.0, 420.0))),
+                ..Default::default()
+            }, |ui| { let p = theme::palette(ui); egui::Panel::top("toolbar").show(ui, |ui| app.toolbar(ui, &p)); });
+            output.textures_delta.clear();
+        };
+        frame(&mut app, vec![]); frame(&mut app, vec![]);
+        for (key, moving) in [("mode-objects", true), ("mode-text", false)] {
+            frame(&mut app, click_at(tool_center(&ctx, key)));
+            assert_eq!(app.doc.as_ref().unwrap().object_mode, moving);
+        }
+        frame(&mut app, click_at(tool_center(&ctx, "compare-visible")));
+        assert!(app.compare.open);
+    }
+
     #[test]
     fn document_tools_scroll_and_dispatch_print_at_small_height() {
         let ctx = Context::default();

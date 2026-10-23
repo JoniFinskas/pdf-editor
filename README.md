@@ -38,7 +38,7 @@ Implementation requirements and scope are documented in [SPEC.md](SPEC.md).
 - Compress supported images, add page numbers/watermarks, export PNG/JPG pages at
   a chosen DPI, and print through the Windows print dialog.
 - Compare two saved PDFs with shared scrolling/zoom, text highlights, a visual
-  pixel overlay and a page-change sidebar (Document → Compare PDFs). Comparison
+  pixel overlay and a page-change sidebar (the **Compare PDFs** toolbar button). Comparison
   aligns page numbers and bounds raster previews to one megapixel per side.
 - Use headless commands for batch PDF operations, optional per-user Windows shell
   integration, and single-instance document handoff.
@@ -128,7 +128,7 @@ existing files and the original path are never overwritten.
 - Drag empty page space or the gray canvas to pan. Drag text before entering its
   editor to move the line/paragraph; finish or cancel an open edit first. A moving
   outline previews placement, and release commits one undoable move.
-- Toggle **Objects** in the bottom bar to select and drag individual text runs,
+- Choose **Move / resize objects** in the toolbar to select and drag individual text runs,
   images, vector icons or grouped artwork. Drag any of the eight selection handles
   to resize; text scales without reflowing, with one undo step on release. Right-click for **Copy**, **Paste on
   this page**, **Duplicate** or **Delete**; Ctrl+C, Ctrl+V, Ctrl+D and Delete also
@@ -153,7 +153,7 @@ existing files and the original path are never overwritten.
 
 ## Daily and extra tools
 
-Click the arrow beside **Open** for the document menu. Its **Edit** section holds
+Click **Tools** in the second toolbar row for the document menu. Its **Edit** section holds
 Find and replace, Fill form, Signatures, Images, Markup and notes, Draw and shapes,
 Redact, and OCR current page. **Document** holds Bookmarks sidebar, Merge/split/
 extract, Crop page, Page numbers and watermark, Export pages as images, Compress

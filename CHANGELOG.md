@@ -3,6 +3,7 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Expose text and object movement modes, Compare, and a labelled Tools menu; preserve selection when leaving text editing to move an object.
 - Run Open and Save As file pickers outside the UI frame loop.
 - Keep error dismiss buttons stable for wrapped messages; expire notifications automatically and bound repeated errors.
 - Allow grouped text editing alongside other page objects and existing page transparency, with render-preservation checks.
