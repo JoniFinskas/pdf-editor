@@ -129,3 +129,7 @@ Keyboard commands are UI dispatch only: Open/Save As use `Engine::open`/`Documen
 
 - `Engine::placed_pictures(document) -> Result<Vec<PlacedPicture>>`: list images inserted by the editor with revision identifiers and point geometry.
 - `Engine::move_picture(document, selected, placement) -> Result<()>`: change an inserted image position and dimensions in one undoable operation.
+
+## Multiple documents
+
+Each `Document` owns its byte snapshots, revision, undo/redo stacks and source identity. Multiple documents may share one `Engine`; mutations and history operations affect only the supplied document. The UI owns one worker/session per tab.

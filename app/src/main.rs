@@ -30,6 +30,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "PDF Editor",
         options,
-        Box::new(|cc| Ok(Box::new(app::EditorApp::new(cc, initial)))),
+        Box::new(|cc| Ok(Box::new(app::TabbedApp::new(&cc.egui_ctx, initial)))),
     )
 }

@@ -49,7 +49,190 @@ const SHORTCUTS: [(&str, &[&str], &str); 9] = [
     ("Zoom at the pointer", &["Ctrl", "Wheel"], ""),
 ];
 
+/// Each tab owns a complete editing session, including its worker and recovery lock.
+pub struct TabbedApp {
+    tabs: Vec<(u64, EditorApp)>,
+    active: usize,
+    next_id: u64,
+    closing: Option<Option<u64>>,
+    allow_exit: bool,
+}
+impl TabbedApp {
+    pub fn new(ctx: &Context, initial: pdf_editor_core::Result<Option<PathBuf>>) -> Self {
+        Self {
+            tabs: vec![(0, EditorApp::new(ctx, initial))],
+            active: 0,
+            next_id: 1,
+            closing: None,
+            allow_exit: false,
+        }
+    }
+    fn add(&mut self, ctx: &Context, path: Option<PathBuf>) {
+        if self.tabs.len() >= 32 {
+            self.tabs[self.active].1.banner(
+                BannerKind::Error,
+                "Close a tab before opening more documents (32-tab limit).",
+            );
+            return;
+        }
+        let mut tab = EditorApp::new(ctx, Ok(path));
+        tab.orphans.clear();
+        self.tabs.push((self.next_id, tab));
+        self.next_id += 1;
+        self.active = self.tabs.len() - 1;
+    }
+    fn needs_warning(tab: &EditorApp) -> bool {
+        tab.busy > 0
+            || tab.doc.as_ref().is_some_and(|d| {
+                d.dirty() || d.edit.as_ref().is_some_and(|e| e.text != e.line.text)
+            })
+    }
+    fn remove(&mut self, id: u64, ctx: &Context) {
+        if let Some(index) = self.tabs.iter().position(|(key, _)| *key == id) {
+            let (_, mut tab) = self.tabs.remove(index);
+            tab.allow_close = true;
+            eframe::App::on_exit(&mut tab, None);
+            if index < self.active {
+                self.active -= 1;
+            }
+            self.active = self.active.min(self.tabs.len().saturating_sub(1));
+        }
+        if self.tabs.is_empty() {
+            self.add(ctx, None);
+        }
+    }
+}
+impl eframe::App for TabbedApp {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        let p = theme::palette(ui);
+        for (index, (_, tab)) in self.tabs.iter_mut().enumerate() {
+            if index != self.active {
+                tab.poll(&ctx);
+                tab.autosave_tick(&ctx);
+            }
+        }
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.allow_exit
+            && self.tabs.iter().any(|(_, t)| Self::needs_warning(t))
+        {
+            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+            self.closing = Some(None);
+        }
+        let mut select = None;
+        let mut close = None;
+        let mut new = false;
+        egui::Panel::top("document-tabs")
+            .frame(Frame::new().fill(p.chrome).inner_margin(6))
+            .show(ui, |ui| {
+                egui::ScrollArea::horizontal().show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        for (index, (id, tab)) in self.tabs.iter().enumerate() {
+                            ui.push_id(id, |ui| {
+                                let name =
+                                    tab.doc.as_ref().map_or("New document", |d| d.name.as_str());
+                                let label = format!(
+                                    "{}{}",
+                                    if Self::needs_warning(tab) { "• " } else { "" },
+                                    shorten(name, 28)
+                                );
+                                if ui.selectable_label(self.active == index, label).clicked() {
+                                    select = Some(index);
+                                }
+                                if Btn::new("×").tip("Close tab").show(ui, &p).clicked() {
+                                    close = Some(*id);
+                                }
+                            });
+                        }
+                        if Btn::new("+").tip("New tab").show(ui, &p).clicked() {
+                            new = true;
+                        }
+                    });
+                });
+            });
+        if let Some(index) = select {
+            self.tabs[self.active].1.commit_edit();
+            self.active = index;
+            self.tabs[index].1.title.clear();
+        }
+        if new {
+            self.add(&ctx, None);
+        }
+        if let Some(id) = close {
+            if self
+                .tabs
+                .iter()
+                .find(|(key, _)| *key == id)
+                .is_some_and(|(_, t)| Self::needs_warning(t))
+            {
+                self.closing = Some(Some(id));
+            } else {
+                self.remove(id, &ctx);
+            }
+        }
+        let (id, tab) = &mut self.tabs[self.active];
+        ui.push_id(*id, |ui| eframe::App::ui(tab, ui, frame));
+        if let Some(path) = self.tabs[self.active].1.new_tab_path.take() {
+            self.add(&ctx, Some(path));
+        }
+        if let Some(target) = self.closing {
+            let busy = self
+                .tabs
+                .iter()
+                .any(|(id, t)| target.is_none_or(|key| key == *id) && t.busy > 0);
+            let mut choice = None;
+            egui::Modal::new(Id::new("close-tabs-confirm")).show(&ctx, |ui| {
+                ui.heading(if target.is_some() {
+                    "Close this tab?"
+                } else {
+                    "Close all documents?"
+                });
+                ui.label("Unsaved changes will be lost. Cancel to save documents first.");
+                if busy {
+                    ui.label("Wait for pending document operations to finish.");
+                }
+                ui.horizontal(|ui| {
+                    if Btn::new("Cancel").show(ui, &p).clicked() {
+                        choice = Some(false);
+                    }
+                    if Btn::new("Discard and close")
+                        .enabled(!busy)
+                        .show(ui, &p)
+                        .clicked()
+                    {
+                        choice = Some(true);
+                    }
+                });
+            });
+            if let Some(discard) = choice {
+                self.closing = None;
+                if discard {
+                    if let Some(id) = target {
+                        self.remove(id, &ctx);
+                    } else {
+                        self.allow_exit = true;
+                        for (_, t) in &mut self.tabs {
+                            t.allow_close = true;
+                        }
+                        ctx.send_viewport_cmd(ViewportCommand::Close);
+                    }
+                }
+            }
+        }
+    }
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        for (_, tab) in &mut self.tabs {
+            eframe::App::on_exit(tab, gl);
+        }
+    }
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        self.tabs[self.active].1.clear_color(visuals)
+    }
+}
+
 pub struct EditorApp {
+    tabbed: bool,
+    new_tab_path: Option<PathBuf>,
     recent_files: Vec<PathBuf>,
     dragging_page: Option<usize>,
     text_tool: TextTool,
@@ -273,11 +456,8 @@ impl DocView {
 }
 
 impl EditorApp {
-    pub fn new(
-        cc: &eframe::CreationContext<'_>,
-        initial: pdf_editor_core::Result<Option<PathBuf>>,
-    ) -> Self {
-        theme::install(&cc.egui_ctx);
+    pub fn new(ctx: &Context, initial: pdf_editor_core::Result<Option<PathBuf>>) -> Self {
+        theme::install(ctx);
         let mut banners = Vec::new();
         let config_path = Substitution::config_path().ok();
         let policy = match config_path.as_deref().map(Substitution::load) {
@@ -323,8 +503,10 @@ impl EditorApp {
             Err(e) => (None, Some(e.to_string())),
         };
         let orphans = recovery::orphans();
-        let worker = Worker::spawn(cc.egui_ctx.clone(), library.unwrap_or_default(), policy);
+        let worker = Worker::spawn(ctx.clone(), library.unwrap_or_default(), policy);
         let mut app = Self {
+            tabbed: true,
+            new_tab_path: None,
             recent_files: config_path
                 .as_deref()
                 .and_then(|p| pdf_editor_core::Settings::load(p).ok())
@@ -408,6 +590,11 @@ impl EditorApp {
     }
 
     fn request_open(&mut self, path: Option<PathBuf>) {
+        if self.tabbed {
+            self.commit_edit();
+            self.open_dialog_or_path(path);
+            return;
+        }
         let committed = self.commit_edit();
         if committed || self.busy > 0 || self.doc.as_ref().is_some_and(DocView::dirty) {
             self.confirm = Some(Pending::Open(path));
@@ -429,6 +616,10 @@ impl EditorApp {
     }
 
     fn open_path(&mut self, path: PathBuf) {
+        if self.tabbed && self.doc.is_some() {
+            self.new_tab_path = Some(path);
+            return;
+        }
         if self.setup_error.is_some() || self.busy > 0 {
             return;
         }
@@ -1551,7 +1742,7 @@ impl EditorApp {
     }
 
     fn close_guard(&mut self, ctx: &Context) {
-        if !ctx.input(|i| i.viewport().close_requested()) || self.allow_close {
+        if self.tabbed || !ctx.input(|i| i.viewport().close_requested()) || self.allow_close {
             return;
         }
         let committed = self.commit_edit();
@@ -3693,6 +3884,8 @@ mod tests {
         let (worker, inbox, outbox) = crate::worker::test_channel();
         (
             EditorApp {
+                tabbed: false,
+                new_tab_path: None,
                 recent_files: vec![],
                 dragging_page: None,
                 text_tool: TextTool::default(),
@@ -4140,5 +4333,34 @@ mod tests {
         frame(&mut app, vec![]);
         frame(&mut app, click_at(tool_center(&ctx, "Shortcuts")));
         assert!(app.settings_tab == SettingsTab::Shortcuts);
+    }
+    #[test]
+    fn tab_requests_preserve_document_and_warn_for_background_edits() {
+        let ctx = Context::default();
+        let (mut first, requests, _) = mock_app();
+        let (mut second, _, _) = mock_app();
+        opened(&mut first, &ctx);
+        opened(&mut second, &ctx);
+        first.tabbed = true;
+        second.tabbed = true;
+        first.doc.as_mut().unwrap().changes.edited();
+        first.request_open(Some(PathBuf::from("next.pdf")));
+        assert_eq!(first.new_tab_path.take(), Some(PathBuf::from("next.pdf")));
+        assert!(first.doc.as_ref().unwrap().dirty());
+        assert!(first.confirm.is_none());
+        assert!(requests.try_recv().is_err());
+        let mut tabs = TabbedApp {
+            tabs: vec![(0, first), (1, second)],
+            active: 1,
+            next_id: 2,
+            closing: None,
+            allow_exit: false,
+        };
+        assert!(TabbedApp::needs_warning(&tabs.tabs[0].1));
+        assert!(!TabbedApp::needs_warning(&tabs.tabs[1].1));
+        tabs.remove(1, &ctx);
+        assert_eq!(tabs.tabs.len(), 1);
+        assert_eq!(tabs.active, 0);
+        assert!(tabs.tabs[0].1.doc.as_ref().unwrap().dirty());
     }
 }

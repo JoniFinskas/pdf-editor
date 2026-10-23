@@ -1467,3 +1467,27 @@ fn inserted_images_move_resize_and_survive_text_edits() {
         fs::remove_file(path).unwrap();
     }
 }
+
+#[test]
+fn independent_documents_keep_separate_undo_histories() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut first = e.open(&fixture("multi-page.pdf")).unwrap();
+    let mut second = e.open(&fixture("multi-page.pdf")).unwrap();
+    let original = first.bytes.clone();
+    let object = e.text_objects(&first, 0).unwrap().remove(0);
+    e.edit(&mut first, &object, "AB").unwrap();
+    assert_eq!(second.bytes, original);
+    assert!(!second.can_undo());
+    e.edit_pages(&mut second, &PageEdit::Rotate { page: 0 })
+        .unwrap();
+    let rotated = second.bytes.clone();
+    first.undo();
+    assert_eq!(first.bytes, original);
+    assert_eq!(second.bytes, rotated);
+    assert!(second.can_undo());
+    second.undo();
+    assert_eq!(second.bytes, original);
+    first.redo();
+    assert_ne!(first.bytes, original);
+}

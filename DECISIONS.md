@@ -342,3 +342,7 @@ Store markup in page Annots arrays with standard Highlight, Underline, StrikeOut
 ## Part F: PNG/JPG insertion
 
 Reuse the bounded PNG/JPEG decoder and transparent image embedding API. Mark each inserted image with standard marked-content operators, so placement identifiers survive content-stream recomposition during text edits and save/reopen. Position and dimensions are editable in PDF points. Existing arbitrary PDF image transforms are left intact; the image tool lists editor-inserted images and signatures.
+
+## Part F: Document tabs
+
+Each tab owns its entire editor state and worker, including undo history, unsaved/savepoint state, view, selection, tools and recovery lock. Native PDFium calls remain serialized by the shared bindings. Background tabs continue polling completed work and scheduling recovery. Open creates a new tab instead of discarding the active document. Closing one tab checks its pending edits; closing the window checks all tabs, including inactive ones. Limit open tabs to 32 to bound worker and document allocation.
