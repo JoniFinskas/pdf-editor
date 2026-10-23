@@ -357,7 +357,7 @@ impl eframe::App for TabbedApp {
         }
         let (id, tab) = &mut self.tabs[self.active];
         ui.push_id(*id, |ui| eframe::App::ui(tab, ui, frame));
-        if let Some(path) = self.tabs[self.active].1.new_tab_path.take() {
+        if let Some(path) = self.tabs.iter_mut().find_map(|(_, tab)| tab.new_tab_path.take()) {
             self.add(&ctx, Some(path));
         }
         if let Some(target) = self.closing {
@@ -443,6 +443,8 @@ impl eframe::App for TabbedApp {
 pub struct EditorApp {
     tabbed: bool,
     new_tab_path: Option<PathBuf>,
+    picker: crate::dialogs::Picker,
+    picker_save: bool,
     recent_files: Vec<PathBuf>,
     dragging_page: Option<usize>,
     text_tool: TextTool,
@@ -782,6 +784,8 @@ impl EditorApp {
         let mut app = Self {
             tabbed: true,
             new_tab_path: None,
+            picker: crate::dialogs::Picker::default(),
+            picker_save: false,
             recent_files: config_path
                 .as_deref()
                 .and_then(|p| pdf_editor_core::Settings::load(p).ok())
@@ -894,18 +898,17 @@ impl EditorApp {
     }
 
     fn open_dialog_or_path(&mut self, path: Option<PathBuf>) {
-        let path = path.or_else(|| {
-            rfd::FileDialog::new()
-                .set_title("Open PDF")
-                .add_filter("PDF document", &["pdf"])
-                .pick_file()
-        });
-        if let Some(path) = path {
-            self.open_path(path);
+        if self.picker.pending() { return; }
+        if let Some(path) = path { self.open_path(path); return; }
+        self.picker_save = false;
+        if let Err(error) = self.picker.start(|| rfd::FileDialog::new()
+            .set_title("Open PDF").add_filter("PDF document", &["pdf"]).pick_file()) {
+            self.banner(BannerKind::Error, format!("Cannot open file picker: {error}"));
         }
     }
 
     fn open_path(&mut self, path: PathBuf) {
+        if self.picker.pending() { return; }
         if self.tabbed && self.doc.is_some() {
             self.new_tab_path = Some(path);
             return;
@@ -926,20 +929,17 @@ impl EditorApp {
         if self.busy > u32::from(committed) {
             return;
         }
-        let mut dialog = rfd::FileDialog::new()
-            .set_title("Save As")
-            .add_filter("PDF document", &["pdf"]);
-        if let Some(dir) = doc.suggested.parent() {
-            dialog = dialog.set_directory(dir);
-        }
-        if let Some(name) = doc.suggested.file_name() {
-            dialog = dialog.set_file_name(name.to_string_lossy());
-        }
-        if let Some(mut path) = dialog.save_file() {
-            if path.extension().is_none() {
-                path.set_extension("pdf");
-            }
-            self.password.save(path);
+        if self.picker.pending() { return; }
+        let suggested = doc.suggested.clone();
+        self.picker_save = true;
+        if let Err(error) = self.picker.start(move || {
+            let mut dialog = rfd::FileDialog::new().set_title("Save As")
+                .add_filter("PDF document", &["pdf"]);
+            if let Some(dir) = suggested.parent() { dialog = dialog.set_directory(dir); }
+            if let Some(name) = suggested.file_name() { dialog = dialog.set_file_name(name.to_string_lossy()); }
+            dialog.save_file()
+        }) {
+            self.banner(BannerKind::Error, format!("Cannot open file picker: {error}"));
         }
     }
 
@@ -1067,6 +1067,19 @@ impl EditorApp {
     // ----- Worker replies -----
 
     fn poll(&mut self, ctx: &Context) {
+        if let Some(result) = self.picker.poll() {
+            match result {
+                Ok(Some(mut path)) if self.picker_save => {
+                    if path.extension().is_none() { path.set_extension("pdf"); }
+                    self.password.save(path);
+                }
+                Ok(Some(path)) => self.open_path(path),
+                Ok(None) => {},
+                Err(error) => self.banner(BannerKind::Error, error),
+            }
+        }
+        if self.picker.pending() { ctx.request_repaint_after(std::time::Duration::from_millis(50)); }
+
         let Some(replies) = self.worker.poll() else {
             self.engine_stopped();
             return;
@@ -5090,6 +5103,8 @@ mod tests {
             EditorApp {
                 tabbed: false,
                 new_tab_path: None,
+            picker: crate::dialogs::Picker::default(),
+            picker_save: false,
                 recent_files: vec![],
                 dragging_page: None,
                 text_tool: TextTool::default(),
