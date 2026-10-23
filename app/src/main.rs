@@ -14,6 +14,7 @@ mod icons;
 mod instance;
 mod markup;
 mod organize;
+mod paragraph;
 mod passwords;
 mod pictures;
 mod recovery;

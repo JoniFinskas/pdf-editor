@@ -641,6 +641,8 @@ struct PageObjects {
 /// print output often places every glyph in its own object.
 #[derive(Clone)]
 struct Line {
+    paragraph: Option<pdf_editor_core::Paragraph>,
+    fallback: Option<String>,
     objects: Vec<TextObject>,
     /// Union of the objects' extents in unscaled raster points.
     rect: Rect,
@@ -935,9 +937,12 @@ impl EditorApp {
         }
         doc.applying = Some((edit.page, edit.line.rect, edit.line.objects.len()));
         self.busy += 1;
-        self.send(Request::Edit {
-            objects: edit.line.objects,
-            text: edit.text,
+        self.send(match edit.line.paragraph {
+            Some(paragraph) => Request::EditParagraph(paragraph, edit.text),
+            None => Request::Edit {
+                objects: edit.line.objects,
+                text: edit.text,
+            },
         });
         true
     }
@@ -2836,10 +2841,31 @@ impl EditorApp {
                         ctx.set_cursor_icon(CursorIcon::Text);
                     }
                     if response.clicked() && !busy && !editing_this(line) {
+                        let chosen = if ctx.input(|i| i.modifiers.alt) && line.paragraph.is_some() {
+                            let items = page
+                                .objects
+                                .as_ref()
+                                .map(|objects| {
+                                    line.objects
+                                        .iter()
+                                        .map(|o| (o.clone(), raster_rect(&objects.transform, o)))
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            let at = response
+                                .interact_pointer_pos()
+                                .map(|pos| ((pos - rect.min) / scale).to_pos2());
+                            group_lines_fallback(items)
+                                .into_iter()
+                                .find(|l| at.is_some_and(|at| l.rect.expand(2.0).contains(at)))
+                                .unwrap_or_else(|| line.clone())
+                        } else {
+                            line.clone()
+                        };
                         start_edit = Some(EditState {
                             page: index,
-                            line: line.clone(),
-                            text: line.text.clone(),
+                            text: chosen.text.clone(),
+                            line: chosen,
                             focus: true,
                         });
                         clicked_at = response
@@ -4044,7 +4070,9 @@ fn edit_box(
     let [a, b, c, d, _, _] = first.matrix;
     let from_matrix = first.size * (a * d - b * c).abs().sqrt() * scale;
     let height = screen.height().max(4.0);
-    let font_px = if from_matrix > height * 0.6 && from_matrix < height * 2.4 {
+    let font_px = if edit.line.paragraph.is_some()
+        || (from_matrix > height * 0.6 && from_matrix < height * 2.4)
+    {
         from_matrix
     } else {
         height * 1.2
@@ -4066,7 +4094,16 @@ fn edit_box(
     let box_height = screen.height().max(font_px * 1.25);
     let mut rect = Rect::from_center_size(screen.center(), vec2(screen.width(), box_height))
         .expand2(vec2(3.0, 1.0));
-    rect.max.x = rect.max.x.max(rect.min.x + text_width + 10.0);
+    if edit.line.paragraph.is_none() {
+        rect.max.x = rect.max.x.max(rect.min.x + text_width + 10.0);
+    }
+    crate::paragraph::hint(
+        ui,
+        rect,
+        edit.line.paragraph.as_ref(),
+        edit.line.fallback.as_deref(),
+        p.muted,
+    );
 
     let painter = ui.painter();
     painter.add(
@@ -4090,8 +4127,17 @@ fn edit_box(
         painter.circle(corner, 3.5, Color32::WHITE, Stroke::new(1.5, p.accent));
     }
 
+    if !edit.focus
+        && edit.line.paragraph.is_some()
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, Key::Enter))
+    {
+        return Some(true);
+    }
+    if !edit.focus && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)) {
+        return Some(false);
+    }
     let id = Id::new(("edit-box", edit.page, first.index, first.revision));
-    let editor = TextEdit::singleline(&mut edit.text)
+    let editor = crate::paragraph::text_edit(&mut edit.text, edit.line.paragraph.is_some())
         .id(id)
         .font(font)
         .text_color(color)
@@ -4125,6 +4171,45 @@ fn to_screen(raster: Rect, page: Rect, scale: f32) -> Rect {
 /// horizontal orientation, on one baseline, advancing left to right with at
 /// most a word gap between them. Space-only objects never start or end a line.
 fn group_lines(items: Vec<(TextObject, Rect)>) -> Vec<Line> {
+    let objects: Vec<_> = items.iter().map(|(o, _)| o.clone()).collect();
+    let rectangles: std::collections::HashMap<_, _> =
+        items.iter().map(|(o, r)| (o.index, *r)).collect();
+    let paragraphs = pdf_editor_core::paragraphs(&objects);
+    let membership: std::collections::HashMap<_, _> = paragraphs
+        .iter()
+        .enumerate()
+        .flat_map(|(i, p)| p.objects.iter().map(move |o| (o.index, i)))
+        .collect();
+    let mut emitted = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for mut line in group_lines_fallback(items) {
+        let paragraph = line
+            .objects
+            .iter()
+            .find_map(|o| membership.get(&o.index))
+            .map(|i| (*i, &paragraphs[*i]));
+        if let Some((i, p)) = paragraph {
+            if p.fallback.is_none() && p.line_count >= 2 {
+                if emitted.insert(i) {
+                    let selected = p
+                        .objects
+                        .iter()
+                        .filter_map(|o| rectangles.get(&o.index).map(|r| (o.clone(), *r)))
+                        .collect();
+                    let mut block = line_from(selected);
+                    block.text = p.text.clone();
+                    block.paragraph = Some(p.clone());
+                    result.push(block);
+                }
+                continue;
+            }
+            line.fallback = p.fallback.clone();
+        }
+        result.push(line);
+    }
+    result
+}
+fn group_lines_fallback(items: Vec<(TextObject, Rect)>) -> Vec<Line> {
     fn em(o: &TextObject) -> f32 {
         (o.size * o.matrix[3].abs()).max(0.1)
     }
@@ -4192,6 +4277,8 @@ fn line_from(group: Vec<(TextObject, Rect)>) -> Line {
         previous = Some(object);
     }
     Line {
+        paragraph: None,
+        fallback: None,
         objects: group.into_iter().map(|(o, _)| o).collect(),
         rect,
         text,

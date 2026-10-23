@@ -75,6 +75,7 @@ pub enum Request {
         objects: Vec<TextObject>,
         text: String,
     },
+    EditParagraph(pdf_editor_core::Paragraph, String),
     Undo,
     Redo,
     SaveAs(PathBuf),
@@ -739,9 +740,16 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 objects,
             })
         }
-        Request::Edit { objects, text } => {
+        Request::Edit { .. } | Request::EditParagraph(..) => {
             let doc = state.doc.as_mut()?;
-            match engine.edit_group(doc, &objects, &text) {
+            let result = match request {
+                Request::Edit { objects, text } => engine.edit_group(doc, &objects, &text),
+                Request::EditParagraph(paragraph, text) => {
+                    engine.edit_paragraph(doc, &paragraph, &text)
+                }
+                _ => unreachable!(),
+            };
+            match result {
                 Ok(result) => {
                     if result.objects_changed > 0 {
                         state.generation += 1;

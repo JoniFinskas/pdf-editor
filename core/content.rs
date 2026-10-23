@@ -26,14 +26,15 @@ fn decoding<'a>(doc: &'a lopdf::Document, font: &'a Dictionary) -> Result<Encodi
     }
     Ok(font.get_font_encoding_with_limit(doc, MAX_STREAM)?)
 }
-struct Run {
+pub(crate) struct Run {
     op: usize,
-    key: Vec<u8>,
+    pub(crate) key: Vec<u8>,
     size: f32,
     text: String,
-    font: Dictionary,
+    pub(crate) font: Dictionary,
+    pub(crate) spacing: [f32; 4],
 }
-fn runs(
+pub(crate) fn runs(
     doc: &lopdf::Document,
     page: ObjectId,
     content: &Content<Vec<Operation>>,
@@ -41,6 +42,7 @@ fn runs(
     let fonts = doc.get_page_fonts(page)?;
     let mut key = Vec::new();
     let mut size = 0.0;
+    let mut spacing = [0.0, 0.0, 100.0, 0.0];
     let mut stack = vec![];
     let mut result = vec![];
     for (index, op) in content.operations.iter().enumerate() {
@@ -49,12 +51,25 @@ fn runs(
                 if stack.len() > 128 {
                     return Err(err("Excessive graphics nesting"));
                 }
-                stack.push((key.clone(), size));
+                stack.push((key.clone(), size, spacing));
             }
             "Q" => {
                 if let Some(state) = stack.pop() {
-                    (key, size) = state;
+                    (key, size, spacing) = state;
                 }
+            }
+            "Tc" | "Tw" | "Tz" | "Tr" => {
+                let index = match op.operator.as_str() {
+                    "Tc" => 0,
+                    "Tw" => 1,
+                    "Tz" => 2,
+                    _ => 3,
+                };
+                spacing[index] = op
+                    .operands
+                    .first()
+                    .ok_or_else(|| err("Invalid text state"))?
+                    .as_float()?;
             }
             "Tf" => {
                 key = op
@@ -103,6 +118,7 @@ fn runs(
                         size,
                         text,
                         font: (*font).clone(),
+                        spacing,
                     });
                 }
             }
@@ -114,7 +130,7 @@ fn runs(
     }
     Ok(result)
 }
-fn encode(doc: &lopdf::Document, font: &Dictionary, text: &str) -> Result<Vec<u8>> {
+pub(crate) fn encode(doc: &lopdf::Document, font: &Dictionary, text: &str) -> Result<Vec<u8>> {
     let encoding = decoding(doc, font)?;
     let bytes = encoding.string_to_bytes(text);
     if encoding.bytes_to_string(&bytes)? != text {
@@ -576,6 +592,7 @@ mod tests {
             size: 12.0,
             text: text.into(),
             font: Dictionary::new(),
+            spacing: [0.0, 0.0, 100.0, 0.0],
         }
     }
     fn object(text: &str) -> TextObject {

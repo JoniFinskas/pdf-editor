@@ -460,3 +460,10 @@ sibling desktop binary through argument arrays without command-shell interpretat
   Merge launches collect into one ordered list until Merge is clicked or the organizer closes, so slow Explorer launches retain their selection. The list is capped at 100 additional PDFs with a visible overflow error.
 - Do not automatically register or remove anything at startup. Only Settings actions
   change registration. Generated registry records are tested without live mutation.
+
+## Paragraph reflow
+
+- Detect conservative horizontal paragraphs with compatible font/style, overlapping extents, stable baselines and aligned edges or centers. Rotated/scaled text, mixed-style lines, ambiguous columns and dense pages retain line editing and an inline explanation.
+- Reuse the existing text transaction to select/embed the replacement font. Layout prefers explicit PDF glyph widths, uses embedded font advances where widths are absent, preserves character/word spacing, and adds justified gaps through TJ adjustments. Unsupported mappings or render modes produce a clean error.
+- Scope substitutions to the paragraph to preserve all neighboring objects. Reflow never moves other content; added lines warn about overlap and reject overflow beyond the page. Overwide unbreakable words require a space or ordinary line editing.
+- Replace the paragraph as a single undo snapshot, verify text/neighbor state before accepting, and test all alignments with generated Finnish fixtures and outside-box raster comparisons.
