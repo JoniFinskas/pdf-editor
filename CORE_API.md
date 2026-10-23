@@ -223,3 +223,8 @@ resource bindings, paint order and form bounding-box clips remain intact; other
 instances sharing the same form remain grouped. Unsupported transparency groups,
 optional-content forms, reference forms, inline images, excessive nesting and
 ambiguous selections return an error without changing document history.
+
+## Table export
+
+- `Engine::detect_table(document, page, area) -> Result<TableGrid>`: infer a bounded grid from PDF text positions and transformed horizontal/vertical ruling lines inside a PDF-point selection.
+- `TableGrid::export(path, TableFormat::{Xlsx,Csv}) -> Result<()>`: export edited cell values to a new local file; XLSX uses explicit string cells, CSV neutralizes formula prefixes.

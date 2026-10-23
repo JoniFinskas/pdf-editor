@@ -547,3 +547,9 @@ Decided to share one immutable clipboard snapshot among the workers in a window.
 Copy reserves its result when queued, and paste captures that exact result slot when queued. A destination worker waits for an earlier pending copy without blocking the interface or holding a native PDF lock. Later copies cannot replace an already-queued paste. Failed or cancelled copies wake waiting pastes with an error.
 
 Copies use PDFium's group-to-Form import against the private snapshot. Temporary wrappers around individual text, image and path objects are expanded on the candidate before accepting one undoable change, keeping them directly editable. Genuine source Form groups remain grouped. This retains nested resources, transformations and clipping without flattening or altering the source document. Source native handles are captured before any copy because restoring a temporary group can change object indices.
+
+## Table extraction and Office packaging
+
+Table extraction uses ruling-line boundaries when present and conservative text alignment otherwise. The editable preview is mandatory because PDF content does not encode table semantics reliably. Merged cells and irregular layouts require manual correction.
+
+Office exports use a bounded stored-ZIP Open XML writer: no new dependencies, macros, external links, formulas or embedded executable content. XLSX cells are inline strings. CSV values beginning with =, +, -, @, tab or carriage return are prefixed with an apostrophe to prevent formula execution. Existing export files are never overwritten.

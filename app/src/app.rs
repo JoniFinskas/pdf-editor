@@ -69,6 +69,7 @@ enum Tool {
     Crop,
     Stamps,
     Export,
+    Tables,
     Compress,
     Compare,
     Print,
@@ -100,6 +101,7 @@ impl Tool {
                 (Tool::Crop, "Crop page…", Icon::Crop),
                 (Tool::Stamps, "Page numbers and watermark…", Icon::Hash),
                 (Tool::Export, "Export pages as images…", Icon::Export),
+                (Tool::Tables, "Tables to Excel or CSV...", Icon::Export),
                 (Tool::Compress, "Compress images…", Icon::Compress),
                 (Tool::Compare, "Compare PDFs…", Icon::Layers),
                 (Tool::Print, "Print…", Icon::Print),
@@ -124,6 +126,7 @@ impl Tool {
             Tool::Crop => "tool-crop",
             Tool::Stamps => "tool-stamps",
             Tool::Export => "tool-export",
+            Tool::Tables => "tool-tables",
             Tool::Compress => "tool-compress",
             Tool::Compare => "tool-compare",
             Tool::Print => "print-document",
@@ -444,6 +447,7 @@ pub struct EditorApp {
     compare: crate::compare::Compare,
     stamps: crate::stamps::Stamps,
     export: crate::export::Export,
+    tables: crate::table_export::Tables,
     crop: crate::crop::Crop,
     bookmarks: crate::bookmarks::Bookmarks,
     drawing: crate::drawing::DrawingTool,
@@ -781,6 +785,7 @@ impl EditorApp {
             compare: Default::default(),
             stamps: Default::default(),
             export: Default::default(),
+            tables: Default::default(),
             crop: Default::default(),
             drawing: Default::default(),
             bookmarks: Default::default(),
@@ -1053,6 +1058,11 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::TableDetected(grid) => {
+                self.busy = self.busy.saturating_sub(1);
+                self.tables.grid = Some(grid);
+                self.tables.open = true;
+            }
             Reply::ItemsCopied => {
                 self.busy = self.busy.saturating_sub(1);
             }
@@ -1170,6 +1180,7 @@ impl EditorApp {
                         ),
                     }
                 }
+                self.tables = Default::default();
                 self.text_tool.selection.clear();
                 self.text_tool.adding = false;
                 self.text_tool.at = None;
@@ -2092,6 +2103,7 @@ impl EditorApp {
             Tool::Drawing => self.drawing.open = true,
             Tool::Crop => self.crop.open = true,
             Tool::Export => self.export.open = true,
+            Tool::Tables => self.tables.open = true,
             Tool::Stamps => self.stamps.open = true,
             Tool::Compress => self.compression.open = true,
             Tool::Compare => self.compare.open = true,
@@ -2912,7 +2924,24 @@ impl EditorApp {
                         }
                     }
                 }
+
+                let table_selecting = self.tables.selecting;
                 if !busy
+                    && let Some(objects) = &page.objects
+                    && let Some(request) = self.tables.on_page(
+                        &response,
+                        &painter,
+                        page_no,
+                        rect,
+                        scale,
+                        objects.transform,
+                    )
+                {
+                    self.busy += 1;
+                    requests.push(request);
+                }
+                if !busy
+                    && !table_selecting
                     && let Some(objects) = &page.objects
                     && let Some(request) = self.drawing.on_page(
                         &response,
@@ -2953,7 +2982,7 @@ impl EditorApp {
                             .find(|l| l.rect.expand(1.0).contains(at))
                     })
                 });
-                if !self.drawing.active && !self.text_tool.adding && !busy {
+                if !self.drawing.active && !self.text_tool.adding && !busy && !table_selecting {
                     let at = (if response.drag_started() {
                         ctx.input(|i| i.pointer.press_origin())
                     } else {
@@ -3173,6 +3202,7 @@ impl EditorApp {
                     })
                 };
                 if self.text_tool.adding
+                    && !table_selecting
                     && response.clicked()
                     && !busy
                     && let Some(pos) = response.interact_pointer_pos()
@@ -3187,9 +3217,12 @@ impl EditorApp {
                     painter.circle_stroke(at, 5.0, Stroke::new(1.5, p.accent));
                     self.tool_anchor = Some(Rect::from_center_size(at, vec2(10.0, 10.0)));
                 }
-                if let Some(line) = hit
-                    .filter(|_| !doc.object_mode && !self.text_tool.adding && !self.drawing.active)
-                {
+                if let Some(line) = hit.filter(|_| {
+                    !doc.object_mode
+                        && !self.text_tool.adding
+                        && !self.drawing.active
+                        && !table_selecting
+                }) {
                     if !editing_this(line) && !busy {
                         let screen = to_screen(line.rect, rect, scale);
                         painter.rect_stroke(
@@ -3895,6 +3928,17 @@ impl eframe::App for EditorApp {
             self.commit_edit();
             self.busy += 1;
             self.send(request);
+        }
+        let selecting_table = self.tables.selecting;
+        if let Some(request) = self.tables.show(&ctx, &p, self.busy == 0) {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
+        if !selecting_table && self.tables.selecting {
+            self.commit_edit();
+            self.text_tool.adding = false;
+            self.drawing.active = false;
         }
         if let Some(request) = self.export.show(&ctx, &p, self.busy == 0) {
             self.commit_edit();
@@ -4863,6 +4907,7 @@ mod tests {
                 compare: Default::default(),
                 stamps: Default::default(),
                 export: Default::default(),
+                tables: Default::default(),
                 crop: Default::default(),
                 drawing: Default::default(),
                 bookmarks: Default::default(),
