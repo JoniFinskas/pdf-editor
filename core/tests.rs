@@ -2262,3 +2262,226 @@ fn image_import_decodes_png_jpeg_and_rejects_bad_heic() {
     fs::write(&bad,b"not a HEIC image").unwrap();
     assert!(import_picture(&bad).is_err());
 }
+
+#[test]
+fn scan_cleanup_is_atomic_undoable_and_keeps_other_pages() {
+    let _lock = PDFIUM.lock().unwrap();
+    let engine = engine();
+    let mut photo = Picture {
+        width: 100,
+        height: 80,
+        rgba: [30, 30, 30, 255].repeat(100 * 80),
+    };
+    for y in 8..72 {
+        for x in 10..90 {
+            let i = (y * 100 + x) * 4;
+            photo.rgba[i..i + 4].copy_from_slice(&[240, 230, 200, 255]);
+        }
+    }
+    let other = Picture {
+        width: 40,
+        height: 40,
+        rgba: [20, 40, 220, 255].repeat(40 * 40),
+    };
+    let mut doc = engine
+        .pictures_to_pdf([Ok(photo), Ok(other)], ImagePageSize::Image)
+        .unwrap();
+    let original = doc.bytes.clone();
+    let neighbor = engine.render(&doc, 1, 2.0).unwrap().rgba;
+    let options = ScanOptions {
+        corners: [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]],
+        color: ScanColor::Grayscale,
+        ..Default::default()
+    };
+    engine.cleanup_scan(&mut doc, 0, &options).unwrap();
+    assert_eq!(engine.render(&doc, 1, 2.0).unwrap().rgba, neighbor);
+    let info = engine.pages(&doc).unwrap();
+    assert!((info[0].width - 60.0).abs() < 1.0);
+    assert!((info[0].height - 48.0).abs() < 1.0);
+    assert_eq!(engine.page_items(&doc, 0).unwrap().len(), 1);
+    let cleaned = doc.bytes.clone();
+    let invalid = ScanOptions {
+        corners: [[0.0, 0.0]; 4],
+        ..Default::default()
+    };
+    assert!(engine.cleanup_scan(&mut doc, 0, &invalid).is_err());
+    assert_eq!(doc.bytes, cleaned);
+    assert!(doc.undo());
+    assert_eq!(doc.bytes, original);
+    assert!(doc.redo());
+    assert_eq!(doc.bytes, cleaned);
+    let output = temp("cleaned-photo.pdf");
+    if output.exists() {
+        fs::remove_file(&output).unwrap();
+    }
+    doc.save_as(&output).unwrap();
+    assert_eq!(
+        engine.pages(&engine.open(&output).unwrap()).unwrap().len(),
+        2
+    );
+    engine
+        .add_annotation(
+            &mut doc,
+            &Markup {
+                page: 0,
+                kind: MarkupKind::Note,
+                bounds: Bounds {
+                    left: 5.0,
+                    bottom: 5.0,
+                    right: 10.0,
+                    top: 10.0,
+                },
+                color: [255, 200, 0],
+                opacity: 1.0,
+                text: "Keep this note".into(),
+            },
+        )
+        .unwrap();
+    assert!(engine.scan_preview(&doc, 0).is_err());
+    let text_path = temp("scan-text-guard.pdf");
+    fs::write(
+        &text_path,
+        generated("Keep text", false, 0, 0.0, false, false),
+    )
+    .unwrap();
+    assert!(
+        engine
+            .scan_preview(&engine.open(&text_path).unwrap(), 0)
+            .is_err()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn generated_heic_round_trip_when_windows_encoder_available() {
+    use windows::{
+        Graphics::Imaging::{BitmapAlphaMode, BitmapEncoder, BitmapPixelFormat},
+        Storage::Streams::{DataReader, InMemoryRandomAccessStream},
+        Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize, RoUninitialize},
+    };
+    unsafe { RoInitialize(RO_INIT_MULTITHREADED) }.unwrap();
+    struct Apartment;
+    impl Drop for Apartment {
+        fn drop(&mut self) {
+            unsafe { RoUninitialize() };
+        }
+    }
+    let _apartment = Apartment;
+    let encode = || -> windows::core::Result<Vec<u8>> {
+        let stream = InMemoryRandomAccessStream::new()?;
+        let encoder =
+            BitmapEncoder::CreateAsync(BitmapEncoder::HeifEncoderId()?, &stream)?.join()?;
+        encoder.SetPixelData(
+            BitmapPixelFormat::Rgba8,
+            BitmapAlphaMode::Ignore,
+            64,
+            64,
+            96.0,
+            96.0,
+            &[200, 40, 20, 255].repeat(64 * 64),
+        )?;
+        encoder.FlushAsync()?.join()?;
+        let size = stream.Size()?;
+        let reader = DataReader::CreateDataReader(&stream.GetInputStreamAt(0)?)?;
+        reader.LoadAsync(size as u32)?.join()?;
+        let mut bytes = vec![0; size as usize];
+        reader.ReadBytes(&mut bytes)?;
+        Ok(bytes)
+    };
+    let bytes = match encode() {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprintln!(
+                "HEIC positive test unavailable: Windows encoder HRESULT {:?}",
+                error.code()
+            );
+            return;
+        }
+    };
+    let path = temp("generated-native.heic");
+    fs::write(&path, bytes).unwrap();
+    let picture = import_picture(&path).unwrap();
+    assert_eq!((picture.width, picture.height), (64, 64));
+    assert!(picture.rgba[0] > 180 && picture.rgba[1] < 60 && picture.rgba[2] < 40);
+}
+
+#[cfg(windows)]
+#[test]
+fn scan_cleanup_ocr_on_generated_photo_when_language_available() {
+    let _lock = PDFIUM.lock().unwrap();
+    let engine = engine();
+    let source = temp("scan-ocr-source.pdf");
+    fs::write(
+        &source,
+        generated("Scan cleanup", false, 0, 0.0, false, false),
+    )
+    .unwrap();
+    let text = engine.open(&source).unwrap();
+    let image = engine.render(&text, 0, 2.5).unwrap();
+    let mut doc = engine
+        .pictures_to_pdf(
+            [Ok(Picture {
+                width: image.width,
+                height: image.height,
+                rgba: image.rgba,
+            })],
+            ImagePageSize::Image,
+        )
+        .unwrap();
+    let original = doc.bytes.clone();
+    match engine.cleanup_scan(
+        &mut doc,
+        0,
+        &ScanOptions {
+            ocr: true,
+            ..Default::default()
+        },
+    ) {
+        Ok(()) => {
+            let recognized = engine
+                .text_objects(&doc, 0)
+                .unwrap()
+                .into_iter()
+                .map(|t| t.text)
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                recognized.to_lowercase().contains("scan"),
+                "Generated scan text was not recognized"
+            );
+            assert!(doc.undo());
+            assert_eq!(doc.bytes, original);
+        }
+        Err(error) if error.0.contains("Windows OCR is unavailable") => {
+            eprintln!("Optional OCR test unavailable: {error}");
+            assert_eq!(doc.bytes, original);
+        }
+        Err(error) => panic!("Generated photo OCR failed: {error}"),
+    }
+}
+
+#[test]
+fn scan_cleanup_resets_inherited_rotation_and_crop() {
+    let _lock = PDFIUM.lock().unwrap();
+    let engine = engine();
+    for rotation in [90, 180, 270] {
+        let mut doc = engine.pictures_to_pdf([Ok(Picture {
+            width: 80, height: 60, rgba: [200, 100, 30, 255].repeat(80 * 60),
+        })], ImagePageSize::Image).unwrap();
+        let mut pdf = parse(&doc.bytes).unwrap();
+        let page = *pdf.get_pages().values().next().unwrap();
+        let parent = pdf.get_dictionary(page).unwrap().get(b"Parent").unwrap().as_reference().unwrap();
+        let parent = pdf.get_dictionary_mut(parent).unwrap();
+        parent.set("Rotate", rotation);
+        parent.set("CropBox", vec![0.into(), 0.into(), 60.into(), 45.into()]);
+        doc = engine.candidate(&doc, pdf).unwrap();
+        let before = engine.pages(&doc).unwrap()[0].clone();
+        engine.cleanup_scan(&mut doc, 0, &ScanOptions::default()).unwrap();
+        let after = engine.pages(&doc).unwrap()[0].clone();
+        assert!((before.width - after.width).abs() < 1.0);
+        assert!((before.height - after.height).abs() < 1.0);
+        let pdf = parse(&doc.bytes).unwrap();
+        let page = *pdf.get_pages().values().next().unwrap();
+        assert_eq!(pdf.get_dictionary(page).unwrap().get(b"Rotate").unwrap().as_i64().unwrap(), 0);
+    }
+}

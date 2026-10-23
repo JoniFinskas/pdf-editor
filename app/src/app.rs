@@ -56,6 +56,7 @@ const MENU_WIDTH: f32 = 280.0;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
     ImageCreate,
+    ScanCleanup,
     Replace,
     Forms,
     Signatures,
@@ -86,6 +87,7 @@ impl Tool {
                 (Tool::Signatures, "Signatures…", Icon::Signature),
                 (Tool::Pictures, "Images…", Icon::Image),
                 (Tool::ImageCreate, "Images to PDF…", Icon::Image),
+                (Tool::ScanCleanup, "Scan cleanup…", Icon::Scan),
                 (Tool::Markup, "Markup and notes…", Icon::Highlighter),
                 (Tool::Drawing, "Draw and shapes…", Icon::Pen),
                 (Tool::Redact, "Redact…", Icon::Redact),
@@ -111,6 +113,7 @@ impl Tool {
     fn key(self) -> &'static str {
         match self {
             Tool::ImageCreate => "tool-image-create",
+            Tool::ScanCleanup => "tool-scan-cleanup",
             Tool::Replace => "tool-replace",
             Tool::Forms => "tool-forms",
             Tool::Signatures => "tool-signatures",
@@ -429,6 +432,7 @@ pub struct EditorApp {
     dragging_page: Option<usize>,
     text_tool: TextTool,
     image_create: crate::image_create::ImageCreate,
+    scan_cleanup: crate::scan_cleanup::ScanCleanup,
     signatures: crate::signatures::Signatures,
     forms: crate::forms::Forms,
     replace: crate::replace::Replace,
@@ -761,6 +765,7 @@ impl EditorApp {
             dragging_page: None,
             text_tool: TextTool::default(),
             image_create: Default::default(),
+            scan_cleanup: Default::default(),
             signatures: Default::default(),
             forms: Default::default(),
             replace: Default::default(),
@@ -1045,6 +1050,21 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::ScanPreview {
+                generation,
+                page,
+                picture,
+                corrected,
+            } => {
+                self.busy = self.busy.saturating_sub(1);
+                if self
+                    .doc
+                    .as_ref()
+                    .is_some_and(|d| d.generation == generation)
+                {
+                    self.scan_cleanup.receive(ctx, page, picture, corrected);
+                }
+            }
             Reply::ItemsCopied => {
                 self.busy = self.busy.saturating_sub(1);
             }
@@ -1144,6 +1164,7 @@ impl EditorApp {
                 suggested,
                 protected,
             } => {
+                self.scan_cleanup.invalidate();
                 if self.restoring.is_none()
                     && let Some(config) = &self.config_path
                 {
@@ -1337,6 +1358,7 @@ impl EditorApp {
                     }
                 }
                 if doc.generation != generation {
+                    self.scan_cleanup.invalidate();
                     doc.selected_item = None;
                     doc.dragging_item = None;
                     self.text_tool.selection.clear();
@@ -2034,7 +2056,10 @@ impl EditorApp {
                 .filter(|p| !p.as_os_str().is_empty())
                 .collect()
         });
-        if dropped.iter().any(|p| crate::image_create::ImageCreate::accepts(p)) {
+        if dropped
+            .iter()
+            .any(|p| crate::image_create::ImageCreate::accepts(p))
+        {
             self.image_create.add(dropped);
             return;
         }
@@ -2074,6 +2099,10 @@ impl EditorApp {
     fn open_tool(&mut self, tool: Tool) {
         match tool {
             Tool::ImageCreate => self.image_create.open = true,
+            Tool::ScanCleanup => {
+                self.commit_edit();
+                self.scan_cleanup.open = true;
+            }
             Tool::Bookmarks => {
                 self.commit_edit();
                 self.bookmarks.open = true;
@@ -2359,7 +2388,13 @@ impl EditorApp {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 self.settings_button(ui, p);
-                if Btn::new("Images to PDF…").enabled(ready && self.busy == 0).show(ui, p).clicked() { self.image_create.open = true; }
+                if Btn::new("Images to PDF…")
+                    .enabled(ready && self.busy == 0)
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.image_create.open = true;
+                }
                 if Btn::new("Open PDF")
                     .with_icon(Icon::Folder)
                     .id("open")
@@ -3783,6 +3818,16 @@ impl eframe::App for EditorApp {
             self.busy += 1;
             self.send(request);
         }
+        if let Some(request) = self.scan_cleanup.show(
+            &ctx,
+            &p,
+            self.busy == 0,
+            self.doc.as_ref().map_or(0, |d| d.pages.len()),
+        ) {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
         let drawing_was_active = self.drawing.active;
         self.drawing.show(&ctx, &p);
         if !drawing_was_active && self.drawing.active {
@@ -4696,7 +4741,8 @@ mod tests {
                 dragging_page: None,
                 text_tool: TextTool::default(),
                 image_create: Default::default(),
-            signatures: Default::default(),
+                scan_cleanup: Default::default(),
+                signatures: Default::default(),
                 forms: Default::default(),
                 replace: Default::default(),
                 password: Default::default(),

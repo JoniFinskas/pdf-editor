@@ -18,6 +18,8 @@ const SAMPLE_SCALE: f32 = 4.0;
 const SAMPLE_SPAN: f32 = 1000.0;
 
 pub enum Request {
+    ScanPreview(u16, Option<pdf_editor_core::ScanOptions>),
+    CleanupScan(u16, pdf_editor_core::ScanOptions),
     ImagesToPdf(Vec<PathBuf>, pdf_editor_core::ImagePageSize, PathBuf),
     Open(PathBuf),
     OpenPassword(PathBuf, String),
@@ -123,6 +125,12 @@ impl PageTransform {
 }
 
 pub enum Reply {
+    ScanPreview {
+        generation: u64,
+        page: u16,
+        picture: pdf_editor_core::Picture,
+        corrected: bool,
+    },
     ItemsCopied,
     Bookmarks(pdf_editor_core::BookmarkSet),
     Printed(bool),
@@ -341,7 +349,33 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
-        Request::ImagesToPdf(paths, size, path) => match engine.images_to_pdf(&paths, size).and_then(|doc| doc.save_as(&path)) {
+        Request::ScanPreview(page, options) => match engine
+            .scan_preview(state.doc.as_ref()?, page)
+            .and_then(|picture| match &options {
+                Some(options) => pdf_editor_core::clean_scan(&picture, options),
+                None => Ok(picture),
+            }) {
+            Ok(picture) => Some(Reply::ScanPreview {
+                generation: state.generation,
+                page,
+                picture,
+                corrected: options.is_some(),
+            }),
+            Err(e) => failed(e),
+        },
+        Request::CleanupScan(page, options) => {
+            match engine.cleanup_scan(state.doc.as_mut()?, page, &options) {
+                Ok(()) => {
+                    state.generation += 1;
+                    Some(changed(state, ChangeKind::Edit, None, 1))
+                }
+                Err(e) => failed(e),
+            }
+        }
+        Request::ImagesToPdf(paths, size, path) => match engine
+            .images_to_pdf(&paths, size)
+            .and_then(|doc| doc.save_as(&path))
+        {
             Ok(()) => Some(Reply::Exported(format!("Created PDF: {}", path.display()))),
             Err(e) => failed(e),
         },

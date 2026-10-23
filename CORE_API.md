@@ -210,3 +210,9 @@ The opt-in corpus-runner binary exercises existing core APIs inside Docker only.
 ### Images to PDF
 - `import_picture(path) -> Result<Picture>`: bounded PNG/JPEG decoding; HEIC uses installed Windows image codecs with orientation applied.
 - `Engine::images_to_pdf(paths, ImagePageSize) -> Result<Document>`: creates 1–100 image pages in input order, with A4, Letter or image-size (96 DPI) pages.
+
+### Scan cleanup
+- `detect_scan_corners(picture) -> Result<[[f32; 2]; 4]>`: estimates clockwise normalized paper corners from the largest bright region; defaults to the full image when detection is uncertain.
+- `clean_scan(picture, options) -> Result<Picture>`: perspective correction, deskew up to ±20 degrees and color/grayscale/black-and-white conversion with bounded output.
+- `Engine::scan_preview(document, page) -> Result<Picture>`: renders an image-only, annotation-free page at up to 180 DPI and 2500 pixels per side.
+- `Engine::cleanup_scan(document, page, options) -> Result<()>`: replaces the photo page, optionally adds Windows OCR and commits one undo snapshot; any failure leaves the document unchanged.

@@ -510,3 +510,6 @@ valid after the source is edited/deleted. Annotations keep their dedicated tools
 
 ### Image document creation
 Images are decoded one at a time and embedded as JPEG at quality 95 against white, preserving order without retaining all decoded inputs. A4 and Letter center the image without cropping; image-size pages use 96 DPI. HEIC uses the existing Windows imaging API and installed codecs; no engine or codec download occurs. Imports are limited to 100 images, 16 million pixels per image and a 64 MiB resulting PDF. Output uses exclusive creation.
+
+### Photo page cleanup
+Scan cleanup works on image-only pages without annotations, preventing removal of existing text or displacement of markup. Preview and application use the same bounded 180 DPI raster (2500-pixel maximum side). A bright connected region estimates paper edges; four draggable corners allow correction on difficult backgrounds. A projective transform rectifies the quadrilateral, with a separate ±20-degree deskew adjustment and grayscale or thresholded black-and-white output. Page dimensions retain the source raster's physical scale. Windows OCR is optional; cleanup and OCR succeed or fail together in one undo step. Corrected photos use the image creation encoder, JPEG quality 95. Source files remain unchanged.
