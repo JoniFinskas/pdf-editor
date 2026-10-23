@@ -162,3 +162,10 @@ Each `Document` owns its byte snapshots, revision, undo/redo stacks and source i
 ## Drawing annotations
 
 - `Engine::add_drawing(document, Drawing) -> Result<()>`: create a freehand, rectangle, ellipse, line or arrow as a standard PDF annotation with color, width, opacity and page-space geometry.
+
+## Bookmarks
+
+- `Engine::bookmarks(document) -> Result<BookmarkSet>`: list nested outline titles, local page destinations, sibling positions and a document revision; remote actions are never executed.
+- `Engine::edit_bookmarks(document, revision, BookmarkEdit) -> Result<()>`: atomically add a root/child bookmark, rename, delete a subtree or move within siblings, rejecting stale revisions.
+- `BookmarkSet`: revision and flattened depth-annotated entries; `Bookmark`: object identifier, title, optional zero-based page, depth and sibling positions.
+- `BookmarkEdit`: Add(title, page, optional parent), Rename(id, title), Delete(id), or Move(id, final sibling position).

@@ -248,6 +248,7 @@ pub struct EditorApp {
     stamps: crate::stamps::Stamps,
     export: crate::export::Export,
     crop: crate::crop::Crop,
+    bookmarks: crate::bookmarks::Bookmarks,
     drawing: crate::drawing::DrawingTool,
     find: FindState,
     worker: Worker,
@@ -532,6 +533,7 @@ impl EditorApp {
             export: Default::default(),
             crop: Default::default(),
             drawing: Default::default(),
+            bookmarks: Default::default(),
             find: FindState::default(),
             worker,
             engine_alive: true,
@@ -797,6 +799,10 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::Bookmarks(items) => {
+                self.busy = self.busy.saturating_sub(1);
+                self.bookmarks.receive(items);
+            }
             Reply::Pictures(items) => {
                 self.busy = self.busy.saturating_sub(1);
                 self.pictures.items = items;
@@ -1095,6 +1101,10 @@ impl EditorApp {
                         page.pending_objects = None;
                         page.objects = None;
                     }
+                }
+                if self.bookmarks.open {
+                    self.busy += 1;
+                    self.worker.send(Request::Bookmarks);
                 }
                 if let Some(warning) = warning {
                     self.banner(BannerKind::Warning, warning);
@@ -1835,6 +1845,18 @@ impl EditorApp {
             let mut open = None;
             Popup::menu(&recent).show(|ui| {
                 ui.set_min_width(260.0);
+                if Btn::new("Bookmarks sidebar")
+                    .enabled(self.doc.is_some() && self.busy == 0)
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.commit_edit();
+                    self.bookmarks.open = true;
+                    self.pages_open = false;
+                    self.busy += 1;
+                    self.worker.send(Request::Bookmarks);
+                    ui.close();
+                }
                 if Btn::new("Draw and shapes…")
                     .enabled(idle)
                     .min_width(260.0)
@@ -2304,6 +2326,9 @@ impl EditorApp {
                     .show(ui, p);
                 if pages.clicked() {
                     self.pages_open = !self.pages_open;
+                    if self.pages_open {
+                        self.bookmarks.open = false;
+                    }
                 }
                 widgets::divider(ui, p, 18.0);
                 ui.label(RichText::new(version_label()).small().color(p.muted))
@@ -3245,6 +3270,40 @@ impl eframe::App for EditorApp {
                 .show_separator_line(false)
                 .exact_size(36.0)
                 .show(ui, |ui| self.status_bar(ui, &p));
+            if self.bookmarks.open {
+                let mut action = None;
+                let current = self.doc.as_ref().map_or(0, |d| d.current_page as u16);
+                egui::Panel::left("bookmarks")
+                    .frame(Frame::new().fill(p.chrome).inner_margin(12.0))
+                    .default_size(260.0)
+                    .min_size(220.0)
+                    .max_size(420.0)
+                    .resizable(true)
+                    .show(ui, |ui| {
+                        action = self.bookmarks.show(ui, &p, current, self.busy == 0);
+                    });
+                match action {
+                    Some(crate::bookmarks::Action::Request(request)) => {
+                        self.commit_edit();
+                        self.busy += 1;
+                        self.send(request);
+                    }
+                    Some(crate::bookmarks::Action::Navigate(page)) => {
+                        self.commit_edit();
+                        if let Some(doc) = &mut self.doc {
+                            let y = CANVAS_PAD
+                                + doc
+                                    .pages
+                                    .iter()
+                                    .take(usize::from(page))
+                                    .map(|p| p.info.height * doc.scale() + PAGE_GAP)
+                                    .sum::<f32>();
+                            doc.scroll_to = Some(vec2(doc.offset.x, y));
+                        }
+                    }
+                    None => {}
+                }
+            }
             if self.pages_open {
                 egui::Panel::left("thumbnails")
                     .frame(Frame::new().fill(p.chrome))
@@ -4053,6 +4112,7 @@ mod tests {
                 export: Default::default(),
                 crop: Default::default(),
                 drawing: Default::default(),
+                bookmarks: Default::default(),
                 find: FindState::default(),
                 worker,
                 engine_alive: true,

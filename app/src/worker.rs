@@ -21,6 +21,8 @@ pub enum Request {
     Open(PathBuf),
     OpenPassword(PathBuf, String),
     SavePassword(PathBuf, String),
+    Bookmarks,
+    EditBookmarks(u64, pdf_editor_core::BookmarkEdit),
     Print,
     Draw(pdf_editor_core::Drawing),
     Crop(u16, pdf_editor_core::Bounds),
@@ -109,6 +111,7 @@ impl PageTransform {
 }
 
 pub enum Reply {
+    Bookmarks(pdf_editor_core::BookmarkSet),
     Printed(bool),
     Pictures(Vec<pdf_editor_core::PlacedPicture>),
     Annotations(Vec<pdf_editor_core::Annotation>),
@@ -456,6 +459,19 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             }
             Err(e) => failed(e),
         },
+        Request::Bookmarks => match engine.bookmarks(state.doc.as_ref()?) {
+            Ok(items) => Some(Reply::Bookmarks(items)),
+            Err(e) => failed(e),
+        },
+        Request::EditBookmarks(revision, edit) => {
+            match engine.edit_bookmarks(state.doc.as_mut()?, revision, edit) {
+                Ok(()) => {
+                    state.generation += 1;
+                    Some(changed(state, ChangeKind::Edit, None, 1))
+                }
+                Err(e) => failed(e),
+            }
+        }
         Request::Print => {
             let doc = state.doc.as_ref()?;
             let result = (|| -> pdf_editor_core::Result<bool> {

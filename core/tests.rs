@@ -1863,3 +1863,128 @@ fn drawings_are_real_annotations_and_render_after_reopen() {
     assert_eq!(doc.bytes, before);
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn bookmarks_edit_nested_tree_and_round_trip() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    let original = doc.bytes.clone();
+    let edit = |doc: &mut Document, action| {
+        let revision = doc.revision;
+        e.edit_bookmarks(doc, revision, action).unwrap();
+    };
+    edit(
+        &mut doc,
+        BookmarkEdit::Add {
+            title: "First".into(),
+            page: 0,
+            parent: None,
+        },
+    );
+    let root = e.bookmarks(&doc).unwrap().items[0].id;
+    edit(
+        &mut doc,
+        BookmarkEdit::Add {
+            title: "Child".into(),
+            page: 1,
+            parent: Some(root),
+        },
+    );
+    edit(
+        &mut doc,
+        BookmarkEdit::Add {
+            title: "Last".into(),
+            page: 1,
+            parent: None,
+        },
+    );
+    let list = e.bookmarks(&doc).unwrap();
+    let last = list.items[2].id;
+    assert_eq!(
+        list.items.iter().map(|b| b.depth).collect::<Vec<_>>(),
+        vec![0, 1, 0]
+    );
+    assert_eq!(list.items[1].page, Some(1));
+    edit(
+        &mut doc,
+        BookmarkEdit::Rename {
+            id: root,
+            title: "Ää ö €".into(),
+        },
+    );
+    edit(
+        &mut doc,
+        BookmarkEdit::Move {
+            id: last,
+            position: 0,
+        },
+    );
+    let list = e.bookmarks(&doc).unwrap();
+    assert_eq!(
+        list.items
+            .iter()
+            .map(|b| b.title.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Last", "Ää ö €", "Child"]
+    );
+    assert!(
+        e.edit_bookmarks(
+            &mut doc,
+            list.revision - 1,
+            BookmarkEdit::Delete { id: root }
+        )
+        .is_err()
+    );
+    let path = temp("bookmarks.pdf");
+    let _ = fs::remove_file(&path);
+    doc.save_as(&path).unwrap();
+    let reopened = e.open(&path).unwrap();
+    assert_eq!(e.bookmarks(&reopened).unwrap().items.len(), 3);
+    assert_eq!(e.bookmarks(&reopened).unwrap().items[2].page, Some(1));
+    edit(&mut doc, BookmarkEdit::Delete { id: root });
+    assert_eq!(e.bookmarks(&doc).unwrap().items.len(), 1);
+    doc.undo();
+    assert_eq!(e.bookmarks(&doc).unwrap().items.len(), 3);
+    for _ in 0..5 {
+        doc.undo();
+    }
+    assert_eq!(doc.bytes, original);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn bookmarks_resolve_named_destinations_and_reject_cycles() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    let mut pdf = parse(&doc.bytes).unwrap();
+    let page = pdf.get_pages()[&2];
+    let catalog = pdf.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let root = pdf.new_object_id();
+    let item = pdf.new_object_id();
+    let mut dict = lopdf::Dictionary::new();
+    dict.set("Title", lopdf::text_string("Named destination"));
+    dict.set("Parent", root);
+    dict.set("Dest", Object::Name(b"chapter".to_vec()));
+    pdf.objects.insert(item, Object::Dictionary(dict));
+    let mut outlines = lopdf::Dictionary::new();
+    outlines.set("First", item);
+    outlines.set("Last", item);
+    outlines.set("Count", 1);
+    pdf.objects.insert(root, Object::Dictionary(outlines));
+    let mut names = lopdf::Dictionary::new();
+    names.set(
+        "chapter",
+        vec![Object::Reference(page), Object::Name(b"Fit".to_vec())],
+    );
+    pdf.get_dictionary_mut(catalog).unwrap().set("Dests", names);
+    pdf.get_dictionary_mut(catalog)
+        .unwrap()
+        .set("Outlines", root);
+    let valid = e.candidate(&doc, pdf.clone()).unwrap();
+    assert_eq!(e.bookmarks(&valid).unwrap().items[0].page, Some(1));
+    pdf.get_dictionary_mut(item).unwrap().set("Next", item);
+    let invalid = e.candidate(&doc, pdf).unwrap();
+    assert!(e.bookmarks(&invalid).is_err());
+}

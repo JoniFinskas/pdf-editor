@@ -17,6 +17,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Bookmarks sidebar with nested navigation, add, rename, delete and sibling reordering.
+
 - Draw freehand, rectangles, ellipses, lines and arrows directly on pages as annotations.
 
 - Crop pages using validated visible page bounds.

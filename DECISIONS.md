@@ -378,3 +378,7 @@ Use the standard PDF CropBox and validate finite, positive dimensions within the
 ## Part G: Freehand drawing and shapes
 
 Capture page drags through the inverse native page transform so drawing respects zoom, rotation and crop offsets. Store freehand strokes as Ink annotations, rectangles as Square, ellipses as Circle and lines/arrows as Line with standard endpoint styles. Explicit appearance streams preserve visuals across readers. Each completed drag is one history operation; drawing mode suppresses text-selection clicks until finished.
+
+### Bookmarks
+
+Decided to preserve nested outline trees and destination dictionaries while rewriting sibling links after edits. New bookmarks target the current page with Fit; existing local direct and named destinations resolve for navigation. External actions remain inert. Reordering stays within the current sibling group, deletion includes descendants, and undo restores the complete tree. Traversal rejects cycles, more than 10,000 entries and nesting beyond 64 levels. Titles use Unicode PDF text strings. The sidebar is refreshed after document changes to prevent stale identifiers from modifying another revision.
