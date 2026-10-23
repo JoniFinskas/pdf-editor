@@ -69,6 +69,7 @@ enum Tool {
     Stamps,
     Export,
     Compress,
+    Compare,
     Print,
 }
 
@@ -98,6 +99,7 @@ impl Tool {
                 (Tool::Stamps, "Page numbers and watermark…", Icon::Hash),
                 (Tool::Export, "Export pages as images…", Icon::Export),
                 (Tool::Compress, "Compress images…", Icon::Compress),
+                (Tool::Compare, "Compare PDFs…", Icon::Layers),
                 (Tool::Print, "Print…", Icon::Print),
             ],
         ),
@@ -120,6 +122,7 @@ impl Tool {
             Tool::Stamps => "tool-stamps",
             Tool::Export => "tool-export",
             Tool::Compress => "tool-compress",
+            Tool::Compare => "tool-compare",
             Tool::Print => "print-document",
         }
     }
@@ -365,6 +368,7 @@ pub struct EditorApp {
     pictures: crate::pictures::Pictures,
     redaction: crate::redaction::Redaction,
     compression: crate::compression::Compression,
+    compare: crate::compare::Compare,
     stamps: crate::stamps::Stamps,
     export: crate::export::Export,
     crop: crate::crop::Crop,
@@ -649,6 +653,7 @@ impl EditorApp {
             pictures: Default::default(),
             redaction: Default::default(),
             compression: Default::default(),
+            compare: Default::default(),
             stamps: Default::default(),
             export: Default::default(),
             crop: Default::default(),
@@ -1925,6 +1930,7 @@ impl EditorApp {
             Tool::Export => self.export.open = true,
             Tool::Stamps => self.stamps.open = true,
             Tool::Compress => self.compression.open = true,
+            Tool::Compare => self.compare.open = true,
             Tool::Redact => {
                 self.redaction.open = true;
                 if let Some(o) = self.text_tool.selection.get(self.text_tool.selected) {
@@ -3407,6 +3413,7 @@ impl eframe::App for EditorApp {
             self.busy += 1;
             self.send(request);
         }
+        self.compare.show(&ctx, &p);
         if let Some(request) = self.compression.show(&ctx, &p, self.busy == 0) {
             self.commit_edit();
             self.busy += 1;
@@ -4232,6 +4239,7 @@ mod tests {
                 pictures: Default::default(),
                 redaction: Default::default(),
                 compression: Default::default(),
+                compare: Default::default(),
                 stamps: Default::default(),
                 export: Default::default(),
                 crop: Default::default(),

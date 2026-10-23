@@ -4,6 +4,10 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+### Added
+
+- Compare two saved PDFs side by side with shared scrolling and zoom, text highlights, visual difference overlays and a page-change sidebar.
+
 ### Changed
 
 - Refresh release-build verification, the feature overview and manual checks for

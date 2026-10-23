@@ -2,6 +2,7 @@
 
 mod app;
 mod bookmarks;
+mod compare;
 mod compression;
 mod crop;
 mod drawing;

@@ -23,6 +23,9 @@ Implementation requirements and scope are documented in [SPEC.md](SPEC.md).
   image-only document rebuild.
 - Compress supported images, add page numbers/watermarks, export PNG/JPG pages at
   a chosen DPI, and print through the Windows print dialog.
+- Compare two saved PDFs with shared scrolling/zoom, text highlights, a visual
+  pixel overlay and a page-change sidebar (Document → Compare PDFs). Comparison
+  aligns page numbers and bounds raster previews to one megapixel per side.
 - Use light/dark themes, a grouped document menu and movable tool windows.
 
 See the controls and limitations below, especially redaction, encrypted-source

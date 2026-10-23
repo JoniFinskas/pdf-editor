@@ -421,3 +421,11 @@ The tools added in Parts F and G now use the Part E style, with visual changes o
 ## Part C refresh for the current application
 
 Decided to retain the existing size-optimized release profile and all current direct dependencies after checking their use and compiler diagnostics. The current build includes the tool-window restyle and Parts F/G. Updated the feature overview and manual checks to use the grouped Edit/Document menu and current tab/window controls. Kept version 0.1.0 and the Unreleased changelog because producing a local release-mode build does not complete the manual acceptance requirements for a versioned release.
+
+## Part K: read-only PDF comparison
+
+- Compare explicit saved files in a dedicated styled tool window; separate password fields support encrypted input without writing passwords or comparison data to disk.
+- Align corresponding page numbers and ordered text runs with bounded lookahead. This handles ordinary insertions/deletions while keeping memory linear; automatic page realignment and semantic paragraph matching are outside this comparison model.
+- Scan page summaries in the background, prioritize requested previews between pages, and retain only one rendered page pair. Shared scroll and zoom keep the two panes aligned. The change sidebar includes text-only and visual-only changed pages and visible per-page errors.
+- Use a one-megapixel, 4096-pixel-edge preview bound with exact raster pixel comparison. Fine differences below preview resolution may be lost. Text extraction remains independent of raster downscaling. Queue capacities and text budgets bound retained work; cancellation is checked between native page operations.
+- Comparison remains read-only, including undo history and original files. Generated fixtures verify unchanged inputs and detect text/raster changes; pure tests cover Unicode insertion/deletion, missing rasters, unchanged pixels and resource limits.

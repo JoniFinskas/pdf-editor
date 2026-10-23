@@ -169,3 +169,11 @@ Each `Document` owns its byte snapshots, revision, undo/redo stacks and source i
 - `Engine::edit_bookmarks(document, revision, BookmarkEdit) -> Result<()>`: atomically add a root/child bookmark, rename, delete a subtree or move within siblings, rejecting stale revisions.
 - `BookmarkSet`: revision and flattened depth-annotated entries; `Bookmark`: object identifier, title, optional zero-based page, depth and sibling positions.
 - `BookmarkEdit`: Add(title, page, optional parent), Rename(id, title), Delete(id), or Move(id, final sibling position).
+
+## PDF comparison
+
+- `compare_text(left, right)` -> bounded ordered-run `TextChange` list (Added, Removed, Changed), with optional original PDF-point bounds on each side; exact Unicode text equality and 32-run lookahead. Limits: 20,000 runs on either side and 8 MiB combined text per page pair. This is run alignment, not semantic paragraph matching.
+- `compare_pixels(left, right, overlay)` -> differing pixel count; optionally tint differences magenta in each optional RGBA image. Missing pixels differ, equal pixels are unchanged. Validates raster buffers and limits each raster to 1.1 megapixels and the union canvas to 2.2 megapixels.
+- `Engine::compare_page(left, right, page, overlay)` -> `ComparePage` containing optional side images, text changes, changed-pixel count and raster-space highlight rectangles. Uses a shared scale capped at one megapixel and 4096 pixels per edge, permits missing pages on either side, rejects an index missing on both. Documents remain unchanged.
+
+Comparison UI runs file loading, text extraction, rendering and raster comparison on a background thread with bounded queues, cancellable between pages. It retains one displayed page pair and numeric per-page summaries, and compares saved files rather than unsaved editor state. Encrypted inputs accept separate transient passwords. Page order aligns by index; raster previews are bounded and may omit changes smaller than the preview resolution. No source text is written to logs or disk.
