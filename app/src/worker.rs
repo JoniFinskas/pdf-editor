@@ -19,12 +19,23 @@ const SAMPLE_SPAN: f32 = 1000.0;
 
 pub enum Request {
     Open(PathBuf),
-    Render { page: u16, scale: f32 },
-    Objects { page: u16 },
-    Edit { object: TextObject, text: String },
+    Render {
+        page: u16,
+        scale: f32,
+    },
+    Objects {
+        page: u16,
+    },
+    /// Replaces a line of one or more adjacent runs as one edit.
+    Edit {
+        objects: Vec<TextObject>,
+        text: String,
+    },
     Undo,
     Redo,
     SaveAs(PathBuf),
+    /// Writes a recovery copy to a new path; the document is unchanged.
+    Snapshot(PathBuf),
     SetSubstitution(Substitution),
 }
 
@@ -43,6 +54,7 @@ impl PageTransform {
 pub enum Reply {
     Opened {
         generation: u64,
+        path: PathBuf,
         name: String,
         pages: Vec<PageInfo>,
         suggested: PathBuf,
@@ -68,6 +80,11 @@ pub enum Reply {
         objects_changed: usize,
     },
     Saved(PathBuf),
+    Snapshot {
+        generation: u64,
+        path: PathBuf,
+        error: Option<String>,
+    },
     /// A request failed. `blocking` marks edit, undo, redo, open and save;
     /// `page` marks a failed render or object listing for that page.
     Failed {
@@ -239,6 +256,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 .unwrap_or_else(|| "Untitled.pdf".into());
             Some(Reply::Opened {
                 generation: state.generation,
+                path,
                 name,
                 pages,
                 suggested,
@@ -273,9 +291,9 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 objects,
             })
         }
-        Request::Edit { object, text } => {
+        Request::Edit { objects, text } => {
             let doc = state.doc.as_mut()?;
-            match engine.edit(doc, &object, &text) {
+            match engine.edit_group(doc, &objects, &text) {
                 Ok(result) => {
                     if result.objects_changed > 0 {
                         state.generation += 1;
@@ -313,6 +331,15 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 Ok(()) => Some(Reply::Saved(path)),
                 Err(e) => failed(e),
             }
+        }
+        Request::Snapshot(path) => {
+            let doc = state.doc.as_ref()?;
+            let error = doc.save_as(&path).err().map(|e| e.to_string());
+            Some(Reply::Snapshot {
+                generation: state.generation,
+                path,
+                error,
+            })
         }
         Request::SetSubstitution(_) => None,
     }

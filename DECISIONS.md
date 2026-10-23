@@ -135,5 +135,64 @@ using a fresh isolated profile. Tests treat exported files as read-only.
   AccessKit's AT-SPI backend through eframe, with no safe upgrade until AccessKit
   moves to zbus 6. The Windows build does not compile them. deny.toml records
   the justification.
-- The core path dependency carries an exact version so the wildcard ban applies
-  without exceptions.
+- The private app crate (`publish = false`) uses an unversioned path dependency
+  on core, allowed by `allow-wildcard-paths`, so the version is set in one place.
+
+## Versioning
+
+- Semantic Versioning with one version for the workspace, set only in
+  `[workspace.package]` of the root manifest and inherited by both crates. A
+  shared version suits two crates that are released together; the rules are in
+  VERSIONING.md. The interface reads it from `CARGO_PKG_VERSION`, and debug
+  builds are labelled so test reports identify them.
+
+## Browser-printed PDFs
+
+- Chrome print output uses Type3 fonts without BaseFont, glyph names in
+  /Differences plus a ToUnicode CMap, and one show operator per glyph. The page
+  mapping rejected such pages: lopdf ignores ToUnicode when /Encoding exists,
+  so its text disagreed with PDFium's. Decoding now prefers ToUnicode, matching
+  PDFium and the PDF text-extraction rules.
+- Every show operator with glyph bytes is part of the mapping, because PDFium
+  creates an object for each one. Whitespace is not compared, since PDFium
+  reports space-only glyph runs as empty text. A run whose own decoding is only
+  private-use code points (icon fonts) may differ from PDFium's text. Such a run
+  keeps its place in the mapping, but editing it returns an error. Counts and
+  all other text must still match.
+- Type3 glyphs are reused when every replacement character maps to an existing
+  glyph procedure. Otherwise the normal fallback search applies with a warning.
+  Fonts without BaseFont or Name are identified by a hash of their glyph table
+  for whole-document substitution.
+- Added `Engine::edit_group` instead of a UI loop of single edits, so a line
+  of many glyph objects becomes one atomic edit and one undo step. `edit` now
+  calls it with one object. Td positioning in such output is relative to the
+  line start, so removing later glyph runs does not move other text; any cursor
+  change is still repaired by the existing measured correction.
+
+## Line editing, settings page and auto-save
+
+- The UI groups consecutive objects with the same font, size, color and
+  horizontal matrix, on one baseline and at most 0.8 em apart, into one line.
+  Space-only objects never begin or end a line. The line text adds a space where
+  a space object or a gap above 0.2 em separates runs. Editing replaces the
+  whole line; the first run receives the text. Runs in other PDFs that share a
+  line and format are therefore edited together as well.
+- Settings moved from a modal to a full page with Font substitution, Auto-save
+  and About sections. Three option groups and their explanations need more room
+  than a small modal provides. Escape or Back returns to the document.
+- Auto-save writes recovery copies only. Writing to the original or to a Save As
+  target would require overwriting files, which the core forbids by design.
+  Copies go to a per-session folder under `%LOCALAPPDATA%\PdfEditor\Recovery`
+  through `Document::save_as` with new file names. The previous copy is deleted
+  after each write, and the folder is removed on a normal exit. Copies are also
+  removed after Save As, after undo returns to the saved state, and after edits
+  are discarded.
+- Each session holds an exclusively opened lock file. At start, folders whose
+  lock can be opened belong to editors that are no longer running. Those with a
+  copy are offered for restore and empty ones are removed. A restored copy is
+  deleted only after its edits are protected again by a new copy or a save, or
+  are discarded.
+- Auto-save defaults to every 2 minutes and can be set to off or 1, 2, 5 or 10
+  minutes. The setting is stored in `%APPDATA%\PdfEditorpp-settings.txt`
+  because the core's settings file accepts only the substitution policy. An
+  unreadable value falls back to the default.

@@ -25,6 +25,12 @@ No download occurs while opening or editing a document. Dependency versions are
 pinned in the crate manifests and Cargo.lock. `python scripts/check-crate-age.py 2026-10-22`
 checks the publication dates of every locked registry package through crates.io.
 
+Auto-save keeps recovery copies of unsaved edits in
+`%LOCALAPPDATA%\PdfEditor\Recovery`, never in place of the original or a saved
+copy. They are deleted after Save As, after edits are discarded and on a normal
+exit; after an unexpected exit the editor offers to restore them. Auto-save can
+be turned off in Settings. The editor opens no network connections.
+
 Use [CORE_API.md](CORE_API.md) for integration. Create an Engine with the absolute
 path of the bundled DLL, open a file, list its text objects, then pass a selected
 object to `Engine::edit`. Rendering returns tightly packed RGBA pixels. Undo/redo

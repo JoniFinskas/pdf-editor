@@ -1,5 +1,7 @@
-//! Editor window: toolbar, page canvas, in-place edit box, banners and modals.
+//! Editor window: toolbar, page canvas, in-place edit box, banners, modals
+//! and the settings page.
 
+use crate::recovery::{self, AutoSave, Orphan, Session};
 use crate::theme::{self, Palette};
 use crate::worker::{ChangeKind, PageTransform, Reply, Request, Worker};
 use eframe::egui::{
@@ -11,6 +13,8 @@ use eframe::egui::{
 use pdf_editor_core::{PageInfo, Substitution, TextObject};
 use std::path::PathBuf;
 
+/// Workspace version from the root Cargo.toml; see VERSIONING.md.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// UI points per PDF point at 100% zoom (96 dpi screen, 72 dpi PDF).
 const PT_TO_UI: f32 = 96.0 / 72.0;
 const ZOOM_STEPS: [f32; 15] = [
@@ -39,14 +43,33 @@ pub struct EditorApp {
     busy: u32,
     banners: Vec<Banner>,
     next_banner: u64,
+    /// Shows the settings page instead of the document.
     settings_open: bool,
     confirm: Option<Pending>,
     allow_close: bool,
     title: String,
+    autosave: AutoSave,
+    autosave_path: Option<PathBuf>,
+    /// This editor's recovery folder; None when it could not be created.
+    session: Option<Session>,
+    session_error: Option<String>,
+    /// Recovery copies left by editors that did not exit normally.
+    orphans: Vec<Orphan>,
+    /// The copy being opened for restore.
+    restoring: Option<Orphan>,
 }
 
 struct DocView {
     name: String,
+    /// Path the document was opened from.
+    source: PathBuf,
+    /// Recovery copy this document was restored from; removed once the
+    /// edits are protected again (new copy or save) or discarded.
+    restored_from: Option<Orphan>,
+    /// Generation of the last recovery copy, when one is current.
+    copied_generation: Option<u64>,
+    next_copy: Option<f64>,
+    copying: bool,
     generation: u64,
     pages: Vec<PageView>,
     suggested: PathBuf,
@@ -57,8 +80,8 @@ struct DocView {
     position: i64,
     saved: Option<i64>,
     edit: Option<EditState>,
-    /// Page and raster rect of an edit being applied.
-    applying: Option<(usize, Rect)>,
+    /// Page, raster rect and object count of an edit being applied.
+    applying: Option<(usize, Rect, usize)>,
     scroll_to: Option<Vec2>,
     offset: Vec2,
     viewport: Rect,
@@ -82,14 +105,23 @@ struct PageTexture {
 
 struct PageObjects {
     generation: u64,
-    /// Text objects with their extents in unscaled raster points.
-    items: Vec<(TextObject, Rect)>,
+    /// Editable lines in paint order.
+    lines: Vec<Line>,
+}
+
+/// Adjacent text objects that read as one line, edited together. Browser
+/// print output often places every glyph in its own object.
+#[derive(Clone)]
+struct Line {
+    objects: Vec<TextObject>,
+    /// Union of the objects' extents in unscaled raster points.
+    rect: Rect,
+    text: String,
 }
 
 struct EditState {
     page: usize,
-    object: TextObject,
-    rect: Rect,
+    line: Line,
     text: String,
     focus: bool,
 }
@@ -151,6 +183,25 @@ impl EditorApp {
                     .to_string(),
             ),
         };
+        let autosave_path = AutoSave::path();
+        let autosave = match autosave_path.as_deref().map(AutoSave::load) {
+            Some(Ok(autosave)) => autosave,
+            Some(Err(e)) => {
+                banners.push(Banner {
+                    id: 1,
+                    kind: BannerKind::Warning,
+                    text: format!("Auto-save settings could not be read ({e}). Using defaults."),
+                    expires: None,
+                });
+                AutoSave::default()
+            }
+            None => AutoSave::default(),
+        };
+        let (session, session_error) = match Session::start() {
+            Ok(session) => (Some(session), None),
+            Err(e) => (None, Some(e.to_string())),
+        };
+        let orphans = recovery::orphans();
         let worker = Worker::spawn(cc.egui_ctx.clone(), library.unwrap_or_default(), policy);
         let mut app = Self {
             worker,
@@ -167,6 +218,12 @@ impl EditorApp {
             confirm: None,
             allow_close: false,
             title: String::new(),
+            autosave,
+            autosave_path,
+            session,
+            session_error,
+            orphans,
+            restoring: None,
         };
         if let Some(path) = initial {
             app.open_path(path);
@@ -286,13 +343,13 @@ impl EditorApp {
     fn apply_edit(&mut self) {
         let Some(doc) = &mut self.doc else { return };
         let Some(edit) = doc.edit.take() else { return };
-        if edit.text == edit.object.text || self.busy > 0 {
+        if edit.text == edit.line.text || self.busy > 0 {
             return;
         }
-        doc.applying = Some((edit.page, edit.rect));
+        doc.applying = Some((edit.page, edit.line.rect, edit.line.objects.len()));
         self.busy += 1;
         self.send(Request::Edit {
-            object: edit.object,
+            objects: edit.line.objects,
             text: edit.text,
         });
     }
@@ -378,6 +435,7 @@ impl EditorApp {
         match reply {
             Reply::Opened {
                 generation,
+                path,
                 name,
                 pages,
                 suggested,
@@ -386,8 +444,30 @@ impl EditorApp {
                 self.opening = false;
                 self.banners.retain(|b| b.kind != BannerKind::Error);
                 let zoom = self.doc.as_ref().map_or(1.0, |d| d.zoom);
+                // The previous document's edits were saved or discarded.
+                if let Some(old) = self.doc.take()
+                    && let Some(orphan) = old.restored_from
+                {
+                    orphan.discard();
+                }
+                if let Some(session) = &mut self.session {
+                    session.clear();
+                }
+                let restored = self.restoring.take();
+                let (name, source, suggested) = match &restored {
+                    Some(orphan) => {
+                        let source = orphan.source.clone().unwrap_or(path);
+                        let suggested = edited_name(&source).unwrap_or(suggested);
+                        (format!("{} (recovered)", orphan.name()), source, suggested)
+                    }
+                    None => (name, path, suggested),
+                };
                 self.doc = Some(DocView {
                     name,
+                    source,
+                    copied_generation: None,
+                    next_copy: None,
+                    copying: false,
                     generation,
                     pages: pages
                         .into_iter()
@@ -405,7 +485,9 @@ impl EditorApp {
                     can_undo: false,
                     can_redo: false,
                     position: 0,
-                    saved: Some(0),
+                    // A restored document starts with unsaved edits.
+                    saved: if restored.is_some() { None } else { Some(0) },
+                    restored_from: restored,
                     edit: None,
                     applying: None,
                     scroll_to: Some(Vec2::ZERO),
@@ -476,7 +558,10 @@ impl EditorApp {
                             (o, rect)
                         })
                         .collect();
-                    view.objects = Some(PageObjects { generation, items });
+                    view.objects = Some(PageObjects {
+                        generation,
+                        lines: group_lines(items),
+                    });
                 }
             }
             Reply::Changed {
@@ -489,7 +574,7 @@ impl EditorApp {
             } => {
                 self.busy = self.busy.saturating_sub(1);
                 let Some(doc) = &mut self.doc else { return };
-                doc.applying = None;
+                let selected = doc.applying.take().map_or(1, |(_, _, n)| n);
                 doc.can_undo = can_undo;
                 doc.can_redo = can_redo;
                 if objects_changed > 0 {
@@ -504,6 +589,13 @@ impl EditorApp {
                         ChangeKind::Redo => doc.position += 1,
                     }
                 }
+                if !doc.dirty() {
+                    doc.copied_generation = None;
+                    doc.next_copy = None;
+                    if let Some(session) = &mut self.session {
+                        session.clear();
+                    }
+                }
                 if doc.generation != generation {
                     doc.generation = generation;
                     doc.edit = None;
@@ -515,7 +607,7 @@ impl EditorApp {
                 }
                 if let Some(warning) = warning {
                     self.banner(BannerKind::Warning, warning);
-                } else if kind == ChangeKind::Edit && objects_changed > 1 {
+                } else if kind == ChangeKind::Edit && objects_changed > selected {
                     self.banner(
                         BannerKind::Success,
                         format!(
@@ -528,6 +620,14 @@ impl EditorApp {
                 self.busy = self.busy.saturating_sub(1);
                 if let Some(doc) = &mut self.doc {
                     doc.saved = Some(doc.position);
+                    doc.copied_generation = None;
+                    doc.next_copy = None;
+                    if let Some(orphan) = doc.restored_from.take() {
+                        orphan.discard();
+                    }
+                }
+                if let Some(session) = &mut self.session {
+                    session.clear();
                 }
                 let name = path
                     .file_name()
@@ -537,6 +637,44 @@ impl EditorApp {
                 let now = ctx.input(|i| i.time);
                 if let Some(b) = self.banners.last_mut() {
                     b.expires = Some(now + 4.0);
+                }
+            }
+            Reply::Snapshot {
+                generation,
+                path,
+                error,
+            } => {
+                let Some(doc) = &mut self.doc else {
+                    let _ = std::fs::remove_file(&path);
+                    return;
+                };
+                doc.copying = false;
+                let written = match (error, &mut self.session) {
+                    (None, Some(session)) if doc.dirty() => session
+                        .written(path.clone(), &doc.source)
+                        .map_err(|e| e.to_string()),
+                    (None, _) => {
+                        // Saved or reverted while the copy was written.
+                        let _ = std::fs::remove_file(&path);
+                        return;
+                    }
+                    (Some(e), _) => Err(e),
+                };
+                match written {
+                    Ok(()) => {
+                        doc.copied_generation = Some(generation);
+                        if let Some(orphan) = doc.restored_from.take() {
+                            orphan.discard();
+                        }
+                    }
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&path);
+                        doc.copied_generation = Some(generation);
+                        self.banner(
+                            BannerKind::Warning,
+                            format!("Auto-save could not write a recovery copy: {e}"),
+                        );
+                    }
                 }
             }
             Reply::Failed {
@@ -555,6 +693,7 @@ impl EditorApp {
                 if blocking {
                     self.busy = self.busy.saturating_sub(1);
                 }
+                self.restoring = None;
                 let message = if std::mem::take(&mut self.opening) {
                     format!(
                         "The file could not be opened. {}.",
@@ -690,8 +829,16 @@ impl EditorApp {
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                if tool_button(ui, "Settings", true, "Font substitution settings").clicked() {
-                    self.settings_open = true;
+                if tool_button(
+                    ui,
+                    "Settings",
+                    true,
+                    "Font substitution, auto-save and version",
+                )
+                .clicked()
+                {
+                    self.settings_open = !self.settings_open;
+                    self.cancel_edit();
                 }
                 if self.busy > 0 {
                     ui.add(egui::Spinner::new().size(14.0).color(p.muted));
@@ -773,6 +920,9 @@ impl EditorApp {
                 } else {
                     "Ctrl+O to open · Drop a PDF anywhere"
                 };
+                ui.label(muted(&version_label()))
+                    .on_hover_text("PDF Editor version");
+                ui.label(muted("·"));
                 ui.label(muted(hint));
             });
         });
@@ -922,20 +1072,20 @@ impl EditorApp {
                 let hit = response.hover_pos().and_then(|pos| {
                     let at = ((pos - rect.min) / scale).to_pos2();
                     page.objects.as_ref().and_then(|o| {
-                        o.items
+                        o.lines
                             .iter()
                             .rev()
-                            .find(|(_, r)| r.expand(1.0).contains(at))
+                            .find(|l| l.rect.expand(1.0).contains(at))
                     })
                 });
-                let editing_this = |obj: &TextObject| {
-                    doc.edit
-                        .as_ref()
-                        .is_some_and(|e| e.page == index && e.object.index == obj.index)
+                let editing_this = |line: &Line| {
+                    doc.edit.as_ref().is_some_and(|e| {
+                        e.page == index && e.line.objects[0].index == line.objects[0].index
+                    })
                 };
-                if let Some((object, raster)) = hit {
-                    if !editing_this(object) && !busy {
-                        let screen = to_screen(*raster, rect, scale);
+                if let Some(line) = hit {
+                    if !editing_this(line) && !busy {
+                        let screen = to_screen(line.rect, rect, scale);
                         painter.rect_stroke(
                             screen.expand(2.0),
                             CornerRadius::same(3),
@@ -944,19 +1094,18 @@ impl EditorApp {
                         );
                         ctx.set_cursor_icon(CursorIcon::Text);
                     }
-                    if response.clicked() && !busy && !editing_this(object) {
+                    if response.clicked() && !busy && !editing_this(line) {
                         start_edit = Some(EditState {
                             page: index,
-                            object: object.clone(),
-                            rect: *raster,
-                            text: object.text.clone(),
+                            line: line.clone(),
+                            text: line.text.clone(),
                             focus: true,
                         });
                     }
                 } else if response.clicked() {
                     clicked_empty = true;
                 }
-                if let Some((applying_page, raster)) = doc.applying
+                if let Some((applying_page, raster, _)) = doc.applying
                     && applying_page == index
                 {
                     let screen = to_screen(raster, rect, scale).expand(2.0);
@@ -1069,40 +1218,6 @@ impl EditorApp {
         self.banners.retain(|b| !dismissed.contains(&b.id));
     }
 
-    fn settings_modal(&mut self, ctx: &Context, p: &Palette) {
-        if !self.settings_open {
-            return;
-        }
-        let mut policy = self.policy;
-        let mut close = false;
-        let modal = egui::Modal::new(Id::new("settings")).frame(modal_frame(ctx)).show(ctx, |ui| {
-            ui.set_width(380.0);
-            ui.label(RichText::new("Settings").font(theme::semibold(17.0)));
-            ui.add_space(2.0);
-            ui.label(
-                RichText::new("When the original font is not embedded with the needed characters and is not installed:")
-                    .color(p.muted),
-            );
-            ui.add_space(6.0);
-            choice(ui, p, &mut policy, Substitution::Line, "Substitute this line only",
-                "Only the edited text object uses the closest system font.");
-            choice(ui, p, &mut policy, Substitution::Document, "Substitute whole document",
-                "Every text object using the missing font switches, for a consistent look.");
-            ui.add_space(10.0);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add(secondary_button("Done", p)).clicked() {
-                    close = true;
-                }
-            });
-        });
-        if policy != self.policy {
-            self.set_policy(policy);
-        }
-        if close || modal.should_close() {
-            self.settings_open = false;
-        }
-    }
-
     fn confirm_modal(&mut self, ctx: &Context, p: &Palette) {
         let Some(pending) = &self.confirm else { return };
         let action = match pending {
@@ -1136,17 +1251,274 @@ impl EditorApp {
         }
         match (choice, self.confirm.take()) {
             (Some(true), Some(Pending::Open(path))) => {
+                self.discard_recovery();
                 if let Some(doc) = &mut self.doc {
                     doc.saved = Some(doc.position);
                 }
                 self.open_dialog_or_path(path);
             }
             (Some(true), Some(Pending::Close)) => {
+                self.discard_recovery();
                 self.allow_close = true;
                 ctx.send_viewport_cmd(ViewportCommand::Close);
             }
             (Some(_), _) => {}
             (None, pending) => self.confirm = pending,
+        }
+    }
+
+    /// Removes recovery copies after edits were explicitly discarded.
+    fn discard_recovery(&mut self) {
+        if let Some(session) = &mut self.session {
+            session.clear();
+        }
+        if let Some(doc) = &mut self.doc {
+            doc.copied_generation = None;
+            doc.next_copy = None;
+            if let Some(orphan) = doc.restored_from.take() {
+                orphan.discard();
+            }
+        }
+    }
+
+    /// Writes a recovery copy once unsaved edits are one interval old.
+    fn autosave_tick(&mut self, ctx: &Context) {
+        let (Some(minutes), Some(session), Some(doc)) =
+            (self.autosave.0, &mut self.session, &mut self.doc)
+        else {
+            return;
+        };
+        if !doc.dirty() || doc.copying || doc.copied_generation == Some(doc.generation) {
+            doc.next_copy = None;
+            return;
+        }
+        let now = ctx.input(|i| i.time);
+        let due = *doc.next_copy.get_or_insert(now + f64::from(minutes) * 60.0);
+        if now < due {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(due - now));
+            return;
+        }
+        if self.busy > 0 {
+            return;
+        }
+        doc.next_copy = None;
+        doc.copying = true;
+        let path = session.next_path();
+        self.send(Request::Snapshot(path));
+    }
+
+    fn set_autosave(&mut self, autosave: AutoSave) {
+        self.autosave = autosave;
+        if autosave.0.is_none() {
+            if let Some(session) = &mut self.session {
+                session.clear();
+            }
+            if let Some(doc) = &mut self.doc {
+                doc.copied_generation = None;
+            }
+        }
+        if let Some(doc) = &mut self.doc {
+            doc.next_copy = None;
+        }
+        let saved = match &self.autosave_path {
+            Some(path) => autosave.save(path).map_err(|e| e.to_string()),
+            None => Err("the settings folder is not available".to_string()),
+        };
+        if let Err(e) = saved {
+            self.banner(
+                BannerKind::Error,
+                format!("The setting could not be saved: {e}"),
+            );
+        }
+    }
+
+    fn restore_modal(&mut self, ctx: &Context, p: &Palette) {
+        if self.orphans.is_empty()
+            || self.confirm.is_some()
+            || self.busy > 0
+            || self.restoring.is_some()
+        {
+            return;
+        }
+        let orphan = &self.orphans[0];
+        let mut action: Option<u8> = None;
+        let modal = egui::Modal::new(Id::new("restore"))
+            .frame(modal_frame(ctx))
+            .show(ctx, |ui| {
+                ui.set_width(380.0);
+                ui.label(RichText::new("Restore unsaved edits?").font(theme::semibold(17.0)));
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new(format!(
+                        "The editor closed before edits to {} were saved. A recovery copy from {} is available.",
+                        orphan.name(),
+                        time_ago(orphan.modified)
+                    ))
+                    .color(p.muted),
+                );
+                ui.add_space(12.0);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let restore = Button::new(RichText::new("Restore").color(p.accent_text))
+                        .fill(p.accent)
+                        .min_size(vec2(96.0, 32.0));
+                    if ui.add(restore).clicked() {
+                        action = Some(0);
+                    }
+                    if ui.add(secondary_button("Discard", p)).clicked() {
+                        action = Some(1);
+                    }
+                    if ui
+                        .add(secondary_button("Later", p))
+                        .on_hover_text("Keep the copy and ask again next time")
+                        .clicked()
+                    {
+                        action = Some(2);
+                    }
+                });
+            });
+        if modal.should_close() && action.is_none() {
+            action = Some(2);
+        }
+        match action {
+            Some(0) => {
+                if self.doc.as_ref().is_some_and(DocView::dirty) {
+                    self.banner(
+                        BannerKind::Warning,
+                        "Save or discard the open document before restoring.",
+                    );
+                    return;
+                }
+                let orphan = self.orphans.remove(0);
+                let copy = orphan.copy.clone();
+                self.restoring = Some(orphan);
+                self.open_path(copy);
+                if !self.opening {
+                    self.restoring = None;
+                }
+            }
+            Some(1) => self.orphans.remove(0).discard(),
+            Some(_) => self.orphans.clear(),
+            None => {}
+        }
+    }
+
+    fn settings_page(&mut self, ui: &mut Ui, p: &Palette) {
+        if ui.input(|i| i.key_pressed(Key::Escape)) {
+            self.settings_open = false;
+        }
+        let mut policy = self.policy;
+        let mut autosave = self.autosave;
+        ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            let width = (ui.available_width() - 48.0).clamp(280.0, 640.0);
+            ui.vertical_centered(|ui| {
+                ui.set_max_width(width);
+                ui.add_space(28.0);
+                ui.horizontal(|ui| {
+                    let back = if self.doc.is_some() { "← Back to document" } else { "← Back" };
+                    if ui.add(Button::new(back).min_size(vec2(0.0, 30.0))).clicked() {
+                        self.settings_open = false;
+                    }
+                });
+                ui.add_space(8.0);
+                ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                    ui.label(RichText::new("Settings").font(theme::semibold(24.0)));
+                    ui.label(RichText::new("Changes are saved automatically.").color(p.muted));
+                    ui.add_space(12.0);
+
+                    section(ui, p, "Font substitution", |ui| {
+                        ui.label(
+                            RichText::new(
+                                "When the original font lacks a character you type and is not installed, \
+                                 the closest installed font is used and a warning is shown.",
+                            )
+                            .color(p.muted),
+                        );
+                        ui.add_space(8.0);
+                        choice(ui, p, &mut policy, Substitution::Line, "Substitute this line only",
+                            "Only the edited line uses the replacement font.");
+                        choice(ui, p, &mut policy, Substitution::Document, "Substitute whole document",
+                            "Every line using the missing font switches, for a consistent look.");
+                    });
+
+                    section(ui, p, "Auto-save", |ui| {
+                        ui.label(
+                            RichText::new(
+                                "Unsaved edits are copied to a private recovery folder on this computer. \
+                                 Your original file and your saved copies are never overwritten. If the \
+                                 editor closes unexpectedly, it offers to restore the edits on next start.",
+                            )
+                            .color(p.muted),
+                        );
+                        ui.add_space(10.0);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            let mut option = |ui: &mut Ui, value: AutoSave, label: &str| {
+                                let selected = autosave == value;
+                                let text = if selected {
+                                    RichText::new(label).color(p.accent_text)
+                                } else {
+                                    RichText::new(label)
+                                };
+                                let mut button = Button::new(text).min_size(vec2(72.0, 32.0));
+                                button = if selected {
+                                    button.fill(p.accent)
+                                } else {
+                                    button.stroke(Stroke::new(1.0, p.border))
+                                };
+                                if ui.add(button).clicked() {
+                                    autosave = value;
+                                }
+                            };
+                            option(ui, AutoSave(None), "Off");
+                            for minutes in recovery::INTERVALS {
+                                option(ui, AutoSave(Some(minutes)), &format!("Every {minutes} min"));
+                            }
+                        });
+                        ui.add_space(8.0);
+                        let status = match (&self.session_error, autosave.0) {
+                            (Some(e), Some(_)) => format!("Auto-save is unavailable: {e}"),
+                            (_, None) => "Auto-save is off. Unsaved edits are lost if the editor closes unexpectedly.".to_string(),
+                            (None, Some(_)) => {
+                                let folder = recovery::root()
+                                    .map(|r| r.display().to_string())
+                                    .unwrap_or_default();
+                                format!(
+                                    "Copies are kept in {folder} and deleted when you save, discard your edits or close normally."
+                                )
+                            }
+                        };
+                        ui.label(RichText::new(status).small().color(p.muted));
+                    });
+
+                    section(ui, p, "About", |ui| {
+                        ui.label(
+                            RichText::new(format!("PDF Editor {}", version_label()))
+                                .font(theme::semibold(14.0)),
+                        );
+                        ui.label(
+                            RichText::new(
+                                "Works offline. Documents stay on this computer and the editor opens \
+                                 no network connections.",
+                            )
+                            .color(p.muted),
+                        );
+                        ui.label(
+                            RichText::new(
+                                "Licensed GPL-3.0-only. Interface font: Inter, SIL Open Font License 1.1.",
+                            )
+                            .small()
+                            .color(p.muted),
+                        );
+                    });
+                    ui.add_space(28.0);
+                });
+            });
+        });
+        if policy != self.policy {
+            self.set_policy(policy);
+        }
+        if autosave != self.autosave {
+            self.set_autosave(autosave);
         }
     }
 
@@ -1181,6 +1553,7 @@ impl eframe::App for EditorApp {
         let ctx = ui.ctx().clone();
         let p = theme::palette(ui);
         self.poll(&ctx);
+        self.autosave_tick(&ctx);
         self.close_guard(&ctx);
         self.dropped_files(&ctx);
         self.shortcuts(&ctx);
@@ -1211,7 +1584,9 @@ impl eframe::App for EditorApp {
         egui::CentralPanel::no_frame()
             .frame(Frame::new().fill(p.canvas))
             .show(ui, |ui| {
-                if self.doc.is_some() {
+                if self.settings_open {
+                    self.settings_page(ui, &p);
+                } else if self.doc.is_some() {
                     self.canvas(ui, &p);
                 } else {
                     self.empty_state(ui, &p);
@@ -1219,10 +1594,21 @@ impl eframe::App for EditorApp {
             });
 
         self.banners(&ctx, toolbar_bottom, &p);
-        self.settings_modal(&ctx, &p);
         self.confirm_modal(&ctx, &p);
+        self.restore_modal(&ctx, &p);
         self.drop_overlay(&ctx, &p);
         self.update_title(&ctx);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // An exit with unsaved edits that were not discarded keeps the copy
+        // for the next start.
+        let unsaved = self.doc.as_ref().is_some_and(DocView::dirty) && !self.allow_close;
+        if let Some(session) = self.session.take()
+            && !unsaved
+        {
+            session.close();
+        }
     }
 
     fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
@@ -1231,6 +1617,46 @@ impl eframe::App for EditorApp {
 }
 
 // ----- Drawing helpers -----
+
+/// Version shown in the interface; debug builds are marked for testers.
+fn version_label() -> String {
+    if cfg!(debug_assertions) {
+        format!("v{VERSION} (debug)")
+    } else {
+        format!("v{VERSION}")
+    }
+}
+
+fn section(ui: &mut Ui, p: &Palette, title: &str, add: impl FnOnce(&mut Ui)) {
+    Frame::new()
+        .fill(p.chrome)
+        .stroke(Stroke::new(1.0, p.border))
+        .corner_radius(CornerRadius::same(12))
+        .inner_margin(Margin::same(20))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(title).font(theme::semibold(15.0)));
+            ui.add_space(4.0);
+            add(ui);
+        });
+    ui.add_space(14.0);
+}
+
+/// `<stem>_edited.pdf` next to the original file.
+fn edited_name(source: &std::path::Path) -> Option<PathBuf> {
+    let stem = source.file_stem()?.to_string_lossy();
+    Some(source.with_file_name(format!("{stem}_edited.pdf")))
+}
+
+fn time_ago(when: std::time::SystemTime) -> String {
+    let secs = when.elapsed().map_or(0, |d| d.as_secs());
+    match secs {
+        0..60 => "less than a minute ago".into(),
+        60..3600 => format!("{} minutes ago", secs / 60),
+        3600..86_400 => format!("{} hours ago", secs / 3600),
+        _ => format!("{} days ago", secs / 86_400),
+    }
+}
 
 fn modal_frame(ctx: &Context) -> Frame {
     Frame::window(&ctx.global_style()).inner_margin(Margin::same(22))
@@ -1368,14 +1794,15 @@ fn edit_box(
 ) -> Option<bool> {
     let edit = doc.edit.as_mut()?;
     let page_rect = *page_rects.get(edit.page)?;
-    let screen = to_screen(edit.rect, page_rect, scale);
+    let screen = to_screen(edit.line.rect, page_rect, scale);
+    let first = &edit.line.objects[0];
 
     // Match the visible glyph size: the object's font size scaled by its
     // matrix. Bounds are glyph-tight (cap height without descenders is about
     // 0.7 em), so they only serve as a fallback when the content stream adds
     // its own scaling.
-    let [a, b, c, d, _, _] = edit.object.matrix;
-    let from_matrix = edit.object.size * (a * d - b * c).abs().sqrt() * scale;
+    let [a, b, c, d, _, _] = first.matrix;
+    let from_matrix = first.size * (a * d - b * c).abs().sqrt() * scale;
     let height = screen.height().max(4.0);
     let font_px = if from_matrix > height * 0.6 && from_matrix < height * 2.4 {
         from_matrix
@@ -1384,7 +1811,7 @@ fn edit_box(
     }
     .clamp(6.0, 240.0);
     let font = FontId::proportional(font_px);
-    let [r, g, bl, alpha] = edit.object.color;
+    let [r, g, bl, alpha] = first.color;
     let color = if alpha < 32 {
         Color32::BLACK
     } else {
@@ -1420,12 +1847,7 @@ fn edit_box(
         StrokeKind::Outside,
     );
 
-    let id = Id::new((
-        "edit-box",
-        edit.page,
-        edit.object.index,
-        edit.object.revision,
-    ));
+    let id = Id::new(("edit-box", edit.page, first.index, first.revision));
     let editor = TextEdit::singleline(&mut edit.text)
         .id(id)
         .font(font)
@@ -1454,6 +1876,83 @@ fn to_screen(raster: Rect, page: Rect, scale: f32) -> Rect {
         page.min + raster.min.to_vec2() * scale,
         page.min + raster.max.to_vec2() * scale,
     )
+}
+
+/// Joins consecutive objects into lines: same font, size, color and
+/// horizontal orientation, on one baseline, advancing left to right with at
+/// most a word gap between them. Space-only objects never start or end a line.
+fn group_lines(items: Vec<(TextObject, Rect)>) -> Vec<Line> {
+    fn em(o: &TextObject) -> f32 {
+        (o.size * o.matrix[3].abs()).max(0.1)
+    }
+    fn joins(a: &TextObject, b: &TextObject) -> bool {
+        let horizontal = |o: &TextObject| {
+            o.matrix[1].abs() < 1e-3 && o.matrix[2].abs() < 1e-3 && o.matrix[0] > 0.0
+        };
+        let size = em(a);
+        horizontal(a)
+            && horizontal(b)
+            && a.font == b.font
+            && a.color == b.color
+            && (a.size - b.size).abs() < 0.01
+            && a.matrix[..4]
+                .iter()
+                .zip(&b.matrix[..4])
+                .all(|(x, y)| (x - y).abs() < 1e-3)
+            && (a.matrix[5] - b.matrix[5]).abs() < 0.2 * size
+            && b.bounds.left >= a.bounds.left - 0.1 * size
+            && b.bounds.left - a.bounds.right <= 0.8 * size
+    }
+    let blank = |o: &TextObject| o.text.trim().is_empty();
+    let mut groups: Vec<Vec<(TextObject, Rect)>> = vec![];
+    for item in items {
+        match groups.last_mut() {
+            Some(group)
+                if group.last().is_some_and(|(last, _)| joins(last, &item.0))
+                    && !(group.len() == 1 && blank(&group[0].0)) =>
+            {
+                group.push(item)
+            }
+            _ => groups.push(vec![item]),
+        }
+    }
+    let mut lines = vec![];
+    for mut group in groups {
+        // Trailing spaces become their own entries.
+        let mut tail = vec![];
+        while group.len() > 1 && group.last().is_some_and(|(o, _)| blank(o)) {
+            tail.extend(group.pop());
+        }
+        lines.push(line_from(group));
+        lines.extend(tail.into_iter().rev().map(|item| line_from(vec![item])));
+    }
+    lines
+}
+
+fn line_from(group: Vec<(TextObject, Rect)>) -> Line {
+    let mut text = String::new();
+    let mut rect = Rect::NOTHING;
+    let mut previous: Option<&TextObject> = None;
+    for (object, r) in &group {
+        rect = rect.union(*r);
+        if let Some(prev) = previous {
+            let gap = object.bounds.left - prev.bounds.right;
+            let em = (prev.size * prev.matrix[3].abs()).max(0.1);
+            let spaced = text.ends_with(' ') || object.text.starts_with(' ');
+            if (object.text.trim().is_empty() || gap > 0.2 * em) && !spaced {
+                text.push(' ');
+            }
+        }
+        if !object.text.trim().is_empty() || previous.is_none() {
+            text.push_str(&object.text);
+        }
+        previous = Some(object);
+    }
+    Line {
+        objects: group.into_iter().map(|(o, _)| o).collect(),
+        rect,
+        text,
+    }
 }
 
 fn raster_rect(transform: &PageTransform, object: &TextObject) -> Rect {
@@ -1495,6 +1994,50 @@ mod tests {
     /// Mirrors the core's dimension check: ceil(points * scale) per side.
     fn pixels(info: &PageInfo, scale: f32) -> f32 {
         (info.width * scale).ceil() * (info.height * scale).ceil()
+    }
+
+    fn glyph(text: &str, left: f32, baseline: f32) -> (TextObject, Rect) {
+        let object = TextObject {
+            page: 0,
+            index: (left * 10.0) as usize + baseline as usize * 10_000,
+            revision: 0,
+            text: text.into(),
+            font: "F".into(),
+            size: 10.0,
+            bounds: pdf_editor_core::Bounds {
+                left,
+                bottom: baseline - 2.0,
+                right: left + if text.is_empty() { 2.5 } else { 5.0 },
+                top: baseline + 7.0,
+            },
+            color: [0, 0, 0, 255],
+            matrix: [1.0, 0.0, 0.0, 1.0, left, baseline],
+        };
+        let rect = Rect::from_min_max(
+            pos2(left, 100.0 - baseline - 7.0),
+            pos2(left + 5.0, 100.0 - baseline + 2.0),
+        );
+        (object, rect)
+    }
+
+    #[test]
+    fn glyph_objects_group_into_lines() {
+        let items = vec![
+            glyph("R", 10.0, 50.0),
+            glyph("e", 15.0, 50.0),
+            glyph("", 20.0, 50.0),
+            glyph("f", 23.0, 50.0),
+            glyph("", 28.0, 50.0),
+            // A distant column on the same baseline starts a new line.
+            glyph("x", 60.0, 50.0),
+            // The next line down.
+            glyph("Next line", 10.0, 30.0),
+        ];
+        let lines = group_lines(items);
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["Re f", "", "x", "Next line"]);
+        assert_eq!(lines[0].objects.len(), 4);
+        assert!(lines[0].rect.min.x <= 10.0 && lines[0].rect.max.x >= 28.0);
     }
 
     #[test]
