@@ -198,6 +198,7 @@ impl Engine {
             undo: vec![],
             redo: vec![],
             revision: doc.revision,
+            protected: doc.protected,
             substitution: doc.substitution,
         };
         self.pages(&candidate)?;

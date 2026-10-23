@@ -410,6 +410,7 @@ pub(crate) fn edit_styled(
                 undo: vec![],
                 redo: vec![],
                 revision: state.revision,
+                protected: state.protected,
                 substitution: state.substitution,
             };
             let after = engine.text_objects(&candidate, (number - 1) as u16)?;

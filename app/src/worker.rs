@@ -19,6 +19,8 @@ const SAMPLE_SPAN: f32 = 1000.0;
 
 pub enum Request {
     Open(PathBuf),
+    OpenPassword(PathBuf, String),
+    SavePassword(PathBuf, String),
     Print,
     FormFields,
     FillField(pdf_editor_core::FormField, pdf_editor_core::FieldValue),
@@ -77,6 +79,7 @@ impl PageTransform {
 
 pub enum Reply {
     Printed(bool),
+    PasswordRequired(PathBuf),
     ReplacementCount(String, usize),
     FormFields(Vec<pdf_editor_core::FormField>),
     Thumbnail {
@@ -96,6 +99,7 @@ pub enum Reply {
         name: String,
         pages: Vec<PageInfo>,
         suggested: PathBuf,
+        protected: bool,
     },
     Rendered {
         generation: u64,
@@ -477,11 +481,16 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 Err(e) => failed(e),
             }
         }
-        Request::Open(path) => {
-            let mut doc = match engine.open(&path) {
+        Request::Open(path) => handle(state, Request::OpenPassword(path, String::new())),
+        Request::OpenPassword(path, password) => {
+            let mut doc = match engine.open_with_password(&path, &password) {
                 Ok(doc) => doc,
+                Err(e) if e.0 == pdf_editor_core::PASSWORD_REQUIRED => {
+                    return Some(Reply::PasswordRequired(path));
+                }
                 Err(e) => return failed(e),
             };
+            let protected = doc.is_password_protected();
             let pages = match engine.pages(&doc) {
                 Ok(pages) => pages,
                 Err(e) => return failed(e),
@@ -500,6 +509,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 name,
                 pages,
                 suggested,
+                protected,
             })
         }
         Request::Render { page, scale } => {
@@ -565,6 +575,12 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             }
             Some(changed(state, kind, None, usize::from(moved)))
         }
+        Request::SavePassword(path, password) => {
+            match state.doc.as_ref()?.save_as_with_password(&path, &password) {
+                Ok(()) => Some(Reply::Saved(path)),
+                Err(e) => failed(e),
+            }
+        }
         Request::SaveAs(path) => {
             let doc = state.doc.as_ref()?;
             match doc.save_as(&path) {
@@ -574,7 +590,11 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
         }
         Request::Snapshot(path) => {
             let doc = state.doc.as_ref()?;
-            let error = doc.save_as(&path).err().map(|e| e.to_string());
+            let error = if doc.is_password_protected() {
+                Some("Recovery copies are disabled for password-protected documents".into())
+            } else {
+                doc.save_as(&path).err().map(|e| e.to_string())
+            };
             Some(Reply::Snapshot {
                 generation: state.generation,
                 path,

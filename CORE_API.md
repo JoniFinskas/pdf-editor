@@ -104,3 +104,9 @@ Keyboard commands are UI dispatch only: Open/Save As use `Engine::open`/`Documen
 
 - `Engine::replacement_count(document, query) -> Result<usize>`: count case-insensitive literal occurrences in editable text, including adjacent runs.
 - `Engine::replace_text(document, query, replacement, occurrence) -> Result<usize>`: replace one zero-based occurrence or all (`None`), preserve fonts through the existing edit engine, and commit a single atomic undo step.
+
+## Passwords
+
+- `Engine::open_with_password(path, password) -> Result<Document>`: decrypt a bounded PDF into editable memory; incorrect passwords return `PASSWORD_REQUIRED`.
+- `Document::is_password_protected() -> bool`: identify encrypted sources for recovery policy.
+- `Document::save_as_with_password(path, password) -> Result<()>`: exclusive AES-256 encrypted export, or ordinary Save As for an empty password.

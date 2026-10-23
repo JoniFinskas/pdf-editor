@@ -324,3 +324,9 @@ Treat the explicit Off appearance as unchecked: the wrapper's radio fallback com
 ## Part F: Find and replace
 
 Replacement searches editable text runs with Unicode-aware case folding and original byte boundaries. Adjacent runs can share matches; separate lines and distant columns are not concatenated. The replacement appears in the first affected run and unaffected prefixes/suffixes retain their run. All page changes are staged and independently parsed before one history update. Unsupported content mapping fails the entire operation. The replacement dialog counts editable occurrences separately from general PDF text search, which can also find noneditable nested content.
+
+## Part F: Password-protected PDFs
+
+Decrypt authenticated inputs into in-memory editing snapshots. Preserve the encrypted-source flag through edits, undo and redo. Passwords are not stored in configuration, document history, diagnostics or recovery files. Disable recovery snapshots for encrypted sources. An empty user password can open automatically.
+
+Encrypted Save As uses PDF AES-256 revision 6, a fresh 32-byte Windows CNG random key, and the supplied password for both owner and user authentication. Password confirmation prevents accidental mismatches. Existing files and the original remain protected by exclusive creation. Encryption changes only the exported copy; the working document remains editable.

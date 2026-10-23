@@ -56,6 +56,7 @@ pub struct EditorApp {
     signatures: crate::signatures::Signatures,
     forms: crate::forms::Forms,
     replace: crate::replace::Replace,
+    password: crate::passwords::PasswordDialog,
     find: FindState,
     worker: Worker,
     engine_alive: bool,
@@ -168,6 +169,7 @@ struct FindState {
 }
 
 struct DocView {
+    protected: bool,
     name: String,
     /// Path the document was opened from.
     source: PathBuf,
@@ -329,6 +331,7 @@ impl EditorApp {
             signatures: Default::default(),
             forms: Default::default(),
             replace: Default::default(),
+            password: Default::default(),
             find: FindState::default(),
             worker,
             engine_alive: true,
@@ -449,8 +452,7 @@ impl EditorApp {
             if path.extension().is_none() {
                 path.set_extension("pdf");
             }
-            self.busy += 1;
-            self.send(Request::SaveAs(path));
+            self.password.save(path);
         }
     }
 
@@ -586,6 +588,11 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::PasswordRequired(path) => {
+                self.busy = self.busy.saturating_sub(1);
+                self.opening = false;
+                self.password.open(path);
+            }
             Reply::ReplacementCount(query, count) => {
                 self.busy = self.busy.saturating_sub(1);
                 if self.replace.query == query {
@@ -648,6 +655,7 @@ impl EditorApp {
                 name,
                 pages,
                 suggested,
+                protected,
             } => {
                 if self.restoring.is_none()
                     && let Some(config) = &self.config_path
@@ -695,6 +703,7 @@ impl EditorApp {
                     None => (name, path, suggested),
                 };
                 self.doc = Some(DocView {
+                    protected,
                     name,
                     source,
                     copied_generation: None,
@@ -2507,7 +2516,11 @@ impl EditorApp {
         else {
             return;
         };
-        if !doc.dirty() || doc.copying || doc.copied_generation == Some(doc.generation) {
+        if doc.protected
+            || !doc.dirty()
+            || doc.copying
+            || doc.copied_generation == Some(doc.generation)
+        {
             doc.next_copy = None;
             return;
         }
@@ -2903,6 +2916,11 @@ impl eframe::App for EditorApp {
             self.floating_tools(&ctx, central.response.rect, &p);
         }
 
+        if let Some(request) = self.password.show(&ctx, &p, self.busy == 0) {
+            self.opening = matches!(request, Request::OpenPassword(..));
+            self.busy += 1;
+            self.send(request);
+        }
         if let Some(request) = self.replace.show(&ctx, &p, self.busy == 0) {
             self.commit_edit();
             self.busy += 1;
@@ -3596,6 +3614,7 @@ mod tests {
                 signatures: Default::default(),
                 forms: Default::default(),
                 replace: Default::default(),
+                password: Default::default(),
                 find: FindState::default(),
                 worker,
                 engine_alive: true,
@@ -3630,6 +3649,7 @@ mod tests {
         app.handle(
             ctx,
             Reply::Opened {
+                protected: false,
                 generation: 1,
                 path: PathBuf::from("sample.pdf"),
                 name: "sample.pdf".into(),

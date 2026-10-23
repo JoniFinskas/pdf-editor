@@ -708,7 +708,7 @@ fn encryption_and_compression_limits_are_explicit() {
             .err()
             .unwrap()
             .0
-            .contains("Encrypted")
+            .contains("password")
     );
     let mut pdf = lopdf::Document::load_mem(&generated("AB", false, 0, 0.0, false, false)).unwrap();
     pdf.trailer.set(
@@ -728,7 +728,7 @@ fn encryption_and_compression_limits_are_explicit() {
     pdf.encrypt(&encryption).unwrap();
     let path = temp("empty-password.pdf");
     pdf.save(&path).unwrap();
-    assert!(e.open(&path).err().unwrap().0.contains("Encrypted"));
+    assert!(e.open(&path).unwrap().is_password_protected());
     let mut pdf = lopdf::Document::load_mem(&generated("AB", false, 0, 0.0, false, false)).unwrap();
     let page = pdf.get_pages()[&1];
     let mut stream = Stream::new(lopdf::Dictionary::new(), vec![b' '; MAX_STREAM + 1]);
@@ -1251,5 +1251,32 @@ fn replace_one_all_preserves_fonts_and_is_atomic() {
     assert_eq!(e.replacement_count(&doc, "å").unwrap(), 4);
     doc.undo();
     assert_eq!(e.replacement_count(&doc, "AB").unwrap(), 4);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn password_open_and_aes256_save_roundtrip() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    assert!(
+        e.open_with_password(&fixture("encrypted.pdf"), "wrong")
+            .is_err()
+    );
+    let mut doc = e
+        .open_with_password(&fixture("encrypted.pdf"), "fixture-reader")
+        .unwrap();
+    assert!(doc.is_password_protected());
+    let object = e.text_objects(&doc, 0).unwrap().remove(0);
+    e.edit(&mut doc, &object, "BA").unwrap();
+    assert!(doc.is_password_protected());
+    let path = temp("aes256.pdf");
+    let _ = fs::remove_file(&path);
+    doc.save_as_with_password(&path, "test-password-ä").unwrap();
+    assert!(e.open(&path).is_err());
+    assert!(e.open_with_password(&path, "wrong").is_err());
+    let reopened = e.open_with_password(&path, "test-password-ä").unwrap();
+    assert_eq!(e.text_objects(&reopened, 0).unwrap()[0].text, "BA");
+    assert!(e.render(&doc, 0, 1.0).unwrap().rgba == e.render(&reopened, 0, 1.0).unwrap().rgba);
+    assert!(doc.save_as_with_password(&path, "other").is_err());
     fs::remove_file(path).unwrap();
 }

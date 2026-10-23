@@ -9,6 +9,8 @@ mod forms;
 pub use forms::{FieldValue, FormField};
 mod images;
 mod pages;
+mod passwords;
+pub use passwords::PASSWORD_REQUIRED;
 mod printing;
 pub use images::{Picture, Placement, signature_files, signature_image, store_signature};
 pub use pages::PageEdit;
@@ -155,6 +157,7 @@ pub struct Document {
     undo: Vec<Vec<u8>>,
     redo: Vec<Vec<u8>>,
     revision: u64,
+    protected: bool,
     pub substitution: Substitution,
 }
 impl Engine {
@@ -185,24 +188,7 @@ impl Engine {
         })
     }
     pub fn open(&self, path: &Path) -> Result<Document> {
-        guarded(|| {
-            let original = path.canonicalize()?;
-            let bytes = read_limited(&original, MAX_FILE)?;
-            parse(&bytes)?;
-            let native = self.pdfium.load_pdf_from_byte_slice(&bytes, None)?;
-            if native.pages().is_empty() {
-                return Err(err("PDF has no pages"));
-            }
-            drop(native);
-            Ok(Document {
-                bytes,
-                original,
-                undo: vec![],
-                redo: vec![],
-                revision: 0,
-                substitution: Substitution::Line,
-            })
-        })
+        self.open_with_password(path, "")
     }
     pub fn pages(&self, doc: &Document) -> Result<Vec<PageInfo>> {
         guarded(|| {
@@ -233,6 +219,7 @@ impl Engine {
                         page,
                         index,
                         revision: doc.revision,
+
                         text: native_text(text, &page_text)?,
                         font: text.font().name(),
                         size: text.unscaled_font_size().value,
@@ -386,6 +373,7 @@ impl Engine {
                 undo: vec![],
                 redo: vec![],
                 revision: doc.revision,
+                protected: doc.protected,
                 substitution: doc.substitution,
             };
             let reopened = self.text_objects(&candidate, first.page)?;
