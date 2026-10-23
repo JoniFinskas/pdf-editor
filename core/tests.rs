@@ -8,6 +8,66 @@ use std::sync::Mutex;
 static PDFIUM: Mutex<()> = Mutex::new(());
 
 #[test]
+fn grouped_text_preparation_keeps_page_transparency_and_allows_editing() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let path = temp("grouped-text.pdf");
+    fs::write(&path, generated("Grouped", false, 0, 0., false, false)).unwrap();
+    let original = e.open(&path).unwrap();
+    let mut pdf = parse(&original.bytes).unwrap();
+    let page = pdf.get_pages()[&1];
+    let form = pdf.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Form",
+            "BBox" => vec![0.into(),0.into(),612.into(),792.into()],
+            "Group" => dictionary! { "S" => "Transparency", "I" => true, "CS" => "DeviceRGB" },
+            "Resources" => content::resources(&pdf, page).unwrap(),
+        },
+        pdf.get_page_content_with_limit(page, MAX_STREAM).unwrap(),
+    ));
+    let stream = pdf.add_object(Stream::new(
+        lopdf::Dictionary::new(),
+        b"q /Design Do Q".to_vec(),
+    ));
+    let dict = pdf.get_dictionary_mut(page).unwrap();
+    dict.set("Contents", stream);
+    dict.set(
+        "Resources",
+        dictionary! { "XObject" => dictionary! { "Design" => form } },
+    );
+    let mut doc = e.candidate(&original, pdf).unwrap();
+    let original_bytes = doc.bytes.clone();
+    let before = e.render(&doc, 0, 2.).unwrap();
+    assert!(e.text_objects(&doc, 0).unwrap().is_empty());
+    let group = e.page_items(&doc, 0).unwrap().remove(0);
+    e.prepare_grouped_text(&mut doc, &group).unwrap();
+    let after = e.render(&doc, 0, 2.).unwrap();
+    assert_eq!(before.rgba.len(), after.rgba.len());
+    assert!(
+        before
+            .rgba
+            .iter()
+            .zip(&after.rgba)
+            .all(|(a, b)| a.abs_diff(*b) <= 1)
+    );
+    let text = e.text_objects(&doc, 0).unwrap().remove(0);
+    e.edit(&mut doc, &text, "Group").unwrap();
+    assert_eq!(e.text_objects(&doc, 0).unwrap()[0].text, "Group");
+    let saved = temp("grouped-text-saved.pdf");
+    let _ = fs::remove_file(&saved);
+    doc.save_as(&saved).unwrap();
+    assert_eq!(
+        e.text_objects(&e.open(&saved).unwrap(), 0).unwrap()[0].text,
+        "Group"
+    );
+    doc.undo();
+    doc.undo();
+    assert_eq!(doc.bytes, original_bytes);
+    fs::remove_file(path).unwrap();
+    fs::remove_file(saved).unwrap();
+}
+
+#[test]
 fn ungroup_nested_shared_forms_preserves_render_and_allows_edits() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();

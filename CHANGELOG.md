@@ -3,6 +3,7 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Allow clicking supported grouped PDF content in text mode to ungroup it and open the text at the clicked position. Preserve undo and report unsupported groups.
 - Add local batch stamp and Bates CLI commands with dry-run, checked sequences and create-only output.
 
 - Add Bates numbering with a prefix, checked start number and fixed digit count.

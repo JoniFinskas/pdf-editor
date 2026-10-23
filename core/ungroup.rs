@@ -29,6 +29,8 @@ struct Expander<'a> {
     serial: usize,
     operations: usize,
     expanded_bytes: usize,
+    transparency: bool,
+    allow_transparency: bool,
 }
 impl Expander<'_> {
     fn expand(
@@ -37,14 +39,23 @@ impl Expander<'_> {
         inherited: &Dictionary,
         depth: usize,
     ) -> Result<Vec<Operation>> {
-        if depth > 32
-            || stream.dict.has(b"Group")
-            || stream.dict.has(b"OC")
-            || stream.dict.has(b"Ref")
-        {
+        if depth > 32 || stream.dict.has(b"OC") || stream.dict.has(b"Ref") {
             return Err(err(
-                "Cannot ungroup transparency groups, optional content or recursive forms",
+                "Cannot ungroup optional content, reference forms or excessive nesting",
             ));
+        }
+        if stream.dict.has(b"Group") {
+            if !self.allow_transparency {
+                return Err(err("Cannot ungroup transparency groups"));
+            }
+            let group = stream.dict.get_deref(b"Group", self.pdf)?.as_dict()?;
+            if group.get(b"S")?.as_name()? != b"Transparency"
+                || group.get(b"K").and_then(Object::as_bool).unwrap_or(false)
+            {
+                return Err(err("Unsupported group compositing"));
+            }
+            check_opaque_compositing(self.pdf)?;
+            self.transparency = true;
         }
         let local = if stream.dict.has(b"Resources") {
             stream
@@ -201,6 +212,20 @@ impl Expander<'_> {
 impl Engine {
     /// Expand one selected Form XObject, recursively, without altering shared forms.
     pub fn ungroup_page_item(&self, doc: &mut Document, item: &PageItem) -> Result<()> {
+        self.expand_page_item(doc, item, false)
+    }
+
+    /// Expose text in a page-wrapping group while retaining page compositing.
+    pub fn prepare_grouped_text(&self, doc: &mut Document, item: &PageItem) -> Result<()> {
+        self.expand_page_item(doc, item, true)
+    }
+
+    fn expand_page_item(
+        &self,
+        doc: &mut Document,
+        item: &PageItem,
+        allow_transparency: bool,
+    ) -> Result<()> {
         guarded(|| {
             if item.revision != doc.revision {
                 return Err(err("Selection is stale"));
@@ -224,10 +249,13 @@ impl Engine {
                 serial: 0,
                 operations: 0,
                 expanded_bytes: 0,
+                transparency: false,
+                allow_transparency,
             };
             let mut out = vec![];
             let mut count = 0;
             let mut in_text = false;
+            let mut page_group = None;
             for op in content.operations {
                 if op.operator == "BT" {
                     in_text = true;
@@ -239,6 +267,14 @@ impl Engine {
                     if count == ordinal {
                         if in_text {
                             return Err(err("Cannot ungroup forms invoked inside text objects"));
+                        }
+                        if allow_transparency && stream.dict.has(b"Group") {
+                            if items.len() != 1 || pdf.get_dictionary(page)?.has(b"Group") {
+                                return Err(err(
+                                    "Cannot expose text in a transparency group with surrounding artwork",
+                                ));
+                            }
+                            page_group = Some(stream.dict.get_deref(b"Group", &pdf)?.clone());
                         }
                         out.extend(expander.expand(stream, &resources, 0)?);
                     } else {
@@ -252,6 +288,7 @@ impl Engine {
             if count != forms.len() {
                 return Err(err("Ambiguous grouped object selection"));
             }
+            let verify_render = expander.transparency;
             let resources = expander.resources;
             let data = Content { operations: out }.encode()?;
             if data.len() > MAX_STREAM {
@@ -261,21 +298,114 @@ impl Engine {
             let dictionary = pdf.get_object_mut(page)?.as_dict_mut()?;
             dictionary.set("Contents", id);
             dictionary.set("Resources", resources);
+            if let Some(group) = page_group {
+                dictionary.set("Group", group);
+            }
             let candidate = self.candidate(doc, pdf)?;
             if candidate.bytes.len() > MAX_FILE {
                 return Err(err("Edited PDF exceeds size limit"));
             }
             self.page_items(&candidate, item.page)?;
+            if verify_render {
+                for scale in [1.0, 2.0] {
+                    let before = self.render(doc, item.page, scale)?;
+                    let after = self.render(&candidate, item.page, scale)?;
+                    if before.width != after.width
+                        || before.height != after.height
+                        || before
+                            .rgba
+                            .iter()
+                            .zip(&after.rgba)
+                            .any(|(a, b)| a.abs_diff(*b) > 1)
+                        || before
+                            .rgba
+                            .iter()
+                            .zip(&after.rgba)
+                            .filter(|(a, b)| a != b)
+                            .count()
+                            > before.rgba.len() / 100
+                    {
+                        return Err(err(
+                            "This group's transparency cannot be preserved when ungrouping",
+                        ));
+                    }
+                }
+            }
             doc.accept(candidate.bytes);
             Ok(())
         })
     }
 }
 
+// Opaque (or fully invisible) normal painting does not depend on group alpha.
+// Reject fractional alpha and special compositing before removing a group;
+// rendered equality is checked separately before accepting the candidate.
+fn check_opaque_compositing(pdf: &lopdf::Document) -> Result<()> {
+    fn visit(object: &Object, depth: usize) -> Result<()> {
+        if depth > 64 {
+            return Err(err("Compositing resources exceed nesting limit"));
+        }
+        let dictionary = match object {
+            Object::Dictionary(d) => Some(d),
+            Object::Stream(s) => Some(&s.dict),
+            Object::Array(values) => {
+                for value in values {
+                    visit(value, depth + 1)?;
+                }
+                None
+            }
+            _ => None,
+        };
+        if let Some(d) = dictionary {
+            for (key, value) in d.iter() {
+                match key.as_slice() {
+                    b"ca" | b"CA" => {
+                        let alpha = value.as_float()?;
+                        if alpha != 0.0 && alpha != 1.0 {
+                            return Err(err("Cannot ungroup partial transparency"));
+                        }
+                    }
+                    b"BM" if !matches!(value.as_name(), Ok(b"Normal" | b"Compatible")) => {
+                        return Err(err("Cannot ungroup non-normal blending"));
+                    }
+                    b"SMask" if value.as_name().ok() != Some(b"None") => {
+                        return Err(err("Cannot ungroup soft masks"));
+                    }
+                    _ => {}
+                }
+                visit(value, depth + 1)?;
+            }
+        }
+        Ok(())
+    }
+    for object in pdf.objects.values() {
+        visit(object, 0)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use lopdf::dictionary;
+
+    #[test]
+    fn transparency_guard_rejects_fractional_alpha_blending_and_masks() {
+        for alpha in [0.0, 1.0] {
+            let mut pdf = lopdf::Document::with_version("1.7");
+            pdf.add_object(dictionary! { "ca" => alpha, "CA" => 1, "BM" => "Normal" });
+            assert!(check_opaque_compositing(&pdf).is_ok());
+        }
+        for dictionary in [
+            dictionary! { "ca" => 0.5 },
+            dictionary! { "BM" => "Multiply" },
+            dictionary! { "SMask" => Object::Reference((12, 0)) },
+        ] {
+            let mut pdf = lopdf::Document::with_version("1.7");
+            pdf.add_object(dictionary);
+            assert!(check_opaque_compositing(&pdf).is_err());
+        }
+    }
 
     #[test]
     fn malformed_form_resources_are_not_inherited_or_discarded() {
@@ -294,6 +424,8 @@ mod tests {
                 serial: 0,
                 operations: 0,
                 expanded_bytes: 0,
+                transparency: false,
+                allow_transparency: false,
             }
             .expand(stream, &inherited, 0)
         };

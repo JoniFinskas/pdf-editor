@@ -1557,6 +1557,7 @@ impl EditorApp {
                 };
                 if let Some(doc) = &mut self.doc {
                     doc.applying = None;
+                    doc.reopen = None;
                 }
                 self.banner(BannerKind::Error, message);
             }
@@ -3067,6 +3068,40 @@ impl EditorApp {
                             .find(|l| l.rect.expand(1.0).contains(at))
                     })
                 });
+                // Imported designs often keep their text inside Form XObjects.
+                // Expose the existing lossless ungroup operation at the point
+                // of editing, then reopen the clicked text after the refresh.
+                if hit.is_none()
+                    && !doc.object_mode
+                    && doc.edit.is_none()
+                    && !self.drawing.active
+                    && !self.text_tool.adding
+                    && !table_selecting
+                    && !busy
+                    && let Some(pos) = response.hover_pos()
+                    && let Some(objects) = &page.objects
+                {
+                    let at = ((pos - rect.min) / scale).to_pos2();
+                    if let Some(item) = objects.items.iter().rev().find(|item| {
+                        item.kind == "XObjectForm"
+                            && bounds_rect(&objects.transform, item.bounds).contains(at)
+                    }) {
+                        let screen =
+                            to_screen(bounds_rect(&objects.transform, item.bounds), rect, scale);
+                        painter.rect_stroke(
+                            screen,
+                            3.0,
+                            Stroke::new(1.0, p.accent),
+                            StrokeKind::Outside,
+                        );
+                        ctx.set_cursor_icon(CursorIcon::Text);
+                        if response.clicked() {
+                            doc.reopen = Some((index, at));
+                            self.busy += 1;
+                            requests.push(Request::PrepareGroupedText(item.clone()));
+                        }
+                    }
+                }
                 if !self.drawing.active && !self.text_tool.adding && !busy && !table_selecting {
                     let at = (if response.drag_started() {
                         ctx.input(|i| i.pointer.press_origin())
@@ -5310,7 +5345,7 @@ mod tests {
     }
 
     #[test]
-    fn canvas_drag_dispatches_one_move_and_empty_page_drag_pans() {
+    fn canvas_click_edits_grouped_text_and_drag_moves_resizes_or_pans() {
         fn frame(app: &mut EditorApp, ctx: &Context, events: Vec<egui::Event>) {
             let mut output = ctx.run_ui(
                 egui::RawInput {
@@ -5377,6 +5412,72 @@ mod tests {
                 .unwrap()
                 .rect;
             let start = rect.min + vec2(40.0, 40.0) * PT_TO_UI;
+            if !object_mode {
+                let objects = app.doc.as_mut().unwrap().pages[0].objects.as_mut().unwrap();
+                let lines = std::mem::take(&mut objects.lines);
+                objects.items[0].kind = "XObjectForm".into();
+                frame(
+                    &mut app,
+                    &ctx,
+                    vec![egui::Event::PointerMoved(start), button(start, true)],
+                );
+                frame(&mut app, &ctx, vec![button(start, false)]);
+                assert!(
+                    inbox
+                        .try_iter()
+                        .any(|r| matches!(r, Request::PrepareGroupedText(_)))
+                );
+                assert!(app.doc.as_ref().unwrap().reopen.is_some());
+                assert_eq!(app.busy, 1);
+                // The worker refresh exposes the text at the original click.
+                let objects = app.doc.as_mut().unwrap().pages[0].objects.as_mut().unwrap();
+                objects.lines = lines;
+                objects.items[0].kind = "Text".into();
+                app.busy = 0;
+                frame(&mut app, &ctx, vec![]);
+                assert!(app.doc.as_ref().unwrap().edit.is_some());
+                assert!(app.doc.as_ref().unwrap().reopen.is_none());
+                app.cancel_edit();
+                frame(&mut app, &ctx, vec![]);
+                frame(
+                    &mut app,
+                    &ctx,
+                    vec![egui::Event::PointerMoved(start), button(start, true)],
+                );
+                frame(&mut app, &ctx, vec![button(start, false)]);
+                assert!(
+                    app.doc.as_ref().unwrap().edit.is_some(),
+                    "A text click must open the editor"
+                );
+                frame(&mut app, &ctx, vec![egui::Event::Text("updated".into())]);
+                assert!(
+                    app.doc
+                        .as_ref()
+                        .unwrap()
+                        .edit
+                        .as_ref()
+                        .unwrap()
+                        .text
+                        .contains("updated")
+                );
+                frame(
+                    &mut app,
+                    &ctx,
+                    vec![egui::Event::Key {
+                        key: Key::Enter,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+                assert!(inbox.try_iter().any(|request| matches!(request,
+                    Request::Edit { text, .. } if text.contains("updated")
+                )));
+                app.busy = 0;
+                app.cancel_edit();
+                frame(&mut app, &ctx, vec![]);
+            }
             frame(
                 &mut app,
                 &ctx,

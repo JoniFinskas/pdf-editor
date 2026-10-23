@@ -615,3 +615,15 @@ Bates labels have a strict digit width (1–20), a literal prefix and checked u6
 
 ### Batch stamping
 Batch operations use nonrecursive sorted input enumeration and create-only destinations. Bates numbering continues across successfully written files, preventing duplicate labels within one batch; failed files do not consume sequence numbers. Dry-run uses the identical core transformation in memory. Explicit dates are reproducible, and the default UTC date is captured once for all files.
+
+## Editing grouped text
+
+Text-mode clicks on Form XObjects prepare supported groups in an undoable
+operation and reopen text at the clicked position after the refresh.
+A sole page-wrapping transparency group retains its compositing dictionary at
+page level; compare complete page renders at 72 and 144 DPI. Permit at most one
+channel level of compositor rounding in under 1% of channel values, since PDFium
+rounds Form and page group edges differently. Reject larger differences atomically.
+Fractional alpha, non-normal
+blend modes, soft masks and knockout groups remain rejected before mutation.
+Keep the original file unchanged and preserve group preparation as an undo step.
