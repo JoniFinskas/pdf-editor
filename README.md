@@ -112,7 +112,8 @@ existing files and the original path are never overwritten.
   editor to move the line/paragraph; finish or cancel an open edit first. A moving
   outline previews placement, and release commits one undoable move.
 - Toggle **Objects** in the bottom bar to select and drag individual text runs,
-  images, vector icons or grouped artwork. Right-click for **Copy**, **Paste on
+  images, vector icons or grouped artwork. Drag any of the eight selection handles
+  to resize; text scales without reflowing, with one undo step on release. Right-click for **Copy**, **Paste on
   this page**, **Duplicate** or **Delete**; Ctrl+C, Ctrl+V, Ctrl+D and Delete also
   act on the selection when a text field is not focused. Copy/paste uses a private
   in-memory clipboard within the document tab, including between its pages.

@@ -653,6 +653,7 @@ struct ItemDrag {
     items: Vec<pdf_editor_core::PageItem>,
     bounds: Rect,
     delta: Vec2,
+    resize_handle: Option<usize>,
 }
 
 /// Adjacent text objects that read as one line, edited together. Browser
@@ -2877,8 +2878,33 @@ impl EditorApp {
                     );
                 }
                 // Hover and click hit testing against cached object extents.
-                let response =
+                let mut response =
                     ui.interact(rect, Id::new(("pdf-page", index)), Sense::click_and_drag());
+                // Separate hit targets keep handles usable just outside page edges.
+                if !busy
+                    && doc.object_mode
+                    && doc.edit.is_none()
+                    && let Some(item) = doc.selected_item.as_ref().filter(|i| i.page == page_no)
+                    && let Some(objects) = &page.objects
+                {
+                    let selection =
+                        to_screen(bounds_rect(&objects.transform, item.bounds), rect, scale);
+                    for (handle, center) in resize_handles(selection).into_iter().enumerate() {
+                        let handle_response = ui.interact(
+                            Rect::from_center_size(center, vec2(14.0, 14.0)),
+                            Id::new(("object-resize", index, handle)),
+                            Sense::click_and_drag(),
+                        );
+                        if handle_response.hovered()
+                            || handle_response.dragged()
+                            || handle_response.drag_stopped()
+                            || handle_response.is_pointer_button_down_on()
+                            || handle_response.clicked()
+                        {
+                            response = handle_response;
+                        }
+                    }
+                }
                 if !busy
                     && let Some(objects) = &page.objects
                     && let Some(request) = self.drawing.on_page(
@@ -2936,7 +2962,23 @@ impl EditorApp {
                             })
                         })
                     });
-                    if doc.object_mode && (response.clicked() || response.secondary_clicked()) {
+                    let resize_handle = doc
+                        .selected_item
+                        .as_ref()
+                        .filter(|item| doc.object_mode && item.page == page_no)
+                        .and_then(|item| page.objects.as_ref().map(|objects| (item, objects)))
+                        .and_then(|(item, objects)| {
+                            let bounds = bounds_rect(&objects.transform, item.bounds);
+                            at.and_then(|at| {
+                                resize_handles(bounds)
+                                    .iter()
+                                    .position(|pos| pos.distance(at) <= 7.0 / scale)
+                            })
+                        });
+                    if doc.object_mode
+                        && resize_handle.is_none()
+                        && (response.clicked() || response.secondary_clicked())
+                    {
                         doc.selected_item = item_hit.cloned();
                         if doc.edit.as_ref().is_none_or(|e| e.text == e.line.text) {
                             doc.edit = None;
@@ -2944,7 +2986,9 @@ impl EditorApp {
                     }
                     let can_drag = doc.edit.is_none();
                     if response.drag_started() && can_drag {
-                        let items = if doc.object_mode {
+                        let items = if resize_handle.is_some() {
+                            doc.selected_item.clone().into_iter().collect::<Vec<_>>()
+                        } else if doc.object_mode {
                             item_hit.cloned().into_iter().collect::<Vec<_>>()
                         } else if let Some(objects) = &page.objects {
                             objects
@@ -2980,6 +3024,7 @@ impl EditorApp {
                                 items,
                                 bounds,
                                 delta: Vec2::ZERO,
+                                resize_handle,
                             });
                         }
                     }
@@ -2987,14 +3032,21 @@ impl EditorApp {
                         && drag.page == index
                     {
                         drag.delta += response.drag_delta() / scale;
-                        let preview = to_screen(drag.bounds.translate(drag.delta), rect, scale);
+                        let preview_bounds = drag.resize_handle.map_or_else(
+                            || drag.bounds.translate(drag.delta),
+                            |handle| resized_rect(drag.bounds, handle, drag.delta),
+                        );
+                        let preview = to_screen(preview_bounds, rect, scale);
                         painter.rect_stroke(
                             preview,
                             2.0,
                             Stroke::new(2.0, p.accent),
                             StrokeKind::Outside,
                         );
-                        ctx.set_cursor_icon(CursorIcon::Grabbing);
+                        ctx.set_cursor_icon(
+                            drag.resize_handle
+                                .map_or(CursorIcon::Grabbing, resize_cursor),
+                        );
                         if response.drag_stopped() {
                             let drag = doc.dragging_item.take().unwrap();
                             if let Some(objects) = &page.objects
@@ -3002,10 +3054,19 @@ impl EditorApp {
                                 && (dx.abs() > 0.01 || dy.abs() > 0.01)
                             {
                                 self.busy += 1;
-                                requests.push(Request::EditItems(
-                                    drag.items,
-                                    pdf_editor_core::ObjectAction::Move { dx, dy },
-                                ));
+                                let action = if let Some(handle) = drag.resize_handle {
+                                    let bounds = resized_rect(drag.bounds, handle, drag.delta);
+                                    raster_bounds(&objects.transform, bounds).map(|bounds| {
+                                        pdf_editor_core::ObjectAction::Resize { bounds }
+                                    })
+                                } else {
+                                    Some(pdf_editor_core::ObjectAction::Move { dx, dy })
+                                };
+                                if let Some(action) = action {
+                                    requests.push(Request::EditItems(drag.items, action));
+                                } else {
+                                    self.busy = self.busy.saturating_sub(1);
+                                }
                             }
                         }
                     } else if response.dragged() && can_drag && doc.panning {
@@ -3023,8 +3084,33 @@ impl EditorApp {
                         && item.page == page_no
                         && let Some(objects) = &page.objects
                     {
+                        let preview_bounds = doc
+                            .dragging_item
+                            .as_ref()
+                            .filter(|drag| drag.page == index)
+                            .map(|drag| {
+                                drag.resize_handle.map_or_else(
+                                    || drag.bounds.translate(drag.delta),
+                                    |handle| resized_rect(drag.bounds, handle, drag.delta),
+                                )
+                            })
+                            .unwrap_or_else(|| bounds_rect(&objects.transform, item.bounds));
+                        let selection = to_screen(preview_bounds, rect, scale);
+                        for handle in resize_handles(selection) {
+                            let square = Rect::from_center_size(handle, vec2(7.0, 7.0));
+                            painter.rect_filled(square, 1.0, Color32::WHITE);
+                            painter.rect_stroke(
+                                square,
+                                1.0,
+                                Stroke::new(1.0, p.accent),
+                                StrokeKind::Outside,
+                            );
+                        }
+                        if let Some(handle) = resize_handle {
+                            ctx.set_cursor_icon(resize_cursor(handle));
+                        }
                         painter.rect_stroke(
-                            to_screen(bounds_rect(&objects.transform, item.bounds), rect, scale),
+                            selection,
                             2.0,
                             Stroke::new(1.5, p.accent),
                             StrokeKind::Outside,
@@ -4555,6 +4641,63 @@ fn raster_rect(transform: &PageTransform, object: &TextObject) -> Rect {
     bounds_rect(transform, object.bounds)
 }
 
+fn resize_cursor(handle: usize) -> CursorIcon {
+    match handle {
+        1 | 5 => CursorIcon::ResizeVertical,
+        3 | 7 => CursorIcon::ResizeHorizontal,
+        2 | 6 => CursorIcon::ResizeNeSw,
+        _ => CursorIcon::ResizeNwSe,
+    }
+}
+
+fn resize_handles(bounds: Rect) -> [Pos2; 8] {
+    [
+        bounds.left_top(),
+        bounds.center_top(),
+        bounds.right_top(),
+        bounds.right_center(),
+        bounds.right_bottom(),
+        bounds.center_bottom(),
+        bounds.left_bottom(),
+        bounds.left_center(),
+    ]
+}
+
+fn resized_rect(mut bounds: Rect, handle: usize, delta: Vec2) -> Rect {
+    if matches!(handle, 0 | 6 | 7) {
+        bounds.min.x = (bounds.min.x + delta.x).min(bounds.max.x - 1.0);
+    }
+    if matches!(handle, 2 | 3 | 4) {
+        bounds.max.x = (bounds.max.x + delta.x).max(bounds.min.x + 1.0);
+    }
+    if matches!(handle, 0..=2) {
+        bounds.min.y = (bounds.min.y + delta.y).min(bounds.max.y - 1.0);
+    }
+    if matches!(handle, 4..=6) {
+        bounds.max.y = (bounds.max.y + delta.y).max(bounds.min.y + 1.0);
+    }
+    bounds
+}
+
+fn raster_bounds(transform: &PageTransform, bounds: Rect) -> Option<pdf_editor_core::Bounds> {
+    let mut result = Rect::NOTHING;
+    for corner in [
+        bounds.left_top(),
+        bounds.right_top(),
+        bounds.right_bottom(),
+        bounds.left_bottom(),
+    ] {
+        let (x, y) = transform.inverse(corner.x, corner.y)?;
+        result.extend_with(pos2(x, y));
+    }
+    Some(pdf_editor_core::Bounds {
+        left: result.min.x,
+        bottom: result.min.y,
+        right: result.max.x,
+        top: result.max.y,
+    })
+}
+
 fn raster_delta(transform: &PageTransform, delta: Vec2) -> Option<(f32, f32)> {
     let origin = transform.inverse(0.0, 0.0)?;
     let end = transform.inverse(delta.x, delta.y)?;
@@ -4939,6 +5082,23 @@ mod tests {
     }
 
     #[test]
+    fn resize_handles_keep_opposite_edges_and_map_rotation() {
+        let bounds = Rect::from_min_max(pos2(10.0, 20.0), pos2(80.0, 90.0));
+        let resized = resized_rect(bounds, 0, vec2(1000.0, 1000.0));
+        assert_eq!(resized.size(), vec2(1.0, 1.0));
+        assert_eq!(resized.max, bounds.max);
+        let mapped = raster_bounds(
+            &PageTransform::for_test([0.0, 1.0, -1.0, 0.0, 600.0, 20.0]),
+            bounds,
+        )
+        .unwrap();
+        assert_eq!(mapped.left, 0.0);
+        assert_eq!(mapped.right, 70.0);
+        assert_eq!(mapped.bottom, 520.0);
+        assert_eq!(mapped.top, 590.0);
+    }
+
+    #[test]
     fn drag_delta_respects_rotated_page_coordinates() {
         assert_eq!(
             raster_delta(
@@ -5071,6 +5231,68 @@ mod tests {
                 .items[0]
                 .clone();
             app.doc.as_mut().unwrap().selected_item = Some(item);
+            app.doc.as_mut().unwrap().scroll_to = Some(Vec2::ZERO);
+            // Each handle previews without dispatching mutations until release.
+            for matrix in [
+                [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                [0.0, 1.0, -1.0, 0.0, 100.0, 0.0],
+                [-1.0, 0.0, 0.0, -1.0, 100.0, 100.0],
+                [0.0, -1.0, 1.0, 0.0, 0.0, 100.0],
+            ] {
+                for zoom in [0.75, 1.5] {
+                    let transform = PageTransform::for_test(matrix);
+                    let doc = app.doc.as_mut().unwrap();
+                    doc.zoom = zoom;
+                    doc.scroll_to = Some(Vec2::ZERO);
+                    doc.pages[0].objects.as_mut().unwrap().transform = transform;
+                    let scale = doc.scale();
+                    let bounds =
+                        bounds_rect(&transform, doc.selected_item.as_ref().unwrap().bounds);
+                    for handle in 0..8 {
+                        for _ in 0..2 {
+                            frame(&mut app, &ctx, vec![]);
+                        }
+                        inbox.try_iter().for_each(drop);
+                        let rect = ctx
+                            .read_response(Id::new(("pdf-page", 0usize)))
+                            .unwrap()
+                            .rect;
+                        let start = rect.min + resize_handles(bounds)[handle].to_vec2() * scale;
+                        frame(
+                            &mut app,
+                            &ctx,
+                            vec![egui::Event::PointerMoved(start), button(start, true)],
+                        );
+                        let end = start + vec2(12.0, 12.0);
+                        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
+                        assert!(
+                            !inbox
+                                .try_iter()
+                                .any(|r| matches!(r, Request::EditItems(..)))
+                        );
+                        frame(&mut app, &ctx, vec![button(end, false)]);
+                        let edits: Vec<_> = inbox
+                            .try_iter()
+                            .filter_map(|r| match r {
+                                Request::EditItems(
+                                    _,
+                                    pdf_editor_core::ObjectAction::Resize { bounds },
+                                ) => Some(bounds),
+                                _ => None,
+                            })
+                            .collect();
+                        assert_eq!(edits.len(), 1, "handle {handle}");
+                        let expected = raster_bounds(
+                            &transform,
+                            resized_rect(bounds, handle, vec2(12.0, 12.0) / scale),
+                        )
+                        .unwrap();
+                        assert!((edits[0].left - expected.left).abs() < 0.1);
+                        assert!((edits[0].top - expected.top).abs() < 0.1);
+                        app.busy = 0;
+                    }
+                }
+            }
             ctx.memory_mut(|m| m.request_focus(Id::new(("pdf-page", 0usize))));
             frame(&mut app, &ctx, vec![egui::Event::Copy]);
             assert!(inbox.try_iter().any(|r| matches!(r, Request::CopyItems(_))));

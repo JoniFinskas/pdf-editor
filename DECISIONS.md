@@ -517,3 +517,7 @@ Images are decoded one at a time and embedded as JPEG at quality 95 against whit
 ## Object-level redaction
 
 Remove whole intersecting native PDF objects instead of clipping text runs or rasterizing every page. This conservatively removes complete images and nested form groups when partially intersected. Rebuild the catalog and page tree with only page geometry, content and cleaned resources; discard document extras that can retain removed data. Reject marked content with properties rather than preserving unverified alternate text. Validate extraction and object bounds before drawing covers. Redaction is one atomic undo step; source files and session history are not erased.
+
+## Object resizing
+
+Decided to scale native page-object transforms from eight selection handles in Objects mode. Text keeps its font and content without paragraph reflow. Screen bounds are converted through the page transform, including rotation and zoom. Preview is local; release dispatches one atomic operation. Degenerate, non-finite and excessive sizes are rejected before mutation. Grouped Form artwork scales as a whole.
