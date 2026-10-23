@@ -1,0 +1,15 @@
+[package]
+name = "pdf-editor"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+description = "Desktop PDF editor that edits existing text in place"
+
+[[bin]]
+name = "pdf-editor"
+path = "src/main.rs"
+
+[dependencies]
+pdf-editor-core = { path = "../core", version = "=0.1.0" }
+eframe = { version = "=0.36.2", default-features = false, features = ["accesskit", "glow"] }
+rfd = { version = "=0.17.2", default-features = false }

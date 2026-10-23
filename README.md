@@ -1,7 +1,8 @@
 # PDF Editor
 
-A lightweight Windows PDF editor for editing existing text in place. Part A is a
-headless Rust library; the desktop UI is a separate stage.
+A lightweight Windows PDF editor for editing existing text in place. The `core`
+crate is a headless Rust library; the `app` crate is the egui desktop editor
+built on its public API.
 
 Implementation requirements and scope are documented in [SPEC.md](SPEC.md).
 
@@ -15,12 +16,13 @@ cargo build --locked
 cargo test --locked
 cargo install cargo-deny --version 0.20.2 --locked
 cargo deny check
+cargo run -p pdf-editor
 ```
 
 The setup script downloads the non-V8 PDFium chromium/8111 release, verifies the
 committed SHA256, and places the DLL and license in target/debug and target/release.
 No download occurs while opening or editing a document. Dependency versions are
-pinned in Cargo.toml and Cargo.lock. `python scripts/check-crate-age.py 2026-10-22`
+pinned in the crate manifests and Cargo.lock. `python scripts/check-crate-age.py 2026-10-22`
 checks the publication dates of every locked registry package through crates.io.
 
 Use [CORE_API.md](CORE_API.md) for integration. Create an Engine with the absolute

@@ -66,3 +66,74 @@ with no installation or import in the Rust runtime or ordinary test suite.
 
 The LibreOffice PDF is exported from a committed FODT containing fabricated text
 using a fresh isolated profile. Tests treat exported files as read-only.
+
+## Desktop UI
+
+- Converted the repository to a virtual workspace with `core` and `app` members.
+  cargo-deny analyses only the root package of a non-virtual manifest, so the UI
+  dependency graph was not being checked. The core manifest moved to
+  core/Cargo.toml; its test helper now resolves the repository root from the crate
+  directory. No core API changed.
+- Pinned eframe 0.36.2 (released 2026-09-08). 0.37.0 was released 2026-10-15 and
+  is below the 14-day floor. The glow renderer is used instead of wgpu to keep the
+  binary smaller; egui's default fonts are disabled because Inter is embedded.
+  AccessKit stays enabled for screen readers.
+- Pinned rfd 0.17.2 (released 2026-01-12) with default features disabled; those
+  features select Linux portal backends that a Windows build does not use.
+- Embedded Inter 4.1 Regular and SemiBold from the official release with the OFL
+  (app/assets/fonts/README.md records hashes). Segoe UI and Segoe UI Symbol are
+  loaded at runtime from the Windows font directory, when present, as glyph
+  fallbacks for non-Latin text in the edit box. They are not redistributed.
+- All core calls run on one worker thread that owns the Engine and Document.
+  Queued render and object requests for the same page are coalesced. Replies carry
+  a document generation; the UI drops replies from an older generation.
+- Hover and click hit testing use cached `text_objects` results plus an affine
+  page-to-raster mapping derived from three `page_to_pixel` samples per page.
+  Each core call reparses the PDF bytes, so calling `hit_test` on every pointer
+  move would block the worker. Bounds are axis-aligned and page rotation is a
+  multiple of 90 degrees, so the mapped rectangles select the same last-painted
+  object as `hit_test`.
+- 100% zoom maps one PDF point to 96/72 interface points. Render scale follows
+  zoom and display scaling, quantized downward to 1/64 and capped below the
+  core's 16 megapixel limit and an 8192 pixel texture side. Higher zoom levels
+  upscale the capped texture. Textures of pages more than two pages outside the
+  viewport are released.
+- The edit box uses the run's font size scaled by its text matrix, because
+  PDFium bounds are glyph-tight (text without descenders is shorter than the
+  em box). Bounds height is the fallback when the matrix disagrees with them.
+  The box widens with the text and uses the run's color, in the Inter UI font.
+- Enter applies an edit; Escape or moving focus elsewhere cancels it. Unchanged
+  text sends no edit. Clicking another run switches the selection.
+- Save As is the only save path (Ctrl+S also opens Save As). A missing `.pdf`
+  extension is appended. Opening another file or closing with unsaved edits asks
+  for confirmation; the original file is never modified in either case.
+- Settings load at startup through `Substitution::config_path` and
+  `Substitution::load`; a read failure shows a warning banner and uses the
+  default. Changes are saved immediately and applied to the open document.
+- Banners stack at the top of the canvas and are dismissible. Font warnings and
+  errors persist until dismissed; save confirmations expire after four seconds.
+  Render failures are shown inside the affected page instead of as banners.
+
+## UI dependency audit
+
+- Locked transitive versions newer than the 14-day floor were replaced with the
+  newest older compatible releases (arboard, combine, litrs, memmap2,
+  redox_syscall, smallvec, toml_edit, toml_parser, uuid, zbus_names, zerocopy,
+  zerocopy-derive, zvariant, zvariant_derive).
+- clipboard-win is an exception to the 14-day floor: eframe requires arboard 3.6,
+  which requires clipboard-win ^5.3.1. On 2026-10-23 every 5.2.0 to 5.4.1 release
+  was yanked upstream after an out-of-bounds read in `raw::get_html`
+  (upstream issue 42), and 5.4.2 and 5.4.3 were published that day. Pinned 5.4.2,
+  the release that contains only that fix. Its source diff replaces an unchecked
+  `copy_nonoverlapping` with a bounds-checked slice. Revisit when a later release
+  passes the floor.
+- Allowed BSL-1.0 (Boost Software License 1.0) for clipboard-win and error-code.
+  It is OSI-approved and permissive, and it requires no notice in binary
+  distributions.
+- Ignored RUSTSEC-2026-0370, -0371 and -0372 (zvariant, zbus_names,
+  zvariant_derive unmaintained). They are transitive Linux-only dependencies of
+  AccessKit's AT-SPI backend through eframe, with no safe upgrade until AccessKit
+  moves to zbus 6. The Windows build does not compile them. deny.toml records
+  the justification.
+- The core path dependency carries an exact version so the wildcard ban applies
+  without exceptions.

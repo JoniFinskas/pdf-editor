@@ -1,9 +1,19 @@
 [advisories]
 version = 2
+# Transitive Linux-only dependencies of eframe's AccessKit backend
+# (accesskit_unix -> atspi/zbus 5). The advisories report no safe upgrade:
+# the crates were merged into zbus 6, which the pinned eframe/AccessKit
+# release does not use. The Windows build uses accesskit_windows instead and
+# never compiles these crates. Remove when eframe moves to zbus 6.
+ignore = [
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: unmaintained, transitive via accesskit_unix (Linux only), no safe upgrade" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: unmaintained, transitive via accesskit_unix (Linux only), no safe upgrade" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: unmaintained, transitive via accesskit_unix (Linux only), no safe upgrade" },
+]
 
 [licenses]
 version = 2
-allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib"]
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "BSL-1.0", "ISC", "Unicode-3.0", "Zlib"]
 
 [[licenses.exceptions]]
 name = "pdf-editor"
