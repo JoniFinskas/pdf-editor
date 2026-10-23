@@ -507,3 +507,16 @@ validation. Preserve grouped Form objects as groups and fail unsupported copies
 without accepting partial changes. Copy/paste keeps one private in-memory PDF
 snapshot per tab, never writes the operating-system clipboard or disk, and remains
 valid after the source is edited/deleted. Annotations keep their dedicated tools.
+
+## Sanitize document
+
+Sanitization uses a fresh, pruned object graph so removed payloads do not survive
+as unused objects or incremental revisions. Existing snapshot undo remains available.
+Safe ordinary link actions are reconstructed from their destination only; chained
+or executable actions are discarded. Optional annotation removal preserves form
+widgets. Unsupported visibility constructs fail atomically rather than reporting
+successful hidden-text removal. Removal counts describe entries, not unique files.
+
+Reject shared inherited-resource Forms, unprocessed retained Forms/appearances and
+aliased attachment/script/metadata payloads to prevent visible-content loss or residual data.
+Generated regressions cover each rejection and require unchanged bytes/history.

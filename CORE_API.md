@@ -206,3 +206,22 @@ Paragraph fallback substitution stays inside the paragraph even when the ordinar
 
 ## Corpus validation executable
 The opt-in corpus-runner binary exercises existing core APIs inside Docker only. It adds no public library functions and suppresses parser diagnostics and panic text.
+
+## Document sanitization
+
+`Engine::sanitize(&mut Document, SanitizeOptions) -> Result<SanitizeReport>` performs
+one undoable transaction. Metadata, embedded files and active actions are removed
+recursively; ordinary HTTP(S)/mail links and internal destinations can be retained.
+Options separately remove comments/drawing annotations and link annotations.
+The report counts removed entries and hidden text blocks, not unique payload files.
+
+Invisible text rendering (mode 3) and zero fill/stroke opacity are supported,
+including form XObjects. Text clipping, optional layers, soft masks, inherited
+non-default visibility in forms and mixed visible/hidden blocks fail without
+changing the document. This is not a guarantee against every visual concealment
+technique (such as same-color text, occlusion or off-page text). Save As writes a
+fresh pruned object graph. Undo/recovery retain the original until discarded.
+
+Sanitization also rejects XFA forms, retained annotation appearances, unused retained Form
+streams, Forms without their own resources, and aliased attachment/script/metadata payloads.
+These cases leave the original document unchanged.

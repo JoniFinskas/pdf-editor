@@ -42,6 +42,8 @@ pub use printing::PrintJob;
 mod redaction;
 mod replace;
 mod search;
+mod sanitize;
+pub use sanitize::{SanitizeOptions, SanitizeReport};
 mod settings;
 mod stamps;
 mod startup;
