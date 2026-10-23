@@ -421,3 +421,10 @@ The tools added in Parts F and G now use the Part E style, with visual changes o
 ## Part C refresh for the current application
 
 Decided to retain the existing size-optimized release profile and all current direct dependencies after checking their use and compiler diagnostics. The current build includes the tool-window restyle and Parts F/G. Updated the feature overview and manual checks to use the grouped Edit/Document menu and current tab/window controls. Kept version 0.1.0 and the Unreleased changelog because producing a local release-mode build does not complete the manual acceptance requirements for a versioned release.
+
+## Paragraph reflow
+
+- Detect conservative horizontal paragraphs with compatible font/style, overlapping extents, stable baselines and aligned edges or centers. Rotated/scaled text, mixed-style lines, ambiguous columns and dense pages retain line editing and an inline explanation.
+- Reuse the existing text transaction to select/embed the replacement font. Layout prefers explicit PDF glyph widths, uses embedded font advances where widths are absent, preserves character/word spacing, and adds justified gaps through TJ adjustments. Unsupported mappings or render modes produce a clean error.
+- Scope substitutions to the paragraph to preserve all neighboring objects. Reflow never moves other content; added lines warn about overlap and reject overflow beyond the page. Overwide unbreakable words require a space or ordinary line editing.
+- Replace the paragraph as a single undo snapshot, verify text/neighbor state before accepting, and test all alignments with generated Finnish fixtures and outside-box raster comparisons.

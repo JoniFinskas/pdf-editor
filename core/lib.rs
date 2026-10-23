@@ -1,4 +1,6 @@
 //! Headless PDF editing. Page indices are zero based; geometry is in PDF points.
+mod paragraph;
+pub use paragraph::{Paragraph, ParagraphAlignment, paragraphs};
 mod bookmarks;
 pub use bookmarks::{Bookmark, BookmarkEdit, BookmarkSet};
 

@@ -169,3 +169,12 @@ Each `Document` owns its byte snapshots, revision, undo/redo stacks and source i
 - `Engine::edit_bookmarks(document, revision, BookmarkEdit) -> Result<()>`: atomically add a root/child bookmark, rename, delete a subtree or move within siblings, rejecting stale revisions.
 - `BookmarkSet`: revision and flattened depth-annotated entries; `Bookmark`: object identifier, title, optional zero-based page, depth and sibling positions.
 - `BookmarkEdit`: Add(title, page, optional parent), Rename(id, title), Delete(id), or Move(id, final sibling position).
+
+## Paragraph editing
+
+- `paragraphs(objects) -> Vec<Paragraph>`: group current page text into compatible lines and paragraphs with bounds, text, spacing, alignment and line-edit fallback reason; dense, mixed, rotated and ambiguous column layouts stay conservative.
+- `Engine::edit_paragraph(document, paragraph, text) -> Result<EditResult>`: revision-checked, atomic reflow within the detected width using PDF glyph widths and embedded font metrics, original line spacing and alignment; extends downward with an overlap warning and rejects page overflow or words wider than the block.
+- `ParagraphAlignment`: Left, Right, Center or Justified; justified reflow expands word gaps except on the final line.
+- `Paragraph`: current objects, PDF-point bounds, text, line spacing/count, detected alignment and optional fallback reason. Callers must refresh after edits/history operations. Unsupported font encodings/metrics fail without altering the document.
+
+Paragraph fallback substitution stays inside the paragraph even when the ordinary line-edit policy is document-wide, so unrelated content remains unchanged. Newlines request hard line breaks; Ctrl+Enter applies a paragraph in the canvas editor; Alt+click selects an individual line.

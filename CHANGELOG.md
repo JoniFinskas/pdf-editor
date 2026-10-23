@@ -26,6 +26,9 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Click compatible multiline paragraphs to edit and reflow a block with left, right, centered or justified alignment; Ctrl+Enter applies and Escape cancels.
+- Preserve paragraph font metrics and spacing, warn on downward expansion, and keep conservative line editing for ambiguous layouts.
+
 - Bookmarks sidebar with nested navigation, add, rename, delete and sibling reordering.
 
 - Draw freehand, rectangles, ellipses, lines and arrows directly on pages as annotations.

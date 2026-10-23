@@ -10,6 +10,7 @@ mod forms;
 mod icons;
 mod markup;
 mod organize;
+mod paragraph;
 mod passwords;
 mod pictures;
 mod recovery;
