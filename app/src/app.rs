@@ -116,8 +116,7 @@ struct DocView {
     can_undo: bool,
     can_redo: bool,
     /// History position and the position last saved; None when unreachable.
-    position: i64,
-    saved: Option<i64>,
+    changes: pdf_editor_core::ChangeState,
     edit: Option<EditState>,
     /// Page and raster point of a line clicked while the previous edit was
     /// applied; it opens once that page's objects are refreshed.
@@ -191,7 +190,7 @@ enum Pending {
 
 impl DocView {
     fn dirty(&self) -> bool {
-        self.saved != Some(self.position)
+        self.changes.is_dirty()
     }
     fn scale(&self) -> f32 {
         self.zoom * PT_TO_UI
@@ -319,7 +318,7 @@ impl EditorApp {
 
     fn request_open(&mut self, path: Option<PathBuf>) {
         let committed = self.commit_edit();
-        if committed || self.doc.as_ref().is_some_and(DocView::dirty) {
+        if committed || self.busy > 0 || self.doc.as_ref().is_some_and(DocView::dirty) {
             self.confirm = Some(Pending::Open(path));
         } else {
             self.open_dialog_or_path(path);
@@ -621,9 +620,11 @@ impl EditorApp {
                     zoom,
                     can_undo: false,
                     can_redo: false,
-                    position: 0,
-                    // A restored document starts with unsaved edits.
-                    saved: if restored.is_some() { None } else { Some(0) },
+                    changes: if restored.is_some() {
+                        pdf_editor_core::ChangeState::recovered()
+                    } else {
+                        pdf_editor_core::ChangeState::default()
+                    },
                     restored_from: restored,
                     edit: None,
                     reopen: None,
@@ -718,14 +719,9 @@ impl EditorApp {
                 doc.can_redo = can_redo;
                 if objects_changed > 0 {
                     match kind {
-                        ChangeKind::Edit => {
-                            if doc.saved.is_some_and(|s| s > doc.position) {
-                                doc.saved = None;
-                            }
-                            doc.position += 1;
-                        }
-                        ChangeKind::Undo => doc.position -= 1,
-                        ChangeKind::Redo => doc.position += 1,
+                        ChangeKind::Edit => doc.changes.edited(),
+                        ChangeKind::Undo => doc.changes.undone(),
+                        ChangeKind::Redo => doc.changes.redone(),
                     }
                 }
                 if !doc.dirty() {
@@ -782,7 +778,7 @@ impl EditorApp {
             Reply::Saved(path) => {
                 self.busy = self.busy.saturating_sub(1);
                 if let Some(doc) = &mut self.doc {
-                    doc.saved = Some(doc.position);
+                    doc.changes.mark_saved();
                     doc.copied_generation = None;
                     doc.next_copy = None;
                     if let Some(orphan) = doc.restored_from.take() {
@@ -1194,7 +1190,7 @@ impl EditorApp {
             return;
         }
         let committed = self.commit_edit();
-        if committed || self.doc.as_ref().is_some_and(DocView::dirty) {
+        if committed || self.busy > 0 || self.doc.as_ref().is_some_and(DocView::dirty) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.confirm = Some(Pending::Close);
         }
@@ -1774,7 +1770,7 @@ impl EditorApp {
                 let discard = Button::new(RichText::new(format!("Discard and {}", action.to_lowercase())).color(p.accent_text))
                     .fill(p.error_fg)
                     .min_size(vec2(0.0, 32.0));
-                if ui.add(discard).clicked() {
+                if ui.add_enabled(self.busy==0,discard).clicked() {
                     choice = Some(true);
                 }
                 if ui.add(secondary_button("Cancel", p)).clicked() {
@@ -1787,10 +1783,7 @@ impl EditorApp {
         }
         match (choice, self.confirm.take()) {
             (Some(true), Some(Pending::Open(path))) => {
-                self.discard_recovery();
-                if let Some(doc) = &mut self.doc {
-                    doc.saved = Some(doc.position);
-                }
+                // Keep dirty state and recovery until another document actually opens.
                 self.open_dialog_or_path(path);
             }
             (Some(true), Some(Pending::Close)) => {

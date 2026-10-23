@@ -1,5 +1,7 @@
 //! Headless PDF editing. Page indices are zero based; geometry is in PDF points.
+mod change_state;
 mod content;
+pub use change_state::ChangeState;
 mod features;
 pub use features::NewText;
 mod fonts;

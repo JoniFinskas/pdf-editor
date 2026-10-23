@@ -232,3 +232,7 @@ Retain text-field undo ownership while a field is focused. Document shortcuts ar
 ## Part D: Recent files
 
 Extend the existing settings.txt with ten hex-encoded UTF-8 paths after its original policy line. Legacy files remain readable and changing substitution preserves recents. Record only successful opens, exclude recovery copies, deduplicate case-insensitively for Windows, and route Recent through the same unsaved-change guard as Open.
+
+## Part D: Unsaved changes
+
+Keep the existing close/open discard prompt. Its actions wait for outstanding edits, and failed or canceled replacement opens preserve dirty state and recovery copies. Save-point tracking is now a headless tested core type, including redo-branch abandonment and recovered documents. Only successful Save As marks a document saved.

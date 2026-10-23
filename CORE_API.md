@@ -76,3 +76,8 @@ Keyboard commands are UI dispatch only: Open/Save As use `Engine::open`/`Documen
 - `Settings::load(path)` -> substitution policy and up to ten recent paths; accepts legacy policy-only files.
 - `Settings::remember(path)` -> move a path to the front, deduplicate and retain ten.
 - `Settings::save(path)` -> atomically persist settings; paths use bounded UTF-8 hex encoding. `Substitution::save` preserves recent paths.
+
+- `ChangeState::default()` / `ChangeState::recovered()` -> clean or unsaved initial history marker.
+- `ChangeState::edited()` / `undone()` / `redone()` -> track a successful history transition, invalidating an abandoned save point.
+- `ChangeState::mark_saved()` -> mark the current position saved after successful Save As.
+- `ChangeState::is_dirty()` -> whether the current position differs from the reachable saved position.
