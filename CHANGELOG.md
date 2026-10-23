@@ -4,6 +4,10 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+### Added
+- Headless merge, split, extract, compress, rotate, image export, Windows OCR, and
+  font-preserving find/replace commands with folder dry-run counts and exit codes.
+
 ### Changed
 
 - Refresh release-build verification, the feature overview and manual checks for

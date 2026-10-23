@@ -421,3 +421,12 @@ The tools added in Parts F and G now use the Part E style, with visual changes o
 ## Part C refresh for the current application
 
 Decided to retain the existing size-optimized release profile and all current direct dependencies after checking their use and compiler diagnostics. The current build includes the tool-window restyle and Parts F/G. Updated the feature overview and manual checks to use the grouped Edit/Document menu and current tab/window controls. Kept version 0.1.0 and the Unreleased changelog because producing a local release-mode build does not complete the manual acceptance requirements for a versioned release.
+
+### Headless commands
+
+Decided to provide a console companion binary for reliable Windows standard streams
+and exit codes while allowing the desktop executable to dispatch headless commands.
+Commands reuse existing core operations without dependencies. Folder replacement is
+bounded, nonrecursive, skips symlinks, reports numeric indices/counts, and retains
+successful exclusive outputs when another input fails. Shell wrappers launch the
+sibling desktop binary through argument arrays without command-shell interpretation.

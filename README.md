@@ -216,3 +216,44 @@ Copyright (c) 2026 JoniFinskas.
 
 Licensed under the [GNU General Public License, version 3](LICENSE)
 (GPL-3.0-only).
+
+## Headless command line
+
+`pdf-editor-cli.exe` is the console companion; place the verified `pdfium.dll`
+next to it. The desktop executable also recognizes these commands before creating
+windows, but use the console companion when capturing stdout, stderr or exit codes.
+No new dependencies are required.
+
+```powershell
+pdf-editor-cli merge first.pdf second.pdf --output merged.pdf
+pdf-editor-cli split source.pdf --pages "1-3;4-6" --output existing-folder
+pdf-editor-cli extract source.pdf --pages "1,3-5" --output selected.pdf
+pdf-editor-cli compress source.pdf --output smaller.pdf --edge 1600 --quality 80
+pdf-editor-cli rotate source.pdf --output rotated.pdf --pages "1-3" --degrees 90
+pdf-editor-cli to-image source.pdf --output existing-folder --dpi 144 --format png
+pdf-editor-cli ocr scanned.pdf --output searchable.pdf --pages "1-2"
+pdf-editor-cli find-replace source.pdf --find "old" --dry-run
+pdf-editor-cli find-replace input-folder --find "old" --replace "new" --output output-folder
+```
+
+Page ranges are one-based; omitted ranges select every page. Rotation is clockwise
+90, 180 or 270 degrees. Image export accepts PNG/JPG and 36–600 DPI. OCR uses
+installed Windows OCR languages. Password-protected files must first be opened
+and exported through the desktop UI. CLI commands inherit core resource limits.
+
+Find/replace is case-insensitive and uses the same font-preserving edit engine.
+Folder mode processes immediate regular `.pdf` files only (no recursion or
+symlink traversal), in sorted order, up to 10,000 files. It prints numeric file
+indices and match counts, never extracted text. `--dry-run` writes nothing and
+requires no output path. A folder replacement requires an existing output folder;
+it preserves basenames and processes failures independently. Successfully written
+outputs remain if a later file fails. Reports count matches only for successful
+files. Single-file replacement uses an explicit new output filename.
+
+All outputs refuse existing files and never overwrite source PDFs. Export and split
+folders must already exist. Use `--` before input filenames beginning with a dash.
+Exit status is **0** for success, **1** for processing/I/O failures (including any
+folder member failure), and **2** for invalid command syntax. `--help` lists syntax.
+Explorer integration uses the console companion's `shell-open`, `shell-merge`,
+`shell-compress` and `shell-export` wrappers to open the corresponding desktop
+workflow; these return after launching the GUI, not after completing an export.

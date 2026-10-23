@@ -1,5 +1,6 @@
 [package]
 name = "pdf-editor"
+default-run = "pdf-editor"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,3 +15,6 @@ path = "src/main.rs"
 pdf-editor-core = { path = "../core" }
 eframe = { version = "=0.36.2", default-features = false, features = ["accesskit", "glow"] }
 rfd = { version = "=0.17.2", default-features = false }
+[[bin]]
+name = "pdf-editor-cli"
+path = "src/cli_main.rs"

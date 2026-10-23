@@ -2,6 +2,7 @@
 
 mod app;
 mod bookmarks;
+mod cli;
 mod compression;
 mod crop;
 mod drawing;
@@ -25,6 +26,9 @@ mod worker;
 use eframe::egui;
 
 fn main() -> eframe::Result {
+    if let Some(code) = cli::dispatch(std::env::args_os().skip(1).collect()) {
+        std::process::exit(code);
+    }
     let initial = pdf_editor_core::startup_path(std::env::args_os().skip(1));
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
