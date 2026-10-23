@@ -627,3 +627,11 @@ rounds Form and page group edges differently. Reject larger differences atomical
 Fractional alpha, non-normal
 blend modes, soft masks and knockout groups remain rejected before mutation.
 Keep the original file unchanged and preserve group preparation as an undo step.
+
+## Groups alongside existing page artwork
+
+Preserve an existing page transparency dictionary when exposing another group's
+text. When absent, promote the selected group's dictionary. Surrounding artwork
+is not itself a reason to reject editing: the opacity restrictions and complete
+page render comparison remain the acceptance checks. Cover both layouts in the
+generated edit/save/undo regression.

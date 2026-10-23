@@ -11,6 +11,7 @@ static PDFIUM: Mutex<()> = Mutex::new(());
 fn grouped_text_preparation_keeps_page_transparency_and_allows_editing() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();
+    for surrounding in [false, true] {
     let path = temp("grouped-text.pdf");
     fs::write(&path, generated("Grouped", false, 0, 0., false, false)).unwrap();
     let original = e.open(&path).unwrap();
@@ -27,10 +28,13 @@ fn grouped_text_preparation_keeps_page_transparency_and_allows_editing() {
     ));
     let stream = pdf.add_object(Stream::new(
         lopdf::Dictionary::new(),
-        b"q /Design Do Q".to_vec(),
+        if surrounding { b"q /Design Do Q q 20 20 15 15 re f Q".to_vec() } else { b"q /Design Do Q".to_vec() },
     ));
     let dict = pdf.get_dictionary_mut(page).unwrap();
     dict.set("Contents", stream);
+    if surrounding {
+        dict.set("Group", dictionary! { "S" => "Transparency", "I" => true, "CS" => "DeviceRGB" });
+    }
     dict.set(
         "Resources",
         dictionary! { "XObject" => dictionary! { "Design" => form } },
@@ -65,6 +69,7 @@ fn grouped_text_preparation_keeps_page_transparency_and_allows_editing() {
     assert_eq!(doc.bytes, original_bytes);
     fs::remove_file(path).unwrap();
     fs::remove_file(saved).unwrap();
+    }
 }
 
 #[test]

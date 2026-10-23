@@ -269,12 +269,9 @@ impl Engine {
                             return Err(err("Cannot ungroup forms invoked inside text objects"));
                         }
                         if allow_transparency && stream.dict.has(b"Group") {
-                            if items.len() != 1 || pdf.get_dictionary(page)?.has(b"Group") {
-                                return Err(err(
-                                    "Cannot expose text in a transparency group with surrounding artwork",
-                                ));
+                            if !pdf.get_dictionary(page)?.has(b"Group") {
+                                page_group = Some(stream.dict.get_deref(b"Group", &pdf)?.clone());
                             }
-                            page_group = Some(stream.dict.get_deref(b"Group", &pdf)?.clone());
                         }
                         out.extend(expander.expand(stream, &resources, 0)?);
                     } else {

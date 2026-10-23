@@ -225,10 +225,11 @@ optional-content forms, reference forms, inline images, excessive nesting and
 ambiguous selections return an error without changing document history.
 
 `Engine::prepare_grouped_text(document, item)` exposes a clicked group's text.
-For a sole page-wrapping transparency group, preserve its compositing dictionary
-at page level and compare full-page renders at 72 and 144 DPI before
+Preserve existing page compositing, or promote the selected group's compositing
+dictionary to page level, and compare full-page renders at 72 and 144 DPI before
 accepting the undoable change. Reject fractional alpha, non-normal blending,
-soft masks, knockout groups and surrounding artwork that cannot be preserved.
+soft masks and knockout groups. Surrounding artwork is retained and checked by
+the same render comparison.
 Allow only compositor rounding of at most one channel level in under 1% of
 channel values; larger differences reject the transaction.
 
