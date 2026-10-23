@@ -511,3 +511,11 @@ valid after the source is edited/deleted. Annotations keep their dedicated tools
 ## Object resizing
 
 Decided to scale native page-object transforms from eight selection handles in Objects mode. Text keeps its font and content without paragraph reflow. Screen bounds are converted through the page transform, including rotation and zoom. Preview is local; release dispatches one atomic operation. Degenerate, non-finite and excessive sizes are rejected before mutation. Grouped Form artwork scales as a whole.
+
+## Cross-tab object clipboard
+
+Decided to share one immutable clipboard snapshot among the workers in a window. A copy owns bounded source PDF bytes, so source edits and closing a tab cannot invalidate it. Workers clone only a shared handle and release the lock before native PDF work. Paste affects only the destination document and its undo history. PDF data never enters the operating-system clipboard or a clipboard file.
+
+Copy reserves its result when queued, and paste captures that exact result slot when queued. A destination worker waits for an earlier pending copy without blocking the interface or holding a native PDF lock. Later copies cannot replace an already-queued paste. Failed or cancelled copies wake waiting pastes with an error.
+
+Copies use PDFium's group-to-Form import against the private snapshot. Temporary wrappers around individual text, image and path objects are expanded on the candidate before accepting one undoable change, keeping them directly editable. Genuine source Form groups remain grouped. This retains nested resources, transformations and clipping without flattening or altering the source document. Source native handles are captured before any copy because restoring a temporary group can change object indices.

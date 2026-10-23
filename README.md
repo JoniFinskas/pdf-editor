@@ -116,8 +116,10 @@ existing files and the original path are never overwritten.
   to resize; text scales without reflowing, with one undo step on release. Right-click for **Copy**, **Paste on
   this page**, **Duplicate** or **Delete**; Ctrl+C, Ctrl+V, Ctrl+D and Delete also
   act on the selection when a text field is not focused. Copy/paste uses a private
-  in-memory clipboard within the document tab, including between its pages.
-  Grouped Form artwork is selected as one object; unsupported native copies fail
+  in-memory clipboard shared between document tabs and pages. A copy survives closing
+  its source tab and stays available until replaced or the application closes.
+  Copied text, images and paths remain directly editable; grouped artwork stays grouped.
+  Fonts, resources and clipping are preserved. Unsupported native operations fail
   without changing the document. Annotations retain their separate editing tools.
 - Text edits retain page and thumbnail previews while replacements render in the
   background. Search refreshes preserve the current viewing position. Complex

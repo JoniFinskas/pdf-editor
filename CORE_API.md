@@ -11,8 +11,8 @@ I/O, lopdf and PDFium errors intentionally discard internal diagnostic details.
 | --- | --- | --- |
 | `Engine::page_items` | Document, page | Top-level text/image/path/form objects with revision, native index, kind and PDF-point bounds; capped at 20,000 objects. |
 | `Engine::edit_page_items` | Mutable document, same-page PageItems, ObjectAction | Atomic move by PDF-point delta, resize one object to PDF-point bounds, duplicate with offset, or delete; rejects stale selections and unsupported native operations; one undo step. |
-| `Engine::copy_page_items` | Document, same-page PageItems | Opaque in-memory ObjectClipboard snapshot independent of subsequent edits. |
-| `Engine::paste_page_items` | Mutable document, ObjectClipboard, target page | Copy snapshot objects onto the target page with a 12-point right/down offset; atomic and undoable. |
+| `Engine::copy_page_items` | Document, same-page PageItems | Opaque in-memory ObjectClipboard snapshot independent of subsequent edits and source-document lifetime; may be pasted into another document. |
+| `Engine::paste_page_items` | Mutable document, ObjectClipboard, target page | Copy snapshot objects onto the target page with a 12-point right/down offset; copied text/images/paths remain directly editable, source Form groups retain resources and clipping; atomic and undoable. |
 | `Engine::new` | Absolute trusted PDFium DLL path | Runtime handle; reuses the process-wide runtime for the same canonical path. |
 | `Engine::open` | Source path | Document with immutable original bytes and empty history; rejects encrypted/invalid/oversized PDFs. |
 | `Engine::pages` | Document | Page dimensions in PDF points, in page order; uses fast PDFium metadata, with indexed page-loading fallback on metadata failure; rejects invalid dimensions and propagates loading errors. |

@@ -8,7 +8,10 @@ use pdf_editor_core::{Document, Engine, PageInfo, Substitution, TextObject};
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     path::PathBuf,
-    sync::mpsc::{Receiver, Sender, SyncSender, TryRecvError, channel, sync_channel},
+    sync::{
+        Arc, Condvar, Mutex,
+        mpsc::{Receiver, Sender, SyncSender, TryRecvError, channel, sync_channel},
+    },
     thread,
 };
 
@@ -18,6 +21,8 @@ const SAMPLE_SCALE: f32 = 4.0;
 const SAMPLE_SPAN: f32 = 1000.0;
 
 pub enum Request {
+    CopyItemsPrepared(CopyJob),
+    PasteItemsPrepared(u16, Option<Arc<CopySlot>>),
     Open(PathBuf),
     OpenPassword(PathBuf, String),
     SavePassword(PathBuf, String),
@@ -194,25 +199,99 @@ pub enum ChangeKind {
     Redo,
 }
 
+/// Shared by tabs in one window; retains one immutable snapshot after a source tab closes.
+#[derive(Clone, Default)]
+pub struct SharedClipboard(Arc<Mutex<Option<Arc<CopySlot>>>>);
+
+#[derive(Default)]
+pub struct CopySlot {
+    value: Mutex<Option<Result<Arc<pdf_editor_core::ObjectClipboard>, String>>>,
+    ready: Condvar,
+}
+
+pub struct CopyJob {
+    items: Vec<pdf_editor_core::PageItem>,
+    slot: Arc<CopySlot>,
+}
+
+impl CopySlot {
+    fn finish(&self, value: Result<Arc<pdf_editor_core::ObjectClipboard>, String>) {
+        let mut state = self.value.lock().unwrap_or_else(|e| e.into_inner());
+        if state.is_none() {
+            *state = Some(value);
+            self.ready.notify_all();
+        }
+    }
+
+    fn wait(&self) -> Result<Arc<pdf_editor_core::ObjectClipboard>, String> {
+        let state = self.value.lock().unwrap_or_else(|e| e.into_inner());
+        self.ready
+            .wait_while(state, |state| state.is_none())
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .unwrap()
+            .clone()
+    }
+}
+
+impl Drop for CopyJob {
+    fn drop(&mut self) {
+        self.slot.finish(Err("Object copy did not complete".into()));
+    }
+}
+
+impl SharedClipboard {
+    fn prepare(&self, request: Request) -> Request {
+        match request {
+            Request::CopyItems(items) => {
+                let slot = Arc::new(CopySlot::default());
+                *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(slot.clone());
+                Request::CopyItemsPrepared(CopyJob { items, slot })
+            }
+            Request::PasteItems(page) => Request::PasteItemsPrepared(
+                page,
+                self.0.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            ),
+            other => other,
+        }
+    }
+}
+
 pub struct Worker {
+    clipboard: Option<SharedClipboard>,
     requests: Sender<Request>,
     replies: Receiver<Reply>,
 }
 
 impl Worker {
-    pub fn spawn(ctx: eframe::egui::Context, library: PathBuf, policy: Substitution) -> Self {
+    pub fn spawn(
+        ctx: eframe::egui::Context,
+        library: PathBuf,
+        policy: Substitution,
+        clipboard: SharedClipboard,
+    ) -> Self {
         let (requests, inbox) = channel();
         let (outbox, replies) = sync_channel(1);
+        let shared = clipboard.clone();
         // If spawning fails the closure and its sender are dropped, so the
         // first poll reports a disconnected engine.
         let _ = thread::Builder::new()
             .name("pdf-engine".into())
-            .spawn(move || run(ctx, library, policy, inbox, outbox));
-        Self { requests, replies }
+            .spawn(move || run(ctx, library, policy, clipboard, inbox, outbox));
+        Self {
+            clipboard: Some(shared),
+            requests,
+            replies,
+        }
     }
 
     /// Returns false when the engine thread is gone.
     pub fn send(&self, request: Request) -> bool {
+        let request = if let Some(clipboard) = &self.clipboard {
+            clipboard.prepare(request)
+        } else {
+            request
+        };
         self.requests.send(request).is_ok()
     }
 
@@ -237,7 +316,7 @@ impl Worker {
 }
 
 struct State {
-    clipboard: Option<pdf_editor_core::ObjectClipboard>,
+    clipboard: SharedClipboard,
     engine: Option<Engine>,
     engine_error: String,
     doc: Option<Document>,
@@ -249,6 +328,7 @@ fn run(
     ctx: eframe::egui::Context,
     library: PathBuf,
     policy: Substitution,
+    clipboard: SharedClipboard,
     inbox: Receiver<Request>,
     outbox: SyncSender<Reply>,
 ) {
@@ -260,7 +340,7 @@ fn run(
         ),
     };
     let mut state = State {
-        clipboard: None,
+        clipboard,
         engine,
         engine_error,
         doc: None,
@@ -314,6 +394,7 @@ fn coalesce(batch: Vec<Request>) -> Vec<Request> {
 }
 
 fn handle(state: &mut State, request: Request) -> Option<Reply> {
+    let request = state.clipboard.prepare(request);
     if let Request::SetSubstitution(policy) = request {
         state.policy = policy;
         if let Some(doc) = state.doc.as_mut() {
@@ -551,28 +632,46 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 Err(e) => failed(e),
             }
         }
-        Request::CopyItems(items) => match engine.copy_page_items(state.doc.as_ref()?, &items) {
-            Ok(clipboard) => {
-                state.clipboard = Some(clipboard);
-                Some(Reply::ItemsCopied)
+        Request::CopyItemsPrepared(job) => {
+            match engine.copy_page_items(state.doc.as_ref()?, &job.items) {
+                Ok(clipboard) => {
+                    job.slot.finish(Ok(Arc::new(clipboard)));
+                    Some(Reply::ItemsCopied)
+                }
+                Err(e) => {
+                    job.slot.finish(Err(e.to_string()));
+                    failed(e)
+                }
             }
-            Err(e) => failed(e),
-        },
-        Request::PasteItems(page) => {
-            let Some(clipboard) = &state.clipboard else {
+        }
+        Request::PasteItemsPrepared(page, slot) => {
+            let Some(slot) = slot else {
                 return Some(Reply::Failed {
                     message: "Copy an object first".into(),
                     blocking: true,
                     page: None,
                 });
             };
-            match engine.paste_page_items(state.doc.as_mut()?, clipboard, page) {
+            let clipboard = match slot.wait() {
+                Ok(clipboard) => clipboard,
+                Err(message) => {
+                    return Some(Reply::Failed {
+                        message,
+                        blocking: true,
+                        page: None,
+                    });
+                }
+            };
+            match engine.paste_page_items(state.doc.as_mut()?, &clipboard, page) {
                 Ok(()) => {
                     state.generation += 1;
                     Some(content_changed(state, ChangeKind::Edit, None, 1))
                 }
                 Err(e) => failed(e),
             }
+        }
+        Request::CopyItems(_) | Request::PasteItems(_) => {
+            unreachable!("clipboard request prepared")
         }
         Request::EditItems(items, action) => {
             match engine.edit_page_items(state.doc.as_mut()?, &items, action) {
@@ -935,5 +1034,188 @@ fn page_transform(
 pub(crate) fn test_channel() -> (Worker, Receiver<Request>, Sender<Reply>) {
     let (requests, inbox) = channel();
     let (outbox, replies) = channel();
-    (Worker { requests, replies }, inbox, outbox)
+    (
+        Worker {
+            clipboard: None,
+            requests,
+            replies,
+        },
+        inbox,
+        outbox,
+    )
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::*;
+
+    #[test]
+    fn immediate_cross_tab_paste_waits_for_the_copy_queued_before_it() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let library = root.join("target/debug/pdfium.dll");
+        let engine = Engine::new(&library).unwrap();
+        let doc = engine
+            .open(&root.join("tests/fixtures/generated/unicode-cid.pdf"))
+            .unwrap();
+        let items = engine.page_items(&doc, 0).unwrap();
+        let expected = engine.text_objects(&doc, 0).unwrap()[0].text.clone();
+        let shared = SharedClipboard::default();
+        let mut source = State {
+            clipboard: shared.clone(),
+            engine: Some(engine),
+            engine_error: String::new(),
+            doc: Some(doc),
+            generation: 1,
+            policy: Substitution::default(),
+        };
+        // A prior copy must not leak into a paste while a newer copy is pending.
+        assert!(matches!(
+            handle(&mut source, Request::CopyItems(vec![items[1].clone()])),
+            Some(Reply::ItemsCopied)
+        ));
+        let (mut source_worker, source_inbox, _) = test_channel();
+        source_worker.clipboard = Some(shared.clone());
+        let (mut destination_worker, destination_inbox, _) = test_channel();
+        destination_worker.clipboard = Some(shared.clone());
+        assert!(source_worker.send(Request::CopyItems(vec![items[0].clone()])));
+        assert!(destination_worker.send(Request::PasteItems(0)));
+        let paste = destination_inbox.recv().unwrap();
+        let path = root.join("tests/fixtures/generated/rotated.pdf");
+        let (started_tx, started_rx) = channel();
+        let (done_tx, done_rx) = channel();
+        let thread = std::thread::spawn(move || {
+            let engine = Engine::new(&library).unwrap();
+            let doc = engine.open(&path).unwrap();
+            let mut destination = State {
+                clipboard: shared,
+                engine: Some(engine),
+                engine_error: String::new(),
+                doc: Some(doc),
+                generation: 1,
+                policy: Substitution::default(),
+            };
+            started_tx.send(()).unwrap();
+            let reply = handle(&mut destination, paste);
+            assert!(matches!(reply, Some(Reply::Changed { .. })));
+            let pasted = destination
+                .engine
+                .as_ref()
+                .unwrap()
+                .text_objects(destination.doc.as_ref().unwrap(), 0)
+                .unwrap()
+                .pop()
+                .unwrap()
+                .text;
+            done_tx.send(pasted).unwrap();
+        });
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        assert!(matches!(
+            done_rx.recv_timeout(std::time::Duration::from_millis(50)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert!(matches!(
+            handle(&mut source, source_inbox.recv().unwrap()),
+            Some(Reply::ItemsCopied)
+        ));
+        assert_eq!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap(),
+            expected
+        );
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn cancelled_copy_releases_waiting_paste() {
+        let shared = SharedClipboard::default();
+        let copy = shared.prepare(Request::CopyItems(Vec::new()));
+        let Request::PasteItemsPrepared(_, Some(slot)) = shared.prepare(Request::PasteItems(0))
+        else {
+            panic!("paste must capture pending copy");
+        };
+        drop(copy);
+        assert!(slot.wait().is_err());
+    }
+
+    #[test]
+    fn copy_between_workers_survives_source_close_and_preserves_destination_undo() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let library = root.join("target/debug/pdfium.dll");
+        let source_engine = Engine::new(&library).unwrap();
+        let source_doc = source_engine
+            .open(&root.join("tests/fixtures/generated/unicode-cid.pdf"))
+            .unwrap();
+        let items = source_engine.page_items(&source_doc, 0).unwrap();
+        let shared = SharedClipboard::default();
+        let mut source = State {
+            clipboard: shared.clone(),
+            engine: Some(source_engine),
+            engine_error: String::new(),
+            doc: Some(source_doc),
+            generation: 1,
+            policy: Substitution::default(),
+        };
+        assert!(matches!(
+            handle(&mut source, Request::CopyItems(vec![items[0].clone()])),
+            Some(Reply::ItemsCopied)
+        ));
+        assert!(!source.doc.as_ref().unwrap().can_undo());
+        drop(source);
+        let destination_engine = Engine::new(&library).unwrap();
+        let destination_doc = destination_engine
+            .open(&root.join("tests/fixtures/generated/rotated.pdf"))
+            .unwrap();
+        let count = destination_engine
+            .page_items(&destination_doc, 0)
+            .unwrap()
+            .len();
+        let mut destination = State {
+            clipboard: shared.clone(),
+            engine: Some(destination_engine),
+            engine_error: String::new(),
+            doc: Some(destination_doc),
+            generation: 1,
+            policy: Substitution::default(),
+        };
+        assert!(matches!(
+            handle(&mut destination, Request::PasteItems(0)),
+            Some(Reply::Changed { can_undo: true, .. })
+        ));
+        assert_eq!(
+            destination
+                .engine
+                .as_ref()
+                .unwrap()
+                .page_items(destination.doc.as_ref().unwrap(), 0)
+                .unwrap()
+                .len(),
+            count + 1
+        );
+        assert!(matches!(
+            handle(&mut destination, Request::Undo),
+            Some(Reply::Changed { can_redo: true, .. })
+        ));
+        assert_eq!(
+            destination
+                .engine
+                .as_ref()
+                .unwrap()
+                .page_items(destination.doc.as_ref().unwrap(), 0)
+                .unwrap()
+                .len(),
+            count
+        );
+        // Closing the source and undoing a paste do not consume the shared copy.
+        assert!(matches!(
+            handle(&mut destination, Request::PasteItems(0)),
+            Some(Reply::Changed { .. })
+        ));
+    }
 }

@@ -130,6 +130,7 @@ impl Tool {
 
 /// Each tab owns a complete editing session, including its worker and recovery lock.
 pub struct TabbedApp {
+    clipboard: crate::worker::SharedClipboard,
     tabs: Vec<(u64, EditorApp)>,
     active: usize,
     next_id: u64,
@@ -140,8 +141,10 @@ pub struct TabbedApp {
 }
 impl TabbedApp {
     pub fn new(ctx: &Context, initial: pdf_editor_core::Result<Option<PathBuf>>) -> Self {
+        let clipboard = crate::worker::SharedClipboard::default();
         Self {
-            tabs: vec![(0, EditorApp::new(ctx, initial))],
+            tabs: vec![(0, EditorApp::new(ctx, initial, clipboard.clone()))],
+            clipboard,
             active: 0,
             next_id: 1,
             closing: None,
@@ -213,7 +216,7 @@ impl TabbedApp {
             );
             return;
         }
-        let mut tab = EditorApp::new(ctx, Ok(path));
+        let mut tab = EditorApp::new(ctx, Ok(path), self.clipboard.clone());
         tab.orphans.clear();
         self.tabs.push((self.next_id, tab));
         self.next_id += 1;
@@ -700,7 +703,11 @@ impl DocView {
 }
 
 impl EditorApp {
-    pub fn new(ctx: &Context, initial: pdf_editor_core::Result<Option<PathBuf>>) -> Self {
+    pub fn new(
+        ctx: &Context,
+        initial: pdf_editor_core::Result<Option<PathBuf>>,
+        clipboard: crate::worker::SharedClipboard,
+    ) -> Self {
         theme::install(ctx);
         let mut banners = Vec::new();
         let config_path = Substitution::config_path().ok();
@@ -747,7 +754,7 @@ impl EditorApp {
             Err(e) => (None, Some(e.to_string())),
         };
         let orphans = recovery::orphans();
-        let worker = Worker::spawn(ctx.clone(), library.unwrap_or_default(), policy);
+        let worker = Worker::spawn(ctx.clone(), library.unwrap_or_default(), policy, clipboard);
         let mut app = Self {
             tabbed: true,
             new_tab_path: None,
@@ -5697,6 +5704,7 @@ mod tests {
         assert!(first.confirm.is_none());
         assert!(requests.try_recv().is_err());
         let mut tabs = TabbedApp {
+            clipboard: Default::default(),
             tabs: vec![(0, first), (1, second)],
             active: 1,
             next_id: 2,
