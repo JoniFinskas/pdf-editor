@@ -352,7 +352,7 @@ mod tests {
         assert!(
             clean
                 .rgba
-                .chunks_exact(4)
+                .as_chunks::<4>().0.iter()
                 .all(|p| p[0] == p[1] && p[1] == p[2] && p[0] >= 239)
         );
     }
@@ -372,8 +372,8 @@ mod tests {
             ..Default::default()
         };
         let clean = clean_scan(&p, &options).unwrap();
-        assert!(clean.rgba.chunks_exact(4).any(|p| p[0] == 0));
-        assert!(clean.rgba.chunks_exact(4).all(|p| p[0] == 0 || p[0] == 255));
+        assert!(clean.rgba.as_chunks::<4>().0.iter().any(|p| p[0] == 0));
+        assert!(clean.rgba.as_chunks::<4>().0.iter().all(|p| p[0] == 0 || p[0] == 255));
         let crossed = ScanOptions {
             corners: [[0.0, 0.0], [1.0, 1.0], [1.0, 0.0], [0.0, 1.0]],
             ..Default::default()

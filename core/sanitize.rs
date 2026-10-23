@@ -114,18 +114,17 @@ impl Engine {
             }
             pdf.prune_objects();
             for (id, object) in &pdf.objects {
-                if let Object::Stream(stream) = object {
-                    if stream
+                if let Object::Stream(stream) = object
+                    && stream
                         .dict
                         .get(b"Subtype")
                         .and_then(Object::as_name)
                         .is_ok_and(|s| s == b"Form")
                         && !walk.visited.contains(id)
-                    {
-                        return Err(err(
-                            "Sanitize cannot verify unused retained grouped content; no changes were made",
-                        ));
-                    }
+                {
+                    return Err(err(
+                        "Sanitize cannot verify unused retained grouped content; no changes were made",
+                    ));
                 }
             }
             clean_dict(&mut pdf.trailer, &mut report, 0)?;
