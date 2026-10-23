@@ -58,6 +58,7 @@ pub struct EditorApp {
     replace: crate::replace::Replace,
     password: crate::passwords::PasswordDialog,
     organize: crate::organize::Organize,
+    markup: crate::markup::MarkupTool,
     find: FindState,
     worker: Worker,
     engine_alive: bool,
@@ -334,6 +335,7 @@ impl EditorApp {
             replace: Default::default(),
             password: Default::default(),
             organize: Default::default(),
+            markup: Default::default(),
             find: FindState::default(),
             worker,
             engine_alive: true,
@@ -590,6 +592,11 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::Annotations(items) => {
+                self.busy = self.busy.saturating_sub(1);
+                self.markup.items = items;
+                self.markup.selected = None;
+            }
             Reply::Exported(message) => {
                 self.busy = self.busy.saturating_sub(1);
                 self.banner(BannerKind::Success, message);
@@ -1618,6 +1625,23 @@ impl EditorApp {
             let mut open = None;
             Popup::menu(&recent).show(|ui| {
                 ui.set_min_width(260.0);
+                if Btn::new("Markup and notes…")
+                    .enabled(idle)
+                    .min_width(260.0)
+                    .align_left()
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.markup.open = true;
+                    if let Some(o) = self.text_tool.selection.get(self.text_tool.selected) {
+                        self.markup.draft.page = o.page;
+                        self.markup.draft.bounds = o.bounds;
+                    }
+                    self.commit_edit();
+                    self.busy += 1;
+                    self.send(Request::Annotations);
+                    ui.close();
+                }
                 if Btn::new("Merge, split and extract…")
                     .enabled(idle)
                     .min_width(260.0)
@@ -2932,6 +2956,16 @@ impl eframe::App for EditorApp {
             self.floating_tools(&ctx, central.response.rect, &p);
         }
 
+        if let Some(request) = self.markup.show(
+            &ctx,
+            &p,
+            self.busy == 0,
+            self.doc.as_ref().map_or(0, |d| d.pages.len()),
+        ) {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
         if let Some(request) = self.organize.show(&ctx, &p, self.busy == 0) {
             self.commit_edit();
             self.busy += 1;
@@ -3637,6 +3671,7 @@ mod tests {
                 replace: Default::default(),
                 password: Default::default(),
                 organize: Default::default(),
+                markup: Default::default(),
                 find: FindState::default(),
                 worker,
                 engine_alive: true,

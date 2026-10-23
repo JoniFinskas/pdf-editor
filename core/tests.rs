@@ -1332,3 +1332,68 @@ fn merge_extract_split_keep_order_and_source() {
     }
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn real_annotations_edit_delete_and_roundtrip() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    let before = e.render(&doc, 0, 1.0).unwrap().rgba;
+    for (i, kind) in [
+        MarkupKind::Highlight,
+        MarkupKind::Underline,
+        MarkupKind::Strikethrough,
+        MarkupKind::Note,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        e.add_annotation(
+            &mut doc,
+            &Markup {
+                page: 0,
+                kind,
+                bounds: Bounds {
+                    left: 20.0,
+                    bottom: 20.0 + i as f32 * 30.0,
+                    right: 160.0,
+                    top: 40.0 + i as f32 * 30.0,
+                },
+                color: [230, 100, 20],
+                opacity: 0.6,
+                text: "Comment äöå".into(),
+            },
+        )
+        .unwrap();
+    }
+    let annotations = e.annotations(&doc).unwrap();
+    assert_eq!(annotations.len(), 4);
+    assert!(before != e.render(&doc, 0, 1.0).unwrap().rgba);
+    assert_eq!(annotations[3].markup.text, "Comment äöå");
+    let mut change = annotations[3].markup.clone();
+    change.text = "Changed note".into();
+    change.color = [40, 80, 220];
+    e.update_annotation(&mut doc, &annotations[3], &change)
+        .unwrap();
+    assert!(e.delete_annotation(&mut doc, &annotations[0]).is_err());
+    let current = e.annotations(&doc).unwrap();
+    assert_eq!(current[3].markup.text, "Changed note");
+    e.delete_annotation(&mut doc, &current[0]).unwrap();
+    assert_eq!(e.annotations(&doc).unwrap().len(), 3);
+    doc.undo();
+    assert_eq!(e.annotations(&doc).unwrap().len(), 4);
+    let path = temp("annotations.pdf");
+    let _ = fs::remove_file(&path);
+    doc.save_as(&path).unwrap();
+    let reopened = e.open(&path).unwrap();
+    assert_eq!(e.annotations(&reopened).unwrap().len(), 4);
+    assert!(e.render(&doc, 0, 1.0).unwrap().rgba == e.render(&reopened, 0, 1.0).unwrap().rgba);
+    let pdf = parse(&fs::read(&path).unwrap()).unwrap();
+    assert!(
+        pdf.objects
+            .values()
+            .filter_map(|o| o.as_dict().ok())
+            .any(|d| d.get(b"Subtype").ok().and_then(|o| o.as_name().ok()) == Some(b"Highlight"))
+    );
+    fs::remove_file(path).unwrap();
+}

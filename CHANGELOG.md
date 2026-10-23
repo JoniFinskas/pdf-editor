@@ -17,6 +17,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Editable PDF highlights, underlines, strikethroughs and sticky notes.
+
 - Merge multiple PDFs, split by page ranges and extract selected pages.
 
 - Open password-protected PDFs and optionally encrypt Save As with AES-256.

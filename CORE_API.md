@@ -117,3 +117,10 @@ Keyboard commands are UI dispatch only: Open/Save As use `Engine::open`/`Documen
 - `Engine::merge_pdfs(document, paths) -> Result<()>`: append multiple PDFs in order as one atomic undoable operation.
 - `Engine::extract_pages(document, pages, destination) -> Result<()>`: export selected pages in the supplied order to a new PDF.
 - `Engine::split_pdf(document, ranges, folder) -> Result<Vec<PathBuf>>`: export semicolon-separated page groups as split-1.pdf, split-2.pdf, etc., refusing existing destinations.
+
+## PDF annotations
+
+- `Engine::annotations(document) -> Result<Vec<Annotation>>`: list supported real PDF markup and sticky notes with revision-bound identifiers.
+- `Engine::add_annotation(document, markup) -> Result<()>`: create highlight, underline, strikethrough or note with geometry, color, opacity and comment.
+- `Engine::update_annotation(document, selected, markup) -> Result<()>`: update the selected annotation and its appearance.
+- `Engine::delete_annotation(document, selected) -> Result<()>`: remove the selected annotation as an undoable edit.

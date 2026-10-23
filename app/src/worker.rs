@@ -22,6 +22,10 @@ pub enum Request {
     OpenPassword(PathBuf, String),
     SavePassword(PathBuf, String),
     Print,
+    Annotations,
+    AddAnnotation(pdf_editor_core::Markup),
+    UpdateAnnotation(pdf_editor_core::Annotation, pdf_editor_core::Markup),
+    DeleteAnnotation(pdf_editor_core::Annotation),
     Merge(Vec<PathBuf>),
     Extract(String, PathBuf),
     Split(String, PathBuf),
@@ -82,6 +86,7 @@ impl PageTransform {
 
 pub enum Reply {
     Printed(bool),
+    Annotations(Vec<pdf_editor_core::Annotation>),
     Exported(String),
     PasswordRequired(PathBuf),
     ReplacementCount(String, usize),
@@ -309,6 +314,36 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                     "Created {} split PDFs.",
                     paths.len()
                 ))),
+                Err(e) => failed(e),
+            }
+        }
+        Request::Annotations => match engine.annotations(state.doc.as_ref()?) {
+            Ok(items) => Some(Reply::Annotations(items)),
+            Err(e) => failed(e),
+        },
+        Request::AddAnnotation(markup) => match engine.add_annotation(state.doc.as_mut()?, &markup)
+        {
+            Ok(()) => {
+                state.generation += 1;
+                Some(changed(state, ChangeKind::Edit, None, 1))
+            }
+            Err(e) => failed(e),
+        },
+        Request::UpdateAnnotation(item, markup) => {
+            match engine.update_annotation(state.doc.as_mut()?, &item, &markup) {
+                Ok(()) => {
+                    state.generation += 1;
+                    Some(changed(state, ChangeKind::Edit, None, 1))
+                }
+                Err(e) => failed(e),
+            }
+        }
+        Request::DeleteAnnotation(item) => {
+            match engine.delete_annotation(state.doc.as_mut()?, &item) {
+                Ok(()) => {
+                    state.generation += 1;
+                    Some(changed(state, ChangeKind::Edit, None, 1))
+                }
                 Err(e) => failed(e),
             }
         }

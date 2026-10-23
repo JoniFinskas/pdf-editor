@@ -334,3 +334,7 @@ Encrypted Save As uses PDF AES-256 revision 6, a fresh 32-byte Windows CNG rando
 ## Part F: Merge, split and extract
 
 Use native PDFium page import into a fresh document for extraction, keeping selected-page rendering intact. Merge stages all imports before one undo step. Split validates every range and destination before creating output, and removes outputs created by that operation if a later group fails. Range order is explicit; duplicate pages within a group are rejected. Exports are unencrypted new files, clearly identified in the dialog, and never alter working state. Password-protected merge inputs currently require a separately decrypted export; failure leaves the destination unchanged.
+
+## Part F: Real markup annotations
+
+Store markup in page Annots arrays with standard Highlight, Underline, StrikeOut and Text subtypes, QuadPoints where applicable, UTF-16 comments and explicit appearance streams. Opacity uses an appearance graphics state. Existing editable annotations retain their indirect identity when updated. Selection revisions prevent edits after another document mutation. Selecting a text object before opening the markup tool initializes its page and bounds; precise point controls handle other placements.
