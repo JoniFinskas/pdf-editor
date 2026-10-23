@@ -524,6 +524,35 @@ struct PageView {
     error: Option<String>,
 }
 
+/// Keep cached GPU page rasters below 128 MiB per document. The incoming page
+/// is included in the budget; evict distant pages before allocating its slot.
+fn trim_page_cache(pages: &mut [PageView], incoming: usize, bytes: usize) {
+    trim_page_cache_to(pages, incoming, bytes, 128 * 1024 * 1024);
+}
+
+fn trim_page_cache_to(pages: &mut [PageView], incoming: usize, bytes: usize, limit: usize) {
+    let mut total = bytes;
+    let mut cached = Vec::new();
+    for (index, page) in pages.iter_mut().enumerate() {
+        if index == incoming {
+            page.texture = None;
+        } else if let Some(texture) = &page.texture {
+            let size = texture.handle.size();
+            let cost = size[0].saturating_mul(size[1]).saturating_mul(4);
+            total = total.saturating_add(cost);
+            cached.push((index, cost));
+        }
+    }
+    cached.sort_unstable_by_key(|(index, _)| std::cmp::Reverse(index.abs_diff(incoming)));
+    for (index, cost) in cached {
+        if total <= limit {
+            break;
+        }
+        pages[index].texture = None;
+        total = total.saturating_sub(cost);
+    }
+}
+
 struct PageTexture {
     handle: TextureHandle,
     scale: f32,
@@ -1116,6 +1145,9 @@ impl EditorApp {
                 let size = [image.width as usize, image.height as usize];
                 if image.rgba.len() != size[0] * size[1] * 4 {
                     return;
+                }
+                if let Some(doc) = self.doc.as_mut() {
+                    trim_page_cache(&mut doc.pages, usize::from(page), size[0] * size[1] * 4);
                 }
                 let color = egui::ColorImage::from_rgba_unmultiplied(size, &image.rgba);
                 let handle =
@@ -2760,6 +2792,7 @@ impl EditorApp {
                 for (index, page) in doc.pages.iter_mut().enumerate() {
                     if index + KEEP_PAGES < first || index > last_visible + KEEP_PAGES {
                         page.texture = None;
+                        page.objects = None;
                     }
                 }
             }
@@ -4289,6 +4322,84 @@ mod tests {
             },
         );
     }
+    #[test]
+    fn thousand_page_view_requests_only_nearby_rasters_and_thumbnails() {
+        let ctx = Context::default();
+        theme::install(&ctx);
+        let (mut app, inbox, _outbox) = mock_app();
+        app.handle(
+            &ctx,
+            Reply::Opened {
+                protected: false,
+                generation: 1,
+                path: "generated.pdf".into(),
+                name: "generated.pdf".into(),
+                suggested: "generated_edited.pdf".into(),
+                pages: vec![
+                    PageInfo {
+                        width: 612.0,
+                        height: 792.0
+                    };
+                    1000
+                ],
+            },
+        );
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 820.0))),
+                ..Default::default()
+            },
+            |ui| {
+                let p = theme::palette(ui);
+                egui::Panel::left("lazy-thumbnails")
+                    .exact_size(200.0)
+                    .show(ui, |ui| app.thumbnails(ui, &p));
+                egui::CentralPanel::default().show(ui, |ui| app.canvas(ui, &p));
+            },
+        );
+        output.textures_delta.clear();
+        let requests: Vec<_> = inbox.try_iter().collect();
+        let renders = requests
+            .iter()
+            .filter(|r| matches!(r, Request::Render { .. }))
+            .count();
+        let thumbnails = requests
+            .iter()
+            .filter(|r| matches!(r, Request::Thumbnail(_)))
+            .count();
+        assert!((1..=8).contains(&renders), "render requests: {renders}");
+        assert!(
+            (1..=12).contains(&thumbnails),
+            "thumbnail requests: {thumbnails}"
+        );
+    }
+
+    #[test]
+    fn page_cache_accounts_for_incoming_and_replaced_textures() {
+        let ctx = Context::default();
+        let (mut app, _inbox, _outbox) = mock_app();
+        opened(&mut app, &ctx);
+        let pages = &mut app.doc.as_mut().unwrap().pages;
+        for (i, page) in pages.iter_mut().enumerate() {
+            page.texture = Some(PageTexture {
+                handle: ctx.load_texture(
+                    format!("budget-{i}"),
+                    egui::ColorImage::filled([4, 4], Color32::WHITE),
+                    TextureOptions::LINEAR,
+                ),
+                scale: 1.0,
+                generation: 1,
+            });
+        }
+        // Replacing page zero costs 64 bytes, not 128; its neighbour fits.
+        trim_page_cache_to(pages, 0, 64, 128);
+        assert!(pages[0].texture.is_none());
+        assert!(pages[1].texture.is_some());
+        // A larger incoming raster evicts its neighbour before insertion.
+        trim_page_cache_to(pages, 0, 128, 128);
+        assert!(pages.iter().all(|page| page.texture.is_none()));
+    }
+
     #[test]
     fn pending_edits_and_failed_opens_keep_unsaved_guards() {
         let ctx = Context::default();
