@@ -421,3 +421,7 @@ The tools added in Parts F and G now use the Part E style, with visual changes o
 ## Part C refresh for the current application
 
 Decided to retain the existing size-optimized release profile and all current direct dependencies after checking their use and compiler diagnostics. The current build includes the tool-window restyle and Parts F/G. Updated the feature overview and manual checks to use the grouped Edit/Document menu and current tab/window controls. Kept version 0.1.0 and the Unreleased changelog because producing a local release-mode build does not complete the manual acceptance requirements for a versioned release.
+
+## Corpus isolation
+Added an on-demand process-isolated corpus harness and allowlisted Govdocs archive downloader. Only fixed error categories and timing cross the parser boundary. Linux PDFium chromium/8111 SHA256 is pinned from release metadata; corpus and output remain ignored. Defender scan is mandatory between download and execution. No new public core API is introduced.
+

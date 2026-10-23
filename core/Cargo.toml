@@ -8,6 +8,10 @@ description = "Headless PDF text editing engine"
 [lib]
 path = "lib.rs"
 
+[[bin]]
+name = "corpus-runner"
+path = "bin/corpus-runner.rs"
+
 [dependencies]
 pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_latest", "thread_safe"] }
 skrifa = "=0.48.0"

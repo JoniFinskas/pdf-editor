@@ -25,6 +25,10 @@ desktop.ini
 # Local design references (not redistributed)
 /design/refs/
 
+/corpus/
+/corpus-results/
+/scripts/corpus/__pycache__/
+
 # Local contributor configuration
 /AGENTS.md
 /CLAUDE.md
