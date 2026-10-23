@@ -47,4 +47,4 @@ Paragraph reflow, forms, annotations, image editing and OCR are implemented.
 Nested Form XObject text and ambiguous text mappings remain unsupported for text
 rewriting. Objects mode moves/deletes top-level grouped artwork as a whole;
 unsupported native copies fail cleanly. Ungrouping, cross-tab object clipboard,
-object resizing handles and arbitrary nested-object editing remain unimplemented.
+and arbitrary nested-object editing remain unimplemented.

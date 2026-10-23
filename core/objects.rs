@@ -12,8 +12,18 @@ pub struct PageItem {
 
 #[derive(Clone, Copy, Debug)]
 pub enum ObjectAction {
-    Move { dx: f32, dy: f32 },
-    Duplicate { dx: f32, dy: f32 },
+    Move {
+        dx: f32,
+        dy: f32,
+    },
+    Duplicate {
+        dx: f32,
+        dy: f32,
+    },
+    /// Scale a single object to PDF-point bounds without reflowing text.
+    Resize {
+        bounds: Bounds,
+    },
     Delete,
 }
 
@@ -137,7 +147,7 @@ impl Engine {
             }
             let (dx, dy) = match action {
                 ObjectAction::Move { dx, dy } | ObjectAction::Duplicate { dx, dy } => (dx, dy),
-                ObjectAction::Delete => (0.0, 0.0),
+                ObjectAction::Delete | ObjectAction::Resize { .. } => (0.0, 0.0),
             };
             if !dx.is_finite() || !dy.is_finite() || dx.abs() > 100000.0 || dy.abs() > 100000.0 {
                 return Err(err("Invalid object movement"));
@@ -145,6 +155,43 @@ impl Engine {
             if matches!(action, ObjectAction::Move { .. }) && dx == 0.0 && dy == 0.0 {
                 return Ok(());
             }
+            let resize = if let ObjectAction::Resize { bounds } = action {
+                if items.len() != 1 {
+                    return Err(err("Resize requires one object"));
+                }
+                let current = self.page_items(doc, first.page)?;
+                let old = current
+                    .iter()
+                    .find(|i| i.index == first.index)
+                    .ok_or_else(|| err("Object no longer exists"))?
+                    .bounds;
+                let dimensions = [
+                    old.right - old.left,
+                    old.top - old.bottom,
+                    bounds.right - bounds.left,
+                    bounds.top - bounds.bottom,
+                ];
+                if [bounds.left, bounds.bottom, bounds.right, bounds.top]
+                    .iter()
+                    .any(|v| !v.is_finite() || v.abs() > 100000.0)
+                    || dimensions.iter().any(|v| !v.is_finite() || *v < 0.01)
+                {
+                    return Err(err("Invalid object size"));
+                }
+                let sx = dimensions[2] / dimensions[0];
+                let sy = dimensions[3] / dimensions[1];
+                if !(0.0001..=10000.0).contains(&sx) || !(0.0001..=10000.0).contains(&sy) {
+                    return Err(err("Object scale exceeds limits"));
+                }
+                Some((
+                    sx,
+                    sy,
+                    bounds.left - old.left * sx,
+                    bounds.bottom - old.bottom * sy,
+                ))
+            } else {
+                None
+            };
             let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
             let source = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
             let mut page = pdf.pages().get(i32::from(first.page))?;
@@ -162,6 +209,12 @@ impl Engine {
             }
             for index in indices {
                 match action {
+                    ObjectAction::Resize { .. } => {
+                        let (sx, sy, tx, ty) = resize.unwrap();
+                        page.objects()
+                            .get(index)?
+                            .transform(sx, 0.0, 0.0, sy, tx, ty)?;
+                    }
                     ObjectAction::Delete => {
                         page.objects_mut().remove_object_at_index(index)?;
                     }

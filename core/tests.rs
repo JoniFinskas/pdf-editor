@@ -2161,6 +2161,26 @@ fn artwork_objects_copy_move_delete_and_paste_snapshot() {
     let page = *pdf.get_pages().get(&1).unwrap();
     let mut bytes = pdf.get_page_content_with_limit(page, MAX_STREAM).unwrap();
     bytes.extend(b"\nq 0 0 1 rg 60 60 30 30 re f Q\n");
+    let form = pdf.add_object(Stream::new(dictionary! {
+        "Type"=>"XObject", "Subtype"=>"Form", "BBox"=>vec![0.into(),0.into(),20.into(),20.into()],
+        "Resources"=>dictionary! {}
+    }, b"0 1 0 rg 0 0 20 20 re f".to_vec()));
+    let resources = pdf
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Resources")
+        .unwrap()
+        .clone();
+    let mut resources = match resources {
+        Object::Reference(id) => pdf.get_dictionary(id).unwrap().clone(),
+        Object::Dictionary(d) => d,
+        _ => panic!("fixture resources"),
+    };
+    resources.set("XObject", dictionary! { "Group"=>form });
+    pdf.get_dictionary_mut(page)
+        .unwrap()
+        .set("Resources", resources);
+    bytes.extend(b"\nq 1 0 0 1 170 60 cm /Group Do Q\n");
     let stream = pdf.add_object(Stream::new(dictionary! {}, bytes));
     pdf.get_dictionary_mut(page)
         .unwrap()
@@ -2184,13 +2204,45 @@ fn artwork_objects_copy_move_delete_and_paste_snapshot() {
         },
     )
     .unwrap();
-    for kind in ["Path", "Image"] {
+    for kind in ["Path", "Image", "XObjectForm"] {
         let item = e
             .page_items(&doc, 0)
             .unwrap()
             .into_iter()
             .find(|i| i.kind == kind)
             .unwrap();
+        let original = doc.bytes.clone();
+        let b = item.bounds;
+        let target = Bounds {
+            right: b.left + (b.right - b.left) * 2.0,
+            top: b.bottom + (b.top - b.bottom) * 1.5,
+            ..b
+        };
+        e.edit_page_items(
+            &mut doc,
+            std::slice::from_ref(&item),
+            ObjectAction::Resize { bounds: target },
+        )
+        .unwrap();
+        let resized = e
+            .page_items(&doc, 0)
+            .unwrap()
+            .into_iter()
+            .find(|i| i.index == item.index)
+            .unwrap();
+        assert!((resized.bounds.right - target.right).abs() < 0.2);
+        assert!((resized.bounds.top - target.top).abs() < 0.2);
+        assert!(doc.undo());
+        assert_eq!(doc.bytes, original);
+        let item = e
+            .page_items(&doc, 0)
+            .unwrap()
+            .into_iter()
+            .find(|i| i.kind == kind)
+            .unwrap();
+        if kind == "XObjectForm" {
+            continue;
+        }
         let clipboard = e
             .copy_page_items(&doc, std::slice::from_ref(&item))
             .unwrap();
@@ -2215,5 +2267,60 @@ fn artwork_objects_copy_move_delete_and_paste_snapshot() {
         assert!(doc.undo());
         assert!(doc.undo());
         assert_eq!(doc.bytes, original);
+    }
+}
+
+#[test]
+fn resize_text_preserves_content_and_undo_on_rotated_pages() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    for rotation in [0, 90, 180, 270] {
+        let path = temp(&format!("object-resize-{rotation}.pdf"));
+        fs::write(
+            &path,
+            generated("Resize me", false, rotation, 0.0, false, false),
+        )
+        .unwrap();
+        let mut doc = e.open(&path).unwrap();
+        let original = doc.bytes.clone();
+        let before = e.text_objects(&doc, 0).unwrap();
+        let item = e
+            .page_items(&doc, 0)
+            .unwrap()
+            .into_iter()
+            .find(|i| i.index == before[0].index)
+            .unwrap();
+        let b = item.bounds;
+        let target = Bounds {
+            right: b.left + (b.right - b.left) * 1.8,
+            top: b.bottom + (b.top - b.bottom) * 1.4,
+            ..b
+        };
+        for invalid in [Bounds { right: b.left, ..b }, Bounds { top: f32::NAN, ..b }] {
+            assert!(
+                e.edit_page_items(
+                    &mut doc,
+                    std::slice::from_ref(&item),
+                    ObjectAction::Resize { bounds: invalid }
+                )
+                .is_err()
+            );
+            assert_eq!(doc.bytes, original);
+        }
+        e.edit_page_items(&mut doc, &[item], ObjectAction::Resize { bounds: target })
+            .unwrap();
+        let after = e.text_objects(&doc, 0).unwrap();
+        assert_eq!(after[0].text, before[0].text);
+        assert_eq!(after[0].font, before[0].font);
+        for (a, b) in before.iter().zip(&after).skip(1) {
+            assert_eq!(a.matrix, b.matrix);
+        }
+        assert!((after[0].bounds.left - target.left).abs() < 0.2);
+        assert!((after[0].bounds.right - target.right).abs() < 0.2);
+        assert!((after[0].bounds.top - target.top).abs() < 0.2);
+        e.render(&doc, 0, 1.0).unwrap();
+        assert!(doc.undo());
+        assert_eq!(doc.bytes, original);
+        assert!(doc.redo());
     }
 }
