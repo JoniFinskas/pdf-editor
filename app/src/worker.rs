@@ -55,6 +55,7 @@ pub enum Request {
     Split(String, PathBuf),
     FormFields,
     DesignForm(pdf_editor_core::FormDesignEdit),
+    FlattenForms,
     FillField(pdf_editor_core::FormField, pdf_editor_core::FieldValue),
     PlacePicture(pdf_editor_core::Picture, pdf_editor_core::Placement),
     Find(String),
@@ -779,6 +780,20 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 Ok(designed) => Some(Reply::FormFields(fields, designed)),
                 Err(e) => failed(e),
             },
+            Err(e) => failed(e),
+        },
+        Request::FlattenForms => match engine.flatten_forms(state.doc.as_mut()?) {
+            Ok(count) => {
+                if count > 0 {
+                    state.generation += 1;
+                }
+                Some(changed(
+                    state,
+                    ChangeKind::Edit,
+                    Some(format!("Flattened {count} form fields")),
+                    count,
+                ))
+            }
             Err(e) => failed(e),
         },
         Request::DesignForm(edit) => match engine.design_form(state.doc.as_mut()?, edit) {

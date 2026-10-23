@@ -22,9 +22,23 @@ impl Forms {
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.design, false, "Fill");
                     ui.selectable_value(&mut self.design, true, "Design");
+                    if ui
+                        .add_enabled(
+                            idle && !self.fields.is_empty(),
+                            egui::Button::new("Flatten forms"),
+                        )
+                        .on_hover_text(
+                            "Turn filled fields into page content. Undo restores editable fields.",
+                        )
+                        .clicked()
+                    {
+                        request = Some(Request::FlattenForms);
+                    }
                 });
                 if self.design {
-                    request = self.designer.show(ui, p, idle);
+                    if let Some(design_request) = self.designer.show(ui, p, idle) {
+                        request = Some(design_request);
+                    }
                     return;
                 }
                 ui.horizontal(|ui| {
