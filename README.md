@@ -50,7 +50,9 @@ cargo build --release --workspace --locked
 .\target\release\pdf-editor.exe "C:\Documents\My report.pdf"
 ```
 
-Keep `pdf-editor.exe` and `pdfium.dll` together. The executable embeds its Inter
+Keep `pdf-editor.exe`, `pdf-editor-cli.exe` and `pdfium.dll` together for the
+complete desktop, command-line and Explorer workflows. `corpus-runner.exe` is
+development tooling and is not part of the portable app. The desktop embeds its Inter
 UI fonts; no font download or Rust installation is needed to run the built app.
 The release profile uses size optimization, thin LTO, one code-generation unit
 and stripped symbols. Panic unwinding remains enabled for recoverable parser
@@ -174,7 +176,8 @@ to reveal its close button. Closing a dirty tab asks whether to discard changes.
 
 ## Editing behavior
 
-Each edit replaces one text run without paragraph reflow. Existing embedded
+Single-line editing replaces one text run; compatible paragraphs support
+alignment-preserving reflow as described below. Existing embedded
 TrueType fonts are retained when their glyphs cover the new text. Where necessary,
 the engine extends the PDF encoding using the same embedded font program. Otherwise
 it searches Windows and per-user font directories for matching family and style,
@@ -189,13 +192,19 @@ The current text editor targets page-level text runs. Nested Form XObject text,
 unsupported encodings, and ambiguous native/parser object mappings fail safely
 rather than being rewritten heuristically. Replacement system fonts support
 TrueType files and TrueType collections; CFF-only/Type1 font substitution may use
-a TrueType fallback. Complex-script shaping and paragraph reflow are not provided.
+a TrueType fallback. Complex-script shaping is not provided. Paragraph reflow
+requires compatible horizontal text and supported font metrics; ambiguous layouts
+retain line editing.
 
 Limits: 64 MiB source/result PDFs, 16 MiB per decoded content/font stream,
 10,000 pages, 16 megapixels per render, 16,384 replacement characters, and
 256 MiB undo snapshots. Edits requiring more than 1,024 cursor corrections on a
 page return an error. Full-font embedding can increase output size. A substitute
 is never used if it lacks required glyphs or disallows editable embedding.
+
+Page dimensions use fast metadata with an indexed loading fallback. Visible pages
+render in the background; retained full-page textures are capped at 128 MiB per
+document. This cap excludes native working memory, thumbnails and undo history.
 
 ## Security and fixtures
 
@@ -303,3 +312,9 @@ in restricted Linux containers. Scan downloaded inputs with
 `scripts/scan-corpus.ps1` before each changed corpus is processed. Corpus bytes,
 provenance and per-file results remain ignored local data. See [BLOCKED.md](BLOCKED.md)
 and [TEST_REPORT.md](TEST_REPORT.md) for actual coverage and outstanding requirements.
+
+The latest 340-file PDFium corpus run passed 175 files (51.47%); 165 returned
+guarded errors, most often unavailable fallback fonts or unsupported text layouts.
+No crashes, panics, timeouts or render-diff failures were observed. This is not
+full Part H acceptance: the 3,000-file Govdocs minimum and fuzz testing remain
+incomplete. The native desktop itself is not container-sandboxed.

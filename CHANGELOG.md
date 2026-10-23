@@ -10,6 +10,9 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Changed
 
+- Refresh portable release instructions and manual checks for paragraph editing,
+  comparison, command-line tools and Windows integration; document corpus limits.
+
 - Refresh release-build verification, the feature overview and manual checks for
   the current daily/extra features and restyled tool windows.
 

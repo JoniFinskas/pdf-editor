@@ -478,3 +478,13 @@ Kept all branches, merges, builds and results local. No remote was added and no 
 ## Page geometry fallback
 
 Keep metadata-only sizing for the common startup path. If PDFium cannot supply metadata, load pages by explicit index and validate finite positive geometry. Never use the page iterator for validation: it stops silently on a page-loading error and can return a truncated page list as success. Generated rotated-page tests compare fallback and metadata dimensions. Corpus success counts from the former iterator are historical rather than complete-coverage evidence.
+
+## Current portable release verification
+
+Rebuild the desktop and console companion with the existing size-focused release
+profile and verified cached PDFium runtime. Keep version 0.1.0: this is local build
+verification, not a versioned release or publication. Preserve active dependencies;
+source usage review and the existing strict lint pass found no removal warranted.
+Correct obsolete paragraph limitations and extend manual checks without marking
+interactive behavior as tested. Reuse unchanged Docker corpus evidence rather than
+opening downloaded PDFs on the host or repeating the same corpus run.
