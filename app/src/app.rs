@@ -33,6 +33,7 @@ const MAX_RENDER_PIXELS: f32 = 15_500_000.0;
 const KEEP_PAGES: usize = 2;
 
 pub struct EditorApp {
+    dragging_page: Option<usize>,
     text_tool: TextTool,
     find: FindState,
     worker: Worker,
@@ -247,6 +248,7 @@ impl EditorApp {
         let orphans = recovery::orphans();
         let worker = Worker::spawn(cc.egui_ctx.clone(), library.unwrap_or_default(), policy);
         let mut app = Self {
+            dragging_page: None,
             text_tool: TextTool::default(),
             find: FindState::default(),
             worker,
@@ -679,6 +681,7 @@ impl EditorApp {
                 }
             }
             Reply::Changed {
+                pages,
                 generation,
                 kind,
                 can_undo,
@@ -718,6 +721,23 @@ impl EditorApp {
                         self.worker.send(Request::Find(self.find.query.clone()));
                     }
                     doc.edit = None;
+                    if !pages.is_empty() {
+                        doc.pages = pages
+                            .into_iter()
+                            .map(|info| PageView {
+                                info,
+                                thumbnail: None,
+                                pending_thumbnail: false,
+                                texture: None,
+                                pending_render: None,
+                                objects: None,
+                                pending_objects: None,
+                                error: None,
+                            })
+                            .collect();
+                        doc.current_page = doc.current_page.min(doc.pages.len().saturating_sub(1));
+                        self.text_tool.at = None;
+                    }
                     for page in &mut doc.pages {
                         page.thumbnail = None;
                         page.pending_thumbnail = false;
@@ -833,6 +853,35 @@ impl EditorApp {
 
     fn thumbnails(&mut self, ui: &mut Ui) {
         ui.heading("Pages");
+        let mut action = None;
+        if let Some(doc) = &self.doc {
+            let page = doc.current_page as u16;
+            ui.add_enabled_ui(self.busy == 0, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("Rotate").clicked() {
+                        action = Some(pdf_editor_core::PageEdit::Rotate { page });
+                    }
+                    if ui
+                        .add_enabled(doc.pages.len() > 1, Button::new("Delete"))
+                        .clicked()
+                    {
+                        action = Some(pdf_editor_core::PageEdit::Delete { page });
+                    }
+                });
+                if ui
+                    .button("Insert PDF…")
+                    .on_hover_text("Insert all pages before the current page")
+                    .clicked()
+                {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("PDF", &["pdf"])
+                        .pick_file()
+                    {
+                        action = Some(pdf_editor_core::PageEdit::Insert { path, before: page });
+                    }
+                }
+            });
+        }
         let Some(doc) = &mut self.doc else { return };
         let mut requests = Vec::new();
         let mut jump = None;
@@ -862,6 +911,25 @@ impl EditorApp {
                     if response.clicked() {
                         jump = Some(index);
                     }
+                    if self.busy == 0 && response.drag_started() {
+                        self.dragging_page = Some(index);
+                    }
+                    if let Some(from) = self.dragging_page {
+                        if response.contains_pointer() {
+                            ui.painter().rect_stroke(
+                                response.rect,
+                                0.0,
+                                Stroke::new(2.0, ui.visuals().selection.stroke.color),
+                                StrokeKind::Outside,
+                            );
+                            if ui.input(|i| i.pointer.any_released()) && from != index {
+                                action = Some(pdf_editor_core::PageEdit::Move {
+                                    from: from as u16,
+                                    to: index as u16,
+                                });
+                            }
+                        }
+                    }
                     ui.selectable_label(doc.current_page == index, format!("Page {}", index + 1))
                         .clicked()
                         .then(|| jump = Some(index));
@@ -885,6 +953,14 @@ impl EditorApp {
         }
         for request in requests {
             self.send(request);
+        }
+        if ui.input(|i| i.pointer.any_released()) {
+            self.dragging_page = None;
+        }
+        if let Some(action) = action {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(Request::Pages(action));
         }
     }
 

@@ -22,6 +22,7 @@ pub enum Request {
     Find(String),
     Fonts,
     Thumbnail(u16),
+    Pages(pdf_editor_core::PageEdit),
     DeleteText(TextObject),
     StyleText {
         object: TextObject,
@@ -96,6 +97,7 @@ pub enum Reply {
         objects: Vec<TextObject>,
     },
     Changed {
+        pages: Vec<PageInfo>,
         generation: u64,
         kind: ChangeKind,
         can_undo: bool,
@@ -261,6 +263,16 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
+        Request::Pages(edit) => {
+            let doc = state.doc.as_mut()?;
+            match engine.edit_pages(doc, &edit) {
+                Ok(()) => {
+                    state.generation += 1;
+                    Some(changed(state, ChangeKind::Edit, None, 1))
+                }
+                Err(e) => failed(e),
+            }
+        }
         Request::Thumbnail(page) => {
             let doc = state.doc.as_ref()?;
             match engine.thumbnail(doc, page, 150) {
@@ -492,6 +504,12 @@ fn changed(
         .as_ref()
         .map_or((false, false), |d| (d.can_undo(), d.can_redo()));
     Reply::Changed {
+        pages: state
+            .engine
+            .as_ref()
+            .zip(state.doc.as_ref())
+            .and_then(|(e, d)| e.pages(d).ok())
+            .unwrap_or_default(),
         generation: state.generation,
         kind,
         can_undo,

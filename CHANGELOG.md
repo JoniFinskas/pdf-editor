@@ -6,6 +6,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Rotate, delete, drag to reorder, and insert PDF pages with undo/redo.
+
 - Scrollable page thumbnail sidebar with click navigation.
 
 - Change the size and color of an existing text object.

@@ -910,3 +910,58 @@ fn thumbnail_dimensions_and_limits() {
         assert!(e.thumbnail(&doc, u16::MAX, 150).is_err());
     }
 }
+
+#[test]
+fn page_operations_roundtrip_and_undo() {
+    let _lock = PDFIUM.lock().unwrap();
+    let e = engine();
+    let mut doc = e.open(&fixture("unicode-cid.pdf")).unwrap();
+    let original = doc.bytes.clone();
+    let image = e.render(&doc, 0, 1.0).unwrap();
+    assert!(
+        e.edit_pages(&mut doc, &PageEdit::Delete { page: 0 })
+            .is_err()
+    );
+    e.edit_pages(&mut doc, &PageEdit::Rotate { page: 0 })
+        .unwrap();
+    let rotated = e.render(&doc, 0, 1.0).unwrap();
+    assert_eq!(rotated.width, image.height);
+    assert_eq!(rotated.height, image.width);
+    assert!(doc.undo());
+    assert_eq!(doc.bytes, original);
+    e.edit_pages(
+        &mut doc,
+        &PageEdit::Insert {
+            path: fixture("kerning.pdf"),
+            before: 1,
+        },
+    )
+    .unwrap();
+    assert_eq!(e.pages(&doc).unwrap().len(), 2);
+    assert_eq!(e.render(&doc, 0, 1.0).unwrap().rgba, image.rgba);
+    let inserted = e.render(&doc, 1, 1.0).unwrap();
+    e.edit_pages(&mut doc, &PageEdit::Move { from: 1, to: 0 })
+        .unwrap();
+    assert_eq!(e.render(&doc, 0, 1.0).unwrap().rgba, inserted.rgba);
+    e.edit_pages(&mut doc, &PageEdit::Delete { page: 0 })
+        .unwrap();
+    assert_eq!(e.pages(&doc).unwrap().len(), 1);
+    assert_eq!(e.render(&doc, 0, 1.0).unwrap().rgba, image.rgba);
+    assert!(doc.undo());
+    assert_eq!(e.pages(&doc).unwrap().len(), 2);
+    assert!(doc.redo());
+    assert!(
+        e.edit_pages(
+            &mut doc,
+            &PageEdit::Insert {
+                path: fixture("malformed.pdf"),
+                before: 0
+            }
+        )
+        .is_err()
+    );
+    assert!(
+        e.edit_pages(&mut doc, &PageEdit::Move { from: 0, to: 10 })
+            .is_err()
+    );
+}

@@ -3,6 +3,8 @@ mod content;
 mod features;
 pub use features::NewText;
 mod fonts;
+mod pages;
+pub use pages::PageEdit;
 mod search;
 mod settings;
 pub use search::SearchMatch;

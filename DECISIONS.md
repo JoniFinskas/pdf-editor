@@ -220,3 +220,7 @@ Style changes retain the original encoded glyph operators, font resource and spa
 ## Part D: Page thumbnails
 
 A virtualized sidebar renders visible 150-pixel thumbnails on the worker, keeps a small nearby cache, and navigates by click. Edits invalidate thumbnails. This bounds texture memory even for long PDFs.
+
+## Part D: Page operations
+
+Page controls operate on the current page; dragging a thumbnail onto another moves it to that index. Insert imports all pages before the current page. Deleting the last page is rejected. Reordering materializes inherited page attributes before rebuilding the page tree. Native PDFium import retains page contents without content regeneration. All operations share snapshot history and refresh page dimensions and caches on undo/redo.
