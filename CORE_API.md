@@ -213,3 +213,13 @@ The opt-in corpus-runner binary exercises existing core APIs inside Docker only.
 ### Images to PDF
 - `import_picture(path) -> Result<Picture>`: bounded PNG/JPEG decoding; HEIC uses installed Windows image codecs with orientation applied.
 - `Engine::images_to_pdf(paths, ImagePageSize) -> Result<Document>`: creates 1–100 image pages in input order, with A4, Letter or image-size (96 DPI) pages.
+
+### Ungroup grouped artwork
+
+`Engine::ungroup_page_item(document, item)` expands a selected Form XObject and
+its nested forms into independent page objects in one undoable transaction.
+Selection uses the current revision and page object index. Existing transforms,
+resource bindings, paint order and form bounding-box clips remain intact; other
+instances sharing the same form remain grouped. Unsupported transparency groups,
+optional-content forms, reference forms, inline images, excessive nesting and
+ambiguous selections return an error without changing document history.

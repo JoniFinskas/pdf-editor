@@ -521,3 +521,17 @@ Remove whole intersecting native PDF objects instead of clipping text runs or ra
 ## Object resizing
 
 Decided to scale native page-object transforms from eight selection handles in Objects mode. Text keeps its font and content without paragraph reflow. Screen bounds are converted through the page transform, including rotation and zoom. Preview is local; release dispatches one atomic operation. Degenerate, non-finite and excessive sizes are rejected before mutation. Grouped Form artwork scales as a whole.
+
+### Expand grouped artwork through content streams
+
+Decided to inline selected Form XObject invocations with isolated graphics state,
+original matrices and bounding-box clips, and uniquely renamed resource bindings.
+This preserves embedded fonts and shared form instances without rebuilding glyphs
+or rasterizing artwork. Nested forms expand recursively with depth and operation
+limits. Transparency groups and optional-content/reference forms are rejected
+because removing their group boundary can change compositing or visibility.
+Inline-image forms are rejected until their resource bindings can be rewritten
+safely. The Objects context menu exposes Ungroup for Form XObjects.
+
+Generated fixtures cover nested shared forms, four page rotations, exact rendered
+pixel identity, independent move/delete, undo, stale selection and save/reopen.

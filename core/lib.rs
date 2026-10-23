@@ -20,6 +20,7 @@ mod export;
 pub use drawing::{Drawing, DrawingKind};
 mod features;
 mod objects;
+mod ungroup;
 pub use export::PageImageFormat;
 pub use features::NewText;
 pub use objects::{ObjectAction, ObjectClipboard, PageItem};
