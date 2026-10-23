@@ -23,6 +23,7 @@ mod replace;
 mod shortcuts;
 mod signatures;
 mod stamps;
+mod spelling;
 mod theme;
 mod widgets;
 mod windows_integration;

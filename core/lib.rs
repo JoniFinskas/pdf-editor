@@ -44,6 +44,8 @@ mod replace;
 mod search;
 mod settings;
 mod stamps;
+mod spelling;
+pub use spelling::{SpellingIssue, check_spelling, replace_spelling};
 mod startup;
 pub use search::SearchMatch;
 pub use stamps::TextStamp;

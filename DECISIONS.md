@@ -507,3 +507,7 @@ validation. Preserve grouped Form objects as groups and fail unsupported copies
 without accepting partial changes. Copy/paste keeps one private in-memory PDF
 snapshot per tab, never writes the operating-system clipboard or disk, and remains
 valid after the source is edited/deleted. Annotations keep their dedicated tools.
+
+## Windows spelling feedback
+
+Use the built-in Windows spell checking API and installed Finnish or English dictionaries. No dictionary downloads, cloud requests or automatic corrections. Debounce edits for 300 ms and run checks off the UI thread. Discard stale results after text or language changes. Underline returned ranges and offer replacements from the text field context menu. Missing dictionaries show an actionable message. Limit input to 64 KiB, issues to 256 and suggestions to eight per issue. Enable COM and Globalization features on the existing pinned Windows dependency; no new package.

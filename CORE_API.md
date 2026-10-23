@@ -206,3 +206,9 @@ Paragraph fallback substitution stays inside the paragraph even when the ordinar
 
 ## Corpus validation executable
 The opt-in corpus-runner binary exercises existing core APIs inside Docker only. It adds no public library functions and suppresses parser diagnostics and panic text.
+
+## Spell checking
+
+- `check_spelling(text, language)` returns bounded spelling issues using installed Windows dictionaries (`en-US` or `fi-FI`); UTF-16 results are converted to UTF-8 byte ranges. Unsupported platforms/dictionaries return a readable error. Run on a background thread.
+- `SpellingIssue` contains a byte range, original word and up to eight suggestions.
+- `replace_spelling(text, issue, replacement)` checks the current word and Unicode boundaries before replacement; stale results fail without changing text.

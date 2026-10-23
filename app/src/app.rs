@@ -1786,11 +1786,19 @@ impl EditorApp {
                 ui.label(RichText::new("Click the page where the text starts").color(p.muted));
                 widgets::divider(ui, p, 22.0);
             }
-            ui.add(
+            let spelling =
+                crate::spelling::prepare(ui, Id::new("new-text-spelling"), &self.text_tool.text);
+            let spell_font = egui::TextStyle::Body.resolve(ui.style());
+            let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, width: f32| {
+                spelling.layout(ui, text, width, &spell_font, p.text)
+            };
+            let response = ui.add(
                 TextEdit::singleline(&mut self.text_tool.text)
+                    .layouter(&mut layouter)
                     .desired_width(160.0)
                     .hint_text("Text"),
             );
+            spelling.menu(&response, &mut self.text_tool.text);
             egui::ComboBox::from_id_salt("system-font")
                 .width(150.0)
                 .selected_text(shorten(&self.text_tool.font, 20))
@@ -4388,7 +4396,13 @@ fn edit_box(
         return Some(false);
     }
     let id = Id::new(("edit-box", edit.page, first.index, first.revision));
+    let spelling = crate::spelling::prepare(ui, id, &edit.text);
+    let spell_font = font.clone();
+    let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, width: f32| {
+        spelling.layout(ui, text, width, &spell_font, color)
+    };
     let editor = crate::paragraph::text_edit(&mut edit.text, edit.line.paragraph.is_some())
+        .layouter(&mut layouter)
         .id(id)
         .font(font)
         .text_color(color)
@@ -4399,12 +4413,13 @@ fn edit_box(
         .cursor_at_end(true)
         .char_limit(16_384);
     let response = ui.put(rect, editor);
+    spelling.menu(&response, &mut edit.text);
     if edit.focus {
         response.request_focus();
         edit.focus = false;
         return None;
     }
-    if response.lost_focus() {
+    if response.lost_focus() && !response.context_menu_opened() {
         let escape = ui.input(|i| i.key_pressed(Key::Escape));
         return Some(!escape);
     }
