@@ -553,3 +553,12 @@ Copies use PDFium's group-to-Form import against the private snapshot. Temporary
 Table extraction uses ruling-line boundaries when present and conservative text alignment otherwise. The editable preview is mandatory because PDF content does not encode table semantics reliably. Merged cells and irregular layouts require manual correction.
 
 Office exports use a bounded stored-ZIP Open XML writer: no new dependencies, macros, external links, formulas or embedded executable content. XLSX cells are inline strings. CSV values beginning with =, +, -, @, tab or carriage return are prefixed with an apostrophe to prevent formula execution. Existing export files are never overwritten.
+
+## Word conversion layout
+
+Word export reconstructs semantic paragraph flow rather than fixed PDF positions.
+Simple ruled grids become editable Word tables; ambiguous grids remain best
+effort. Images are rasterized to at most 2048 pixels per side and retained as
+inline PNGs. Font names are retained without embedding font programs. Ordinary
+groups are expanded only in a temporary document; unsupported groups fail
+without creating partial output. ZIP output remains bounded to 64 MiB.

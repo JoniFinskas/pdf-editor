@@ -21,6 +21,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 - Ungroup supported Form XObjects into editable page objects, preserving nested
   transforms, clipping and shared instances; supports undo.
 
+- Export PDFs to editable Word documents with paragraph styles, images and simple tables.
+
 - Select a table area, review and edit detected cells, and export Excel or CSV.
 
 ### Performance

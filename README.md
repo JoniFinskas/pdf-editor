@@ -32,6 +32,7 @@ Implementation requirements and scope are documented in [SPEC.md](SPEC.md).
   integration, and single-instance document handoff.
 - Select a table area, correct the detected grid, and export Excel (`.xlsx`) or CSV.
   Extraction uses text alignment and ruling lines; complex tables need review.
+- Export editable Word documents with paragraphs, font styling, images and simple ruled tables (best-effort layout).
 - Use light/dark themes, a grouped document menu and movable tool windows.
 
 See the controls and limitations below, especially redaction, encrypted-source

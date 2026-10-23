@@ -33,6 +33,7 @@ pub enum Request {
     Draw(pdf_editor_core::Drawing),
     Crop(u16, pdf_editor_core::Bounds),
     DetectTable(u16, pdf_editor_core::Bounds),
+    ExportWord(PathBuf),
     ExportTable(
         pdf_editor_core::TableGrid,
         pdf_editor_core::TableFormat,
@@ -545,6 +546,10 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 state.generation += 1;
                 Some(changed(state, ChangeKind::Edit, None, 1))
             }
+            Err(e) => failed(e),
+        },
+        Request::ExportWord(path) => match engine.export_word(state.doc.as_ref()?, &path) {
+            Ok(()) => Some(Reply::Exported("Word document exported.".into())),
             Err(e) => failed(e),
         },
         Request::DetectTable(page, area) => {
