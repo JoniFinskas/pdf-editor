@@ -2251,6 +2251,8 @@ impl EditorApp {
         let selection = self.doc.as_ref().and_then(|doc| doc.edit.as_ref().map(|edit| (edit.page, edit.line.rect.center())));
         self.commit_edit();
         self.text_tool.adding = false;
+        self.drawing.active = false;
+        self.tables.selecting = false;
         self.text_tool.selection.clear();
         if let Some(doc) = &mut self.doc {
             doc.object_mode = enabled;
@@ -2643,7 +2645,7 @@ impl EditorApp {
     fn status_bar(&mut self, ui: &mut Ui, p: &Palette) {
         let Some(doc) = &self.doc else { return };
         let mut object_mode = doc.object_mode;
-        let can_switch = self.busy == 0 && doc.edit.as_ref().is_none_or(|e| e.text == e.line.text);
+        let can_switch = self.busy == 0;
         let (current, total) = (doc.current_page + 1, doc.pages.len());
         let hint = if doc.edit.is_some() {
             "Enter or click away applies \u{b7} Esc cancels"
@@ -2701,13 +2703,8 @@ impl EditorApp {
                     .on_hover_text("PDF Editor version");
             });
         });
-        if let Some(doc) = &mut self.doc {
-            if object_mode != doc.object_mode {
-                doc.edit = None;
-                self.text_tool.selection.clear();
-                doc.selected_item = None;
-            }
-            doc.object_mode = object_mode;
+        if self.doc.as_ref().is_some_and(|doc| object_mode != doc.object_mode) {
+            self.set_object_mode(object_mode);
         }
     }
 
@@ -6141,8 +6138,12 @@ mod tests {
         };
         frame(&mut app, vec![]); frame(&mut app, vec![]);
         for (key, moving) in [("mode-objects", true), ("mode-text", false)] {
+            app.drawing.active = true;
+            app.tables.selecting = true;
+            app.text_tool.adding = true;
             frame(&mut app, click_at(tool_center(&ctx, key)));
             assert_eq!(app.doc.as_ref().unwrap().object_mode, moving);
+            assert!(!app.drawing.active && !app.tables.selecting && !app.text_tool.adding);
         }
         frame(&mut app, click_at(tool_center(&ctx, "compare-visible")));
         assert!(app.compare.open);
