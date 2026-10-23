@@ -112,4 +112,3 @@ with (root / 'SOURCES.md').open('a', encoding='utf-8') as log:
             archive.unlink(missing_ok=True);log.flush()
         print(json.dumps({'source':kind,'pdf_count':count}),flush=True)
 if gov_count < 3000: raise SystemExit(1)
-

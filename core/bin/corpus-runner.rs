@@ -1,37 +1,59 @@
 //! Container-only harness. Never emit document strings or parser diagnostics.
 use pdf_editor_core::Engine;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+static SIGNATURE: AtomicU64 = AtomicU64::new(0);
+fn classify(error: impl std::fmt::Display, stage: &'static str) -> &'static str {
+    let mut hash = 14695981039346656037u64;
+    for byte in error.to_string().bytes() {
+        hash = (hash ^ u64::from(byte)).wrapping_mul(1099511628211);
+    }
+    SIGNATURE.store(hash, Ordering::Relaxed);
+    stage
+}
 static PANICKED: AtomicBool = AtomicBool::new(false);
 
 fn check(input: &Path, output: &Path) -> Result<(), &'static str> {
-    let engine = Engine::new(Path::new("/opt/pdfium/lib/libpdfium.so")).map_err(|_| "runtime")?;
-    let mut doc = engine.open(input).map_err(|_| "open")?;
-    let pages = engine.pages(&doc).map_err(|_| "pages")?;
+    let engine = Engine::new(Path::new("/opt/pdfium/lib/libpdfium.so"))
+        .map_err(|error| classify(error, "runtime"))?;
+    let mut doc = engine
+        .open(input)
+        .map_err(|error| classify(error, "open"))?;
+    let pages = engine
+        .pages(&doc)
+        .map_err(|error| classify(error, "pages"))?;
     for page in 0..pages.len() {
-        let page = u16::try_from(page).map_err(|_| "page_limit")?;
-        let before = engine.render(&doc, page, 1.0).map_err(|_| "render")?;
-        let objects = engine.text_objects(&doc, page).map_err(|_| "objects")?;
+        let page = u16::try_from(page).map_err(|error| classify(error, "page_limit"))?;
+        let before = engine
+            .render(&doc, page, 1.0)
+            .map_err(|error| classify(error, "render"))?;
+        let objects = engine
+            .text_objects(&doc, page)
+            .map_err(|error| classify(error, "objects"))?;
         if let Some(object) = objects.iter().find(|o| !o.text.is_empty()) {
             // Remove one character: an actual edit using only existing glyphs.
             let replacement: String = object.text.chars().skip(1).collect();
-            engine.find_text(&doc, &object.text).map_err(|_| "find")?;
+            engine
+                .find_text(&doc, &object.text)
+                .map_err(|error| classify(error, "find"))?;
             engine
                 .edit(&mut doc, object, &replacement)
-                .map_err(|_| "edit")?;
-            let after = engine.render(&doc, page, 1.0).map_err(|_| "render_after")?;
+                .map_err(|error| classify(error, "edit"))?;
+            let after = engine
+                .render(&doc, page, 1.0)
+                .map_err(|error| classify(error, "render_after"))?;
             if before.width != after.width || before.height != after.height {
                 return Err("dimensions");
             }
             let origin = engine
                 .pixel_to_page(&doc, page, 1.0, 0, 0)
-                .map_err(|_| "coordinates")?;
+                .map_err(|error| classify(error, "coordinates"))?;
             let horizontal = engine
                 .pixel_to_page(&doc, page, 1.0, before.width as i32, 0)
-                .map_err(|_| "coordinates")?;
+                .map_err(|error| classify(error, "coordinates"))?;
             let vertical = engine
                 .pixel_to_page(&doc, page, 1.0, 0, before.height as i32)
-                .map_err(|_| "coordinates")?;
+                .map_err(|error| classify(error, "coordinates"))?;
             for (i, (a, b)) in before
                 .rgba
                 .as_chunks::<4>()
@@ -57,17 +79,27 @@ fn check(input: &Path, output: &Path) -> Result<(), &'static str> {
             }
         }
     }
-    doc.save_as(output).map_err(|_| "save")?;
-    let reopened = engine.open(output).map_err(|_| "reopen")?;
-    if engine.pages(&reopened).map_err(|_| "reopen_pages")?.len() != pages.len() {
+    doc.save_as(output)
+        .map_err(|error| classify(error, "save"))?;
+    let reopened = engine
+        .open(output)
+        .map_err(|error| classify(error, "reopen"))?;
+    if engine
+        .pages(&reopened)
+        .map_err(|error| classify(error, "reopen_pages"))?
+        .len()
+        != pages.len()
+    {
         return Err("page_count");
     }
     for page in 0..pages.len() {
-        let page = u16::try_from(page).map_err(|_| "page_limit")?;
-        let expected = engine.render(&doc, page, 1.0).map_err(|_| "render_after")?;
+        let page = u16::try_from(page).map_err(|error| classify(error, "page_limit"))?;
+        let expected = engine
+            .render(&doc, page, 1.0)
+            .map_err(|error| classify(error, "render_after"))?;
         let actual = engine
             .render(&reopened, page, 1.0)
-            .map_err(|_| "render_after")?;
+            .map_err(|error| classify(error, "render_after"))?;
         if expected.width != actual.width
             || expected.height != actual.height
             || expected.rgba != actual.rgba
@@ -99,5 +131,5 @@ fn main() {
     } else {
         status
     };
-    println!("{status}");
+    println!("{}:{}", status, SIGNATURE.load(Ordering::Relaxed));
 }
