@@ -2,6 +2,7 @@
 
 mod app;
 mod recovery;
+mod shortcuts;
 mod theme;
 mod worker;
 

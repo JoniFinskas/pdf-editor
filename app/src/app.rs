@@ -6,9 +6,8 @@ use crate::theme::{self, Palette};
 use crate::worker::{ChangeKind, PageTransform, Reply, Request, Worker};
 use eframe::egui::{
     self, Align, Align2, Button, Color32, Context, CornerRadius, CursorIcon, FontId, Frame, Id,
-    Key, KeyboardShortcut, Layout, Margin, Modifiers, Pos2, Rect, RichText, ScrollArea, Sense,
-    Shadow, Stroke, StrokeKind, TextEdit, TextureHandle, TextureOptions, Ui, Vec2, ViewportCommand,
-    pos2, vec2,
+    Key, Layout, Margin, Pos2, Rect, RichText, ScrollArea, Sense, Shadow, Stroke, StrokeKind,
+    TextEdit, TextureHandle, TextureOptions, Ui, Vec2, ViewportCommand, pos2, vec2,
 };
 use pdf_editor_core::{PageInfo, Substitution, TextObject};
 use std::path::PathBuf;
@@ -1135,38 +1134,21 @@ impl EditorApp {
         if self.confirm.is_some() || self.settings_open {
             return;
         }
-        let pressed = |m: Modifiers, k: Key| {
-            ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)))
-        };
-        if pressed(Modifiers::COMMAND, Key::F) {
-            self.find.open = true;
-            self.find.focus = true;
-        }
-        let shift = Modifiers::COMMAND | Modifiers::SHIFT;
-        if pressed(Modifiers::COMMAND, Key::O) {
-            self.request_open(None);
-        }
-        if pressed(shift, Key::S) || pressed(Modifiers::COMMAND, Key::S) {
-            self.save_as();
-        }
-        if pressed(Modifiers::COMMAND, Key::Plus) || pressed(Modifiers::COMMAND, Key::Equals) {
-            self.step_zoom(true);
-        }
-        if pressed(Modifiers::COMMAND, Key::Minus) {
-            self.step_zoom(false);
-        }
-        if pressed(Modifiers::COMMAND, Key::Num0) {
-            self.set_zoom(1.0, None);
-        }
-        // Text fields keep their own undo while editing.
-        if ctx.egui_wants_keyboard_input() {
-            return;
-        }
-        if pressed(shift, Key::Z) || pressed(Modifiers::COMMAND, Key::Y) {
-            self.redo();
-        }
-        if pressed(Modifiers::COMMAND, Key::Z) {
-            self.undo();
+        for command in crate::shortcuts::consume(ctx, ctx.egui_wants_keyboard_input()) {
+            use crate::shortcuts::Command;
+            match command {
+                Command::Open => self.request_open(None),
+                Command::SaveAs => self.save_as(),
+                Command::Undo => self.undo(),
+                Command::Redo => self.redo(),
+                Command::ZoomIn => self.step_zoom(true),
+                Command::ZoomOut => self.step_zoom(false),
+                Command::ActualSize => self.set_zoom(1.0, None),
+                Command::Find => {
+                    self.find.open = true;
+                    self.find.focus = true;
+                }
+            }
         }
     }
 
@@ -1252,6 +1234,10 @@ impl EditorApp {
                 if self.text_tool.fonts.is_empty() {
                     self.send(Request::Fonts);
                 }
+            }
+            if tool_button(ui, "Find", has_doc, "Find text (Ctrl+F)").clicked() {
+                self.find.open = true;
+                self.find.focus = true;
             }
             self.zoom_controls(ui, has_doc);
 

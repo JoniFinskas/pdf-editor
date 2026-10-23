@@ -6,6 +6,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Find toolbar action and tested keyboard commands, including shifted plus layouts.
+
 - Rotate, delete, drag to reorder, and insert PDF pages with undo/redo.
 
 - Scrollable page thumbnail sidebar with click navigation.
