@@ -478,6 +478,7 @@ pub struct EditorApp {
     tools_open: bool,
     tools_query: String,
     tools_focus: bool,
+    page_jump: crate::navigation::PageJump,
     picker: crate::dialogs::Picker,
     picker_save: bool,
     recent_files: Vec<PathBuf>,
@@ -822,6 +823,7 @@ impl EditorApp {
             tools_open: true,
             tools_query: String::new(),
             tools_focus: false,
+            page_jump: crate::navigation::PageJump::default(),
             picker: crate::dialogs::Picker::default(),
             picker_save: false,
             recent_files: config_path
@@ -2148,6 +2150,10 @@ impl EditorApp {
         for command in crate::shortcuts::consume(ctx, ctx.text_edit_focused()) {
             use crate::shortcuts::Command;
             match command {
+                Command::GoToPage => {
+                    self.commit_edit();
+                    if let Some(doc) = &self.doc { self.page_jump.open_at(doc.current_page); }
+                },
                 Command::Tools => { self.tools_open = true; self.tools_focus = true; },
                 Command::Open => self.request_open(None),
                 Command::SaveAs => self.save_as(),
@@ -2285,6 +2291,15 @@ impl EditorApp {
         }
     }
 
+    fn go_to_page(&mut self, page: usize) {
+        if let Some(doc) = &mut self.doc {
+            if page >= doc.pages.len() { return; }
+            let y = CANVAS_PAD + doc.pages.iter().take(page)
+                .map(|p| p.info.height * doc.scale() + PAGE_GAP).sum::<f32>();
+            doc.scroll_to = Some(vec2(doc.offset.x, y));
+        }
+    }
+
     fn set_object_mode(&mut self, enabled: bool) {
         if self.busy > 0 { return; }
         let selection = self.doc.as_ref().and_then(|doc| doc.edit.as_ref().map(|edit| (edit.page, edit.line.rect.center())));
@@ -2348,7 +2363,7 @@ impl EditorApp {
             let mut found = 0;
             {
                 menu_caption(ui, p, "Basics");
-                for (label, key) in [("Edit text / spell check", "catalog-edit"), ("Move, resize, copy or delete objects", "catalog-move"), ("Add text box", "catalog-add-text"), ("Find text", "catalog-find"), ("Pages: rotate, insert, reorder, delete", "catalog-pages"), ("Save As / password options", "catalog-save")] {
+                for (label, key) in [("Edit text / spell check", "catalog-edit"), ("Move, resize, copy or delete objects", "catalog-move"), ("Add text box", "catalog-add-text"), ("Find text", "catalog-find"), ("Go to page", "catalog-jump"), ("Pages: rotate, insert, reorder, delete", "catalog-pages"), ("Save As / password options", "catalog-save")] {
                     if !query.split_whitespace().all(|word| label.to_lowercase().contains(&word.to_lowercase())) { continue; }
                     found += 1;
                     if Btn::new(label).id(key).align_left().min_width(ui.available_width()).enabled(document && ready).show(ui,p).clicked() {
@@ -2357,6 +2372,7 @@ impl EditorApp {
                             "catalog-move" => self.set_object_mode(true),
                             "catalog-add-text" => { self.set_object_mode(false); self.text_tool.adding = true; },
                             "catalog-find" => { self.find.open = true; self.find.focus = true; },
+                            "catalog-jump" => { self.commit_edit(); if let Some(doc) = &self.doc { self.page_jump.open_at(doc.current_page); } },
                             "catalog-pages" => { self.pages_open = true; self.bookmarks.open = false; self.tools_open = false; },
                             _ => self.save_as(),
                         }
@@ -2764,7 +2780,8 @@ impl EditorApp {
                     .on_hover_text("Select and drag text, images or vector artwork; right-click to duplicate or delete");
             });
             ui.label(RichText::new("Page").color(p.muted));
-            ui.label(RichText::new(current.to_string()).color(p.text));
+            if Btn::new(&current.to_string()).id("go-to-page").height(28.0)
+                .tip("Go to page (Ctrl+G)").show(ui,p).clicked() { self.page_jump.open_at(current - 1); }
             ui.label(RichText::new(format!("of {total}")).color(p.muted));
             ui.add_space(16.0);
             ui.add(egui::Label::new(RichText::new(hint).small().color(p.muted)).truncate());
@@ -4196,6 +4213,10 @@ impl eframe::App for EditorApp {
             self.floating_tools(&ctx, central.response.rect, &p);
         }
 
+        if let Some(page) = self.page_jump.show(&ctx, &p, self.doc.as_ref().map_or(0, |d| d.pages.len())) {
+            self.commit_edit();
+            self.go_to_page(page);
+        }
         if let Some(request) = self.image_create.show(&ctx, &p, self.busy == 0) {
             self.busy += 1;
             self.send(request);
@@ -5247,6 +5268,7 @@ mod tests {
             tools_open: true,
             tools_query: String::new(),
             tools_focus: false,
+            page_jump: crate::navigation::PageJump::default(),
             picker: crate::dialogs::Picker::default(),
             picker_save: false,
                 recent_files: vec![],
@@ -6233,6 +6255,20 @@ mod tests {
         assert_eq!(tabs.active, 0);
         assert!(tabs.tabs[0].1.doc.as_ref().unwrap().dirty());
     }
+    #[test]
+    fn page_jump_scrolls_without_changing_document() {
+        let ctx = Context::default();
+        let (mut app, _, _) = mock_app();
+        opened(&mut app, &ctx);
+        let dirty = app.doc.as_ref().unwrap().dirty();
+        app.doc.as_mut().unwrap().scroll_to = None;
+        app.go_to_page(999);
+        assert!(app.doc.as_ref().unwrap().scroll_to.is_none());
+        app.go_to_page(0);
+        assert_eq!(app.doc.as_ref().unwrap().scroll_to.unwrap().y, CANVAS_PAD);
+        assert_eq!(app.doc.as_ref().unwrap().dirty(), dirty);
+    }
+
     #[test]
     fn catalog_lists_every_tool_and_filters_descriptions() {
         let ctx = Context::default();

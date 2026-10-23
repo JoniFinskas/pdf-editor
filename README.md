@@ -52,6 +52,8 @@ Implementation requirements and scope are documented in [SPEC.md](SPEC.md).
 See the controls and limitations below, especially redaction, encrypted-source
 recovery and supported text/image formats.
 
+Press **Ctrl+G** or click the current page number to jump to any page, the first page or the last page.
+
 ## Build on Windows
 
 Requirements: Windows x64, PowerShell, stable Rust with the

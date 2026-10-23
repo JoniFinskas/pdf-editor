@@ -3,6 +3,7 @@ use eframe::egui::{Context, Key, KeyboardShortcut, Modifiers};
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
     Tools,
+    GoToPage,
     Open,
     SaveAs,
     Undo,
@@ -19,6 +20,7 @@ pub fn consume(ctx: &Context, editing: bool) -> Vec<Command> {
     let ctrl = Modifiers::COMMAND;
     let shift = ctrl | Modifiers::SHIFT;
     for (key, command) in [
+        (Key::G, Command::GoToPage),
         (Key::K, Command::Tools),
         (Key::O, Command::Open),
         (Key::S, Command::SaveAs),
@@ -75,7 +77,8 @@ mod tests {
     #[test]
     fn required_shortcuts_dispatch_and_preserve_text_undo() {
         for (key, command) in [
-            (Key::K, Command::Tools),
+            (Key::G, Command::GoToPage),
+        (Key::K, Command::Tools),
         (Key::O, Command::Open),
             (Key::S, Command::SaveAs),
             (Key::Z, Command::Undo),

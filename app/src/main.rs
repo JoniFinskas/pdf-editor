@@ -2,6 +2,7 @@
 
 mod app;
 mod dialogs;
+mod navigation;
 mod bookmarks;
 mod cli;
 mod image_create;
