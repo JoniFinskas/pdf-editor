@@ -27,6 +27,8 @@ mod fonts;
 mod forms;
 pub use forms::{FieldValue, FormField};
 mod images;
+mod images_to_pdf;
+pub use images_to_pdf::{ImagePageSize, import_picture};
 mod pictures;
 pub use pictures::PlacedPicture;
 mod ocr;

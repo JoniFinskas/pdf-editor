@@ -18,6 +18,7 @@ const SAMPLE_SCALE: f32 = 4.0;
 const SAMPLE_SPAN: f32 = 1000.0;
 
 pub enum Request {
+    ImagesToPdf(Vec<PathBuf>, pdf_editor_core::ImagePageSize, PathBuf),
     Open(PathBuf),
     OpenPassword(PathBuf, String),
     SavePassword(PathBuf, String),
@@ -340,6 +341,10 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
+        Request::ImagesToPdf(paths, size, path) => match engine.images_to_pdf(&paths, size).and_then(|doc| doc.save_as(&path)) {
+            Ok(()) => Some(Reply::Exported(format!("Created PDF: {}", path.display()))),
+            Err(e) => failed(e),
+        },
         Request::Merge(paths) => match engine.merge_pdfs(state.doc.as_mut()?, &paths) {
             Ok(()) => {
                 state.generation += 1;

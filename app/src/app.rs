@@ -55,6 +55,7 @@ const MENU_WIDTH: f32 = 280.0;
 /// Tool windows and actions in the document menu.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
+    ImageCreate,
     Replace,
     Forms,
     Signatures,
@@ -84,6 +85,7 @@ impl Tool {
                 (Tool::Forms, "Fill form…", Icon::Form),
                 (Tool::Signatures, "Signatures…", Icon::Signature),
                 (Tool::Pictures, "Images…", Icon::Image),
+                (Tool::ImageCreate, "Images to PDF…", Icon::Image),
                 (Tool::Markup, "Markup and notes…", Icon::Highlighter),
                 (Tool::Drawing, "Draw and shapes…", Icon::Pen),
                 (Tool::Redact, "Redact…", Icon::Redact),
@@ -108,6 +110,7 @@ impl Tool {
     /// Stable button key, so tests can find the menu entries.
     fn key(self) -> &'static str {
         match self {
+            Tool::ImageCreate => "tool-image-create",
             Tool::Replace => "tool-replace",
             Tool::Forms => "tool-forms",
             Tool::Signatures => "tool-signatures",
@@ -425,6 +428,7 @@ pub struct EditorApp {
     recent_files: Vec<PathBuf>,
     dragging_page: Option<usize>,
     text_tool: TextTool,
+    image_create: crate::image_create::ImageCreate,
     signatures: crate::signatures::Signatures,
     forms: crate::forms::Forms,
     replace: crate::replace::Replace,
@@ -756,6 +760,7 @@ impl EditorApp {
                 .map_or_else(Vec::new, |s| s.recent_files),
             dragging_page: None,
             text_tool: TextTool::default(),
+            image_create: Default::default(),
             signatures: Default::default(),
             forms: Default::default(),
             replace: Default::default(),
@@ -2029,6 +2034,10 @@ impl EditorApp {
                 .filter(|p| !p.as_os_str().is_empty())
                 .collect()
         });
+        if dropped.iter().any(|p| crate::image_create::ImageCreate::accepts(p)) {
+            self.image_create.add(dropped);
+            return;
+        }
         if let Some(path) = dropped.into_iter().next() {
             self.request_open(Some(path));
         }
@@ -2064,6 +2073,7 @@ impl EditorApp {
     /// Opens a tool picked from the document menu.
     fn open_tool(&mut self, tool: Tool) {
         match tool {
+            Tool::ImageCreate => self.image_create.open = true,
             Tool::Bookmarks => {
                 self.commit_edit();
                 self.bookmarks.open = true;
@@ -2349,6 +2359,7 @@ impl EditorApp {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 self.settings_button(ui, p);
+                if Btn::new("Images to PDF…").enabled(ready && self.busy == 0).show(ui, p).clicked() { self.image_create.open = true; }
                 if Btn::new("Open PDF")
                     .with_icon(Icon::Folder)
                     .id("open")
@@ -3768,6 +3779,10 @@ impl eframe::App for EditorApp {
             self.floating_tools(&ctx, central.response.rect, &p);
         }
 
+        if let Some(request) = self.image_create.show(&ctx, &p, self.busy == 0) {
+            self.busy += 1;
+            self.send(request);
+        }
         let drawing_was_active = self.drawing.active;
         self.drawing.show(&ctx, &p);
         if !drawing_was_active && self.drawing.active {
@@ -4680,7 +4695,8 @@ mod tests {
                 recent_files: vec![],
                 dragging_page: None,
                 text_tool: TextTool::default(),
-                signatures: Default::default(),
+                image_create: Default::default(),
+            signatures: Default::default(),
                 forms: Default::default(),
                 replace: Default::default(),
                 password: Default::default(),

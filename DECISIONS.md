@@ -510,3 +510,6 @@ valid after the source is edited/deleted. Annotations keep their dedicated tools
 
 ### Ranged stamping
 Headers and footers use the visible page crop and rotation, with an edge margin in PDF points. Date expansion uses one explicit value per operation for reproducibility. Existing absolute watermark placement remains supported. A single candidate is validated before one undo snapshot is accepted.
+
+### Image document creation
+Images are decoded one at a time and embedded as JPEG at quality 95 against white, preserving order without retaining all decoded inputs. A4 and Letter center the image without cropping; image-size pages use 96 DPI. HEIC uses the existing Windows imaging API and installed codecs; no engine or codec download occurs. Imports are limited to 100 images, 16 million pixels per image and a 64 MiB resulting PDF. Output uses exclusive creation.

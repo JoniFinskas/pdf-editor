@@ -2277,3 +2277,48 @@ fn ranged_headers_footers_expand_tokens_and_undo() {
         e.render(&doc, 0, 1.).unwrap();
     }
 }
+
+#[test]
+fn images_to_pdf_preserves_order_and_page_size() {
+    let _lock = PDFIUM.lock().unwrap();
+    let engine = engine();
+    let red = Picture { width: 32, height: 16, rgba: [255,0,0,255].repeat(32*16) };
+    let blue = Picture { width: 16, height: 32, rgba: [0,0,255,255].repeat(32*16) };
+    let doc = engine.pictures_to_pdf([Ok(red.clone()), Ok(blue.clone())], ImagePageSize::Image).unwrap();
+    let pages = engine.pages(&doc).unwrap();
+    assert_eq!(pages.len(),2);
+    let output = temp("images-created.pdf");
+    if output.exists() { fs::remove_file(&output).unwrap(); }
+    doc.save_as(&output).unwrap();
+    assert!(doc.save_as(&output).is_err());
+    assert_eq!(engine.pages(&engine.open(&output).unwrap()).unwrap().len(), 2);
+    assert_eq!((pages[0].width,pages[0].height),(24.0,12.0));
+    assert_eq!((pages[1].width,pages[1].height),(12.0,24.0));
+    for (page, channel) in [(0,0),(1,2)] {
+        let image = engine.render(&doc,page,2.0).unwrap();
+        let center = (image.height as usize/2*image.width as usize+image.width as usize/2)*4;
+        assert!(image.rgba[center+channel]>240);
+        assert!(image.rgba[center+(channel+1)%3]<10);
+    }
+    let letter = engine.pictures_to_pdf([Ok(red)],ImagePageSize::Letter).unwrap();
+    assert_eq!(engine.pages(&letter).unwrap()[0].width,612.0);
+    let a4 = engine.pictures_to_pdf([Ok(blue)],ImagePageSize::A4).unwrap();
+    assert!((engine.pages(&a4).unwrap()[0].height-841.89).abs()<0.01);
+    assert!(engine.images_to_pdf(&[],ImagePageSize::A4).is_err());
+    assert!(engine.pictures_to_pdf([Ok(Picture{width:0,height:0,rgba:vec![]})],ImagePageSize::Image).is_err());
+}
+
+#[test]
+fn image_import_decodes_png_jpeg_and_rejects_bad_heic() {
+    let dir = temp("image-import");
+    fs::create_dir_all(&dir).unwrap();
+    for format in [image::ImageFormat::Png,image::ImageFormat::Jpeg] {
+        let path = dir.join(format!("fixture.{}",format.extensions_str()[0]));
+        image::save_buffer_with_format(&path,&[80,120,200].repeat(16),4,4,image::ColorType::Rgb8,format).unwrap();
+        let picture = import_picture(&path).unwrap();
+        assert_eq!((picture.width,picture.height),(4,4));
+    }
+    let bad = dir.join("invalid.heic");
+    fs::write(&bad,b"not a HEIC image").unwrap();
+    assert!(import_picture(&bad).is_err());
+}

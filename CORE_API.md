@@ -209,3 +209,7 @@ The opt-in corpus-runner binary exercises existing core APIs inside Docker only.
 
 ### Ranged headers and footers
 `RangeStamp` combines a `TextStamp`, one-based `pages` ranges (empty selects all), a literal date and `StampPlacement::{Header,Footer,Absolute}`. `Engine::stamp_page_range` expands `{page}`, `{pages}` and `{date}` in one atomic undo step. Header/footer offsets follow the visible cropped/rotated page; y is the edge margin. Invalid ranges, margins and control characters fail without modifying the document. `stamp_date_today()` supplies a UTC date; callers capture it once and may override it.
+
+### Images to PDF
+- `import_picture(path) -> Result<Picture>`: bounded PNG/JPEG decoding; HEIC uses installed Windows image codecs with orientation applied.
+- `Engine::images_to_pdf(paths, ImagePageSize) -> Result<Document>`: creates 1–100 image pages in input order, with A4, Letter or image-size (96 DPI) pages.
