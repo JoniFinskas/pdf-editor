@@ -206,3 +206,8 @@ Paragraph fallback substitution stays inside the paragraph even when the ordinar
 
 ## Corpus validation executable
 The opt-in corpus-runner binary exercises existing core APIs inside Docker only. It adds no public library functions and suppresses parser diagnostics and panic text.
+
+## Table export
+
+- `Engine::detect_table(document, page, area) -> Result<TableGrid>`: infer a bounded grid from PDF text positions and transformed horizontal/vertical ruling lines inside a PDF-point selection.
+- `TableGrid::export(path, TableFormat::{Xlsx,Csv}) -> Result<()>`: export edited cell values to a new local file; XLSX uses explicit string cells, CSV neutralizes formula prefixes.

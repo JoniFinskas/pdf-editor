@@ -1,4 +1,7 @@
 //! Headless PDF editing. Page indices are zero based; geometry is in PDF points.
+mod office_package;
+mod table_export;
+pub use table_export::{TableFormat, TableGrid};
 mod compare;
 pub use compare::{ChangeKind, ComparePage, TextChange, compare_pixels, compare_text};
 
@@ -20,9 +23,9 @@ mod export;
 pub use drawing::{Drawing, DrawingKind};
 mod features;
 mod objects;
-pub use objects::{ObjectAction, ObjectClipboard, PageItem};
 pub use export::PageImageFormat;
 pub use features::NewText;
+pub use objects::{ObjectAction, ObjectClipboard, PageItem};
 mod fonts;
 mod forms;
 pub use forms::{FieldValue, FormField};

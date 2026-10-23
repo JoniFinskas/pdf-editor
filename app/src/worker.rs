@@ -26,6 +26,12 @@ pub enum Request {
     Print,
     Draw(pdf_editor_core::Drawing),
     Crop(u16, pdf_editor_core::Bounds),
+    DetectTable(u16, pdf_editor_core::Bounds),
+    ExportTable(
+        pdf_editor_core::TableGrid,
+        pdf_editor_core::TableFormat,
+        PathBuf,
+    ),
     ExportImages(String, u16, pdf_editor_core::PageImageFormat, PathBuf),
     Stamp(pdf_editor_core::TextStamp),
     Compress(u32, u8),
@@ -122,6 +128,7 @@ impl PageTransform {
 }
 
 pub enum Reply {
+    TableDetected(pdf_editor_core::TableGrid),
     ItemsCopied,
     Bookmarks(pdf_editor_core::BookmarkSet),
     Printed(bool),
@@ -451,6 +458,16 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 state.generation += 1;
                 Some(changed(state, ChangeKind::Edit, None, 1))
             }
+            Err(e) => failed(e),
+        },
+        Request::DetectTable(page, area) => {
+            match engine.detect_table(state.doc.as_ref()?, page, area) {
+                Ok(grid) => Some(Reply::TableDetected(grid)),
+                Err(e) => failed(e),
+            }
+        }
+        Request::ExportTable(grid, format, path) => match grid.export(&path, format) {
+            Ok(()) => Some(Reply::Exported("Table exported.".into())),
             Err(e) => failed(e),
         },
         Request::ExportImages(ranges, dpi, format, folder) => {

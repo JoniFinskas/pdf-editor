@@ -9,6 +9,7 @@ mod compression;
 mod crop;
 mod drawing;
 mod export;
+mod table_export;
 mod forms;
 mod icons;
 mod instance;

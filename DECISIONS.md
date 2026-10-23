@@ -507,3 +507,9 @@ validation. Preserve grouped Form objects as groups and fail unsupported copies
 without accepting partial changes. Copy/paste keeps one private in-memory PDF
 snapshot per tab, never writes the operating-system clipboard or disk, and remains
 valid after the source is edited/deleted. Annotations keep their dedicated tools.
+
+## Table extraction and Office packaging
+
+Table extraction uses ruling-line boundaries when present and conservative text alignment otherwise. The editable preview is mandatory because PDF content does not encode table semantics reliably. Merged cells and irregular layouts require manual correction.
+
+Office exports use a bounded stored-ZIP Open XML writer: no new dependencies, macros, external links, formulas or embedded executable content. XLSX cells are inline strings. CSV values beginning with =, +, -, @, tab or carriage return are prefixed with an apostrophe to prevent formula execution. Existing export files are never overwritten.

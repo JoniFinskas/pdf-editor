@@ -2217,3 +2217,112 @@ fn artwork_objects_copy_move_delete_and_paste_snapshot() {
         assert_eq!(doc.bytes, original);
     }
 }
+
+#[test]
+fn table_export_generated_ruled_grid_and_office_files() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let engine = engine();
+    let mut pdf = parse(&generated("Soluä", false, 0, 0., false, false)).unwrap();
+    let id = *pdf.get_pages().values().next().unwrap();
+    let base = Content::decode(&pdf.get_page_content(id)).unwrap();
+    let mut ops = vec![];
+    for y in [220, 150] {
+        for x in [50, 250] {
+            let mut block = base.operations[2..7].to_vec();
+            block[3].operands[4] = x.into();
+            block[3].operands[5] = y.into();
+            ops.extend(block);
+            ops.push(Operation::new("ET", vec![]));
+        }
+    }
+    for x in [20, 220, 440] {
+        ops.push(Operation::new("m", vec![x.into(), 100.into()]));
+        ops.push(Operation::new("l", vec![x.into(), 260.into()]));
+        ops.push(Operation::new("S", vec![]));
+    }
+    for y in [100, 180, 260] {
+        ops.push(Operation::new("m", vec![20.into(), y.into()]));
+        ops.push(Operation::new("l", vec![440.into(), y.into()]));
+        ops.push(Operation::new("S", vec![]));
+    }
+    pdf.change_page_content(
+        id,
+        Content {
+            operations: ops.clone(),
+        }
+        .encode()
+        .unwrap(),
+    )
+    .unwrap();
+    let source = temp("table.pdf");
+    pdf.save(&source).unwrap();
+    let doc = engine.open(&source).unwrap();
+    let grid = engine
+        .detect_table(
+            &doc,
+            0,
+            Bounds {
+                left: 0.,
+                bottom: 0.,
+                right: 500.,
+                top: 300.,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        grid.cells,
+        vec![vec!["Soluä", "Soluä"], vec!["Soluä", "Soluä"]]
+    );
+    ops.retain(|o| !matches!(o.operator.as_str(), "m" | "l" | "S"));
+    pdf.change_page_content(id, Content { operations: ops }.encode().unwrap())
+        .unwrap();
+    let plain = temp("table-unruled.pdf");
+    pdf.save(&plain).unwrap();
+    let plain = engine.open(&plain).unwrap();
+    assert_eq!(
+        engine
+            .detect_table(
+                &plain,
+                0,
+                Bounds {
+                    left: 0.,
+                    bottom: 0.,
+                    right: 500.,
+                    top: 300.
+                }
+            )
+            .unwrap(),
+        grid
+    );
+
+    for (format, name) in [
+        (TableFormat::Xlsx, "table.xlsx"),
+        (TableFormat::Csv, "table.csv"),
+    ] {
+        let path = temp(name);
+        let _ = fs::remove_file(&path);
+        grid.export(&path, format).unwrap();
+        assert!(grid.export(&path, format).is_err());
+    }
+    let csv = temp("formula.csv");
+    let _ = fs::remove_file(&csv);
+    TableGrid {
+        cells: vec![vec!["=1+1".into(), "@SUM(A1)".into(), "ä,\"ö".into()]],
+    }
+    .export(&csv, TableFormat::Csv)
+    .unwrap();
+    let saved = fs::read_to_string(csv).unwrap();
+    assert!(saved.contains("'=1+1"));
+    assert!(saved.contains("'@SUM(A1)"));
+    assert!(saved.contains("ä,\"\"ö"));
+    let too_long = temp("table-too-long.xlsx");
+    let _ = fs::remove_file(&too_long);
+    assert!(
+        TableGrid {
+            cells: vec![vec!["😀".repeat(16384)]]
+        }
+        .export(&too_long, TableFormat::Xlsx)
+        .is_err()
+    );
+    assert!(!too_long.exists());
+}
