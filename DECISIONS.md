@@ -428,3 +428,12 @@ Decided to retain the existing size-optimized release profile and all current di
 - Bound each worker reply channel to one result and consume at most four results per UI poll. This applies backpressure when the UI is slower than rendering, preventing an unbounded queue of RGBA images.
 - Cap retained full-page textures at 128 MiB per document, accounting for replacement textures and evicting pages farthest from the incoming page. Retain existing viewport-distance eviction and on-demand virtualized thumbnails. Drop text-object caches for distant pages as well. The texture cap excludes native renderer working memory, document/history bytes, small visible thumbnails, and temporary upload buffers.
 - Benchmark a locally generated 1,000-page text PDF, including engine initialization, file read/validation and page metadata. Report first-page raster time separately; the benchmark does not claim a frame-rate measurement or worst-case performance on arbitrary PDFs.
+
+### Headless commands
+
+Decided to provide a console companion binary for reliable Windows standard streams
+and exit codes while allowing the desktop executable to dispatch headless commands.
+Commands reuse existing core operations without dependencies. Folder replacement is
+bounded, nonrecursive, skips symlinks, reports numeric indices/counts, and retains
+successful exclusive outputs when another input fails. Shell wrappers launch the
+sibling desktop binary through argument arrays without command-shell interpretation.

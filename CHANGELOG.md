@@ -8,6 +8,10 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 - Load page-size metadata without parsing every page, cap page texture storage, and bound background-render replies. Add a generated 1,000-page startup benchmark.
 
+### Added
+- Headless merge, split, extract, compress, rotate, image export, Windows OCR, and
+  font-preserving find/replace commands with folder dry-run counts and exit codes.
+
 ### Changed
 
 - Refresh release-build verification, the feature overview and manual checks for

@@ -169,3 +169,10 @@ Each `Document` owns its byte snapshots, revision, undo/redo stacks and source i
 - `Engine::edit_bookmarks(document, revision, BookmarkEdit) -> Result<()>`: atomically add a root/child bookmark, rename, delete a subtree or move within siblings, rejecting stale revisions.
 - `BookmarkSet`: revision and flattened depth-annotated entries; `Bookmark`: object identifier, title, optional zero-based page, depth and sibling positions.
 - `BookmarkEdit`: Add(title, page, optional parent), Rename(id, title), Delete(id), or Move(id, final sibling position).
+
+## Command-line integration
+
+The console companion uses the existing public Engine/Document methods directly;
+no new public core API is introduced. Its parser validates per-command arguments,
+and batch find/replace counts through `replacement_count` before `replace_text`.
+All destinations retain the core exclusive-create and original-file protections.
