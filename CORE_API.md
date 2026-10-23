@@ -206,3 +206,12 @@ Paragraph fallback substitution stays inside the paragraph even when the ordinar
 
 ## Corpus validation executable
 The opt-in corpus-runner binary exercises existing core APIs inside Docker only. It adds no public library functions and suppresses parser diagnostics and panic text.
+
+### Search and redact
+`PrivacyQuery` selects literal case-insensitive text or email, phone, IBAN,
+Finnish personal identity code and credit-card patterns. `preview_redactions`
+returns page-space rectangles across adjacent text runs. Presets are pattern
+candidates, not identity/account validation. `apply_redaction_preview` rejects
+changed or different documents and applies all rectangles in one undo step.
+Intersecting text runs and grouped artwork may be removed in full.
+Redaction rebuilds a clean page graph, dropping document-wide annotations, forms, bookmarks, attachments, tags, metadata and actions; unsupported retained content fails without changing the document.

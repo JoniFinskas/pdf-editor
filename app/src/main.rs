@@ -19,6 +19,7 @@ mod passwords;
 mod pictures;
 mod recovery;
 mod redaction;
+mod privacy;
 mod replace;
 mod shortcuts;
 mod signatures;

@@ -2217,3 +2217,79 @@ fn artwork_objects_copy_move_delete_and_paste_snapshot() {
         assert_eq!(doc.bytes, original);
     }
 }
+
+#[test]
+fn privacy_preview_modes_and_stale_apply() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    for (n, query, text) in [
+        (0, PrivacyQuery::Text("secret".into()), "secret "),
+        (1, PrivacyQuery::Email, "a@b.fi "),
+        (2, PrivacyQuery::Phone, "+358401234567 "),
+        (3, PrivacyQuery::Iban, "FI2112345600000785 "),
+        (4, PrivacyQuery::FinnishId, "131052-308T "),
+        (5, PrivacyQuery::CreditCard, "4111111111111111 "),
+    ] {
+        let path = temp(&format!("privacy-{n}.pdf"));
+        let mut pdf = parse(&generated(text, false, 0, 0.0, false, false)).unwrap();
+        let page = *pdf.get_pages().values().next().unwrap();
+        let mut content = Content::decode(&pdf.get_page_content(page)).unwrap();
+        let index = content
+            .operations
+            .iter()
+            .position(|o| o.operator == "Tj")
+            .unwrap();
+        let bytes = content.operations[index].operands[0]
+            .as_str()
+            .unwrap()
+            .to_vec();
+        let middle = (bytes.len() / 4) * 2;
+        content.operations[index].operands[0] =
+            Object::String(bytes[..middle].to_vec(), lopdf::StringFormat::Hexadecimal);
+        content.operations.insert(
+            index + 1,
+            Operation::new(
+                "Tj",
+                vec![Object::String(
+                    bytes[middle..].to_vec(),
+                    lopdf::StringFormat::Hexadecimal,
+                )],
+            ),
+        );
+        let stream = pdf.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+        pdf.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", stream);
+        pdf.save(&path).unwrap();
+        let mut doc = e.open(&path).unwrap();
+        let original = doc.bytes.clone();
+        let preview = e.preview_redactions(&doc, &query).unwrap();
+        assert!(!preview.matches.is_empty(), "{query:?}");
+        assert!(
+            preview
+                .matches
+                .iter()
+                .all(|m| m.page == 0 && !m.bounds.is_empty())
+        );
+        let other_path = temp(&format!("privacy-other-{n}.pdf"));
+        fs::write(
+            &other_path,
+            generated("other document", false, 0, 0.0, false, false),
+        )
+        .unwrap();
+        let mut other = e.open(&other_path).unwrap();
+        let other_bytes = other.bytes.clone();
+        assert!(e.apply_redaction_preview(&mut other, &preview).is_err());
+        assert_eq!(other.bytes, other_bytes);
+        e.apply_redaction_preview(&mut doc, &preview).unwrap();
+        assert!(
+            e.find_text(&doc, text.trim()).unwrap().is_empty(),
+            "{query:?}"
+        );
+        let changed = doc.bytes.clone();
+        assert!(e.apply_redaction_preview(&mut doc, &preview).is_err());
+        assert_eq!(changed, doc.bytes);
+        doc.undo();
+        assert_eq!(original, doc.bytes);
+    }
+}

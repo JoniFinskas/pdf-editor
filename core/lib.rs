@@ -543,3 +543,6 @@ fn loaded_page_sizes(pages: &PdfPages<'_>) -> Result<Vec<PageInfo>> {
         })
         .collect()
 }
+
+mod privacy_search;
+pub use privacy_search::{PrivacyQuery, RedactionPreview};

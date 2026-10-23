@@ -507,3 +507,11 @@ validation. Preserve grouped Form objects as groups and fail unsupported copies
 without accepting partial changes. Copy/paste keeps one private in-memory PDF
 snapshot per tab, never writes the operating-system clipboard or disk, and remains
 valid after the source is edited/deleted. Annotations keep their dedicated tools.
+
+### Search redaction previews
+Use PDFium page-text search for rectangle mapping across text runs. Pattern
+recognition remains dependency-free and deliberately reports candidates for
+review rather than promising account or identity validation. Keep an exact
+source snapshot with the preview so switching documents cannot apply stale
+rectangles even when revision numbers coincide. Reuse canvas search highlights
+and provide clickable page/rectangle rows before applying true redaction.
