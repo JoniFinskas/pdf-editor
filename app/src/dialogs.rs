@@ -59,3 +59,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, windows))]
+#[path = "dialog_native_tests.rs"]
+mod native_tests;
