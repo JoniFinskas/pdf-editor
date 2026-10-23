@@ -3,6 +3,8 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Add local batch stamp and Bates CLI commands with dry-run, checked sequences and create-only output.
+
 - Add Bates numbering with a prefix, checked start number and fixed digit count.
 
 - Add ranged headers and footers with editable date and page-number tokens.

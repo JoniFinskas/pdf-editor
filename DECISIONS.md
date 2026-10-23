@@ -513,3 +513,6 @@ Headers and footers use the visible page crop and rotation, with an edge margin 
 
 ### Bates numbering
 Bates labels have a strict digit width (1–20), a literal prefix and checked u64 arithmetic. Selected pages are numbered in document order regardless of range input order. Sequence validation precedes all content changes.
+
+### Batch stamping
+Batch operations use nonrecursive sorted input enumeration and create-only destinations. Bates numbering continues across successfully written files, preventing duplicate labels within one batch; failed files do not consume sequence numbers. Dry-run uses the identical core transformation in memory. Explicit dates are reproducible, and the default UTC date is captured once for all files.

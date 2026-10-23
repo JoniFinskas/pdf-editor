@@ -335,3 +335,13 @@ incomplete. The native desktop itself is not container-sandboxed.
 Headers and footers are available in the page-number/watermark tool. Select Header or Footer, enter page ranges such as `1-3,5` (blank means all), and use `{date}`, `{page}` and `{pages}` tokens. The date defaults to UTC and is editable.
 
 Enable Bates numbering in the stamping tool to add a prefix and fixed-width sequence, with the same page range and placement controls. Numbering follows document order. Overflow or insufficient digits aborts the entire operation.
+
+### Batch headers, footers and Bates numbering
+
+```powershell
+pdf-editor-cli stamp C:\docs --output C:\stamped --text "Report {date} - {page}/{pages}" --position header --pages "1-3"
+pdf-editor-cli bates C:\docs --output C:\numbered --prefix "CASE-" --start 1 --digits 6 --position footer
+pdf-editor-cli stamp C:\docs --text "Reviewed {date}" --dry-run
+```
+
+Both commands accept a PDF or a folder. Folders are nonrecursive, processed in sorted filename order, and contain at most 10,000 PDFs. The output folder must already exist; each destination must be new. Originals are never overwritten. Bates numbering continues across successful files. Each operation supports `--pages`, `--position header|footer|absolute`, `--font`, `--size`, `--color RRGGBB`, `--opacity`, `--left` and `--margin`. Header/footer margins are measured from the visible page edge; absolute mode uses a bottom baseline. Text stamping also supports `--text` and `--date`; date defaults to UTC captured once for the batch. Blank page ranges select every page. `--dry-run` validates the complete operation without writes and needs no output path. Failed files are reported individually; successful outputs are retained. Exit codes: 0 success, 1 processing failure, 2 invalid usage.
