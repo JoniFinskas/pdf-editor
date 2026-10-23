@@ -199,3 +199,6 @@ while merge/compress/export use the existing public operations after UI confirma
 - `Paragraph`: current objects, PDF-point bounds, text, line spacing/count, detected alignment and optional fallback reason. Callers must refresh after edits/history operations. Unsupported font encodings/metrics fail without altering the document.
 
 Paragraph fallback substitution stays inside the paragraph even when the ordinary line-edit policy is document-wide, so unrelated content remains unchanged. Newlines request hard line breaks; Ctrl+Enter applies a paragraph in the canvas editor; Alt+click selects an individual line.
+
+## Corpus validation executable
+The opt-in corpus-runner binary exercises existing core APIs inside Docker only. It adds no public library functions and suppresses parser diagnostics and panic text.

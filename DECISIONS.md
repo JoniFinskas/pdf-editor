@@ -467,3 +467,6 @@ sibling desktop binary through argument arrays without command-shell interpretat
 - Reuse the existing text transaction to select/embed the replacement font. Layout prefers explicit PDF glyph widths, uses embedded font advances where widths are absent, preserves character/word spacing, and adds justified gaps through TJ adjustments. Unsupported mappings or render modes produce a clean error.
 - Scope substitutions to the paragraph to preserve all neighboring objects. Reflow never moves other content; added lines warn about overlap and reject overflow beyond the page. Overwide unbreakable words require a space or ordinary line editing.
 - Replace the paragraph as a single undo snapshot, verify text/neighbor state before accepting, and test all alignments with generated Finnish fixtures and outside-box raster comparisons.
+
+## Corpus isolation
+Added an on-demand process-isolated corpus harness and allowlisted Govdocs archive downloader. Only fixed error categories and timing cross the parser boundary. Linux PDFium chromium/8111 SHA256 is pinned from release metadata; corpus and output remain ignored. Defender scan is mandatory between download and execution. No new public core API is introduced.
