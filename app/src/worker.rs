@@ -45,6 +45,9 @@ pub enum Request {
     Stamp(pdf_editor_core::RangeStamp),
     Compress(u32, u8),
     Sanitize(pdf_editor_core::SanitizeOptions),
+
+    PrivacyPreview(pdf_editor_core::PrivacyQuery),
+    PrivacyApply(pdf_editor_core::RedactionPreview),
     Redact(u16, pdf_editor_core::Bounds),
     Ocr(u16),
     Pictures,
@@ -149,6 +152,8 @@ pub enum Reply {
         picture: pdf_editor_core::Picture,
         corrected: bool,
     },
+
+    PrivacyPreview(pdf_editor_core::RedactionPreview, Vec<(u16, Vec<[f32; 4]>)>),
     ItemsCopied,
     Bookmarks(pdf_editor_core::BookmarkSet),
     Printed(bool),
@@ -796,6 +801,72 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                         ChangeKind::Edit,
                         result.warning,
                         result.objects_changed,
+                    ))
+                }
+                Err(e) => failed(e),
+            }
+        }
+        Request::PrivacyPreview(query) => match engine
+            .preview_redactions(state.doc.as_ref()?, &query)
+        {
+            Ok(preview) => {
+                let doc = state.doc.as_ref()?;
+                let mut transforms = std::collections::BTreeMap::new();
+                let converted = preview
+                    .matches
+                    .iter()
+                    .map(|m| {
+                        let t = if let Some(transform) = transforms.get(&m.page) {
+                            *transform
+                        } else {
+                            let transform = page_transform(engine, doc, m.page)?;
+                            transforms.insert(m.page, transform);
+                            transform
+                        };
+                        Ok((
+                            m.page,
+                            m.bounds
+                                .iter()
+                                .map(|b| {
+                                    let points = [
+                                        t.apply(b.left, b.bottom),
+                                        t.apply(b.right, b.bottom),
+                                        t.apply(b.left, b.top),
+                                        t.apply(b.right, b.top),
+                                    ];
+                                    [
+                                        points.iter().map(|p| p.0).fold(f32::INFINITY, f32::min),
+                                        points.iter().map(|p| p.1).fold(f32::INFINITY, f32::min),
+                                        points
+                                            .iter()
+                                            .map(|p| p.0)
+                                            .fold(f32::NEG_INFINITY, f32::max),
+                                        points
+                                            .iter()
+                                            .map(|p| p.1)
+                                            .fold(f32::NEG_INFINITY, f32::max),
+                                    ]
+                                })
+                                .collect(),
+                        ))
+                    })
+                    .collect::<pdf_editor_core::Result<Vec<_>>>();
+                match converted {
+                    Ok(boxes) => Some(Reply::PrivacyPreview(preview, boxes)),
+                    Err(e) => failed(e),
+                }
+            }
+            Err(e) => failed(e),
+        },
+        Request::PrivacyApply(preview) => {
+            match engine.apply_redaction_preview(state.doc.as_mut()?, &preview) {
+                Ok(()) => {
+                    state.generation += 1;
+                    Some(changed(
+                        state,
+                        ChangeKind::Edit,
+                        None,
+                        preview.matches.len(),
                     ))
                 }
                 Err(e) => failed(e),

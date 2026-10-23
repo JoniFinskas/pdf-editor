@@ -63,6 +63,7 @@ enum Tool {
     Pictures,
     Markup,
     Drawing,
+    Privacy,
     Redact,
     Ocr,
     Bookmarks,
@@ -94,6 +95,7 @@ impl Tool {
                 (Tool::Markup, "Markup and notes…", Icon::Highlighter),
                 (Tool::Drawing, "Draw and shapes…", Icon::Pen),
                 (Tool::Redact, "Redact…", Icon::Redact),
+                (Tool::Privacy, "Search and redact…", Icon::Redact),
                 (Tool::Ocr, "OCR current page", Icon::Scan),
             ],
         ),
@@ -126,6 +128,7 @@ impl Tool {
             Tool::Pictures => "tool-pictures",
             Tool::Markup => "tool-markup",
             Tool::Drawing => "tool-drawing",
+            Tool::Privacy => "tool-privacy",
             Tool::Redact => "tool-redact",
             Tool::Ocr => "tool-ocr",
             Tool::Bookmarks => "tool-bookmarks",
@@ -452,6 +455,7 @@ pub struct EditorApp {
     organize: crate::organize::Organize,
     markup: crate::markup::MarkupTool,
     pictures: crate::pictures::Pictures,
+    privacy: crate::privacy::Privacy,
     redaction: crate::redaction::Redaction,
     compression: crate::compression::Compression,
     sanitize: crate::sanitize::Sanitize,
@@ -793,6 +797,7 @@ impl EditorApp {
             organize: Default::default(),
             markup: Default::default(),
             pictures: Default::default(),
+            privacy: Default::default(),
             redaction: Default::default(),
             compression: Default::default(),
             sanitize: Default::default(),
@@ -1119,6 +1124,13 @@ impl EditorApp {
                 self.opening = false;
                 self.password.open(path);
             }
+            Reply::PrivacyPreview(preview, boxes) => {
+                self.busy = self.busy.saturating_sub(1);
+                self.find.matches = boxes;
+                self.find.active = 0;
+                self.privacy.preview = Some(preview);
+                self.go_match();
+            }
             Reply::ReplacementCount(query, count) => {
                 self.busy = self.busy.saturating_sub(1);
                 if self.replace.query == query {
@@ -1227,6 +1239,7 @@ impl EditorApp {
                 self.text_tool.adding = false;
                 self.text_tool.at = None;
                 self.find.matches.clear();
+                self.privacy.preview = None;
                 self.find.query.clear();
                 self.busy = self.busy.saturating_sub(1);
                 self.opening = false;
@@ -1404,6 +1417,7 @@ impl EditorApp {
                     self.text_tool.selection.clear();
                     doc.generation = generation;
                     self.find.matches.clear();
+                    self.privacy.preview = None;
                     self.replace.count = None;
                     if !self.find.query.is_empty() {
                         self.find.refresh_only = true;
@@ -1996,6 +2010,7 @@ impl EditorApp {
                         if field.changed() {
                             self.find.refresh_only = false;
                             self.find.matches.clear();
+                            self.privacy.preview = None;
                             self.send(Request::Find(self.find.query.clone()));
                         }
                         let clear = Btn::icon(Icon::Close)
@@ -2007,6 +2022,7 @@ impl EditorApp {
                         if clear.clicked() {
                             self.find.query.clear();
                             self.find.matches.clear();
+                            self.privacy.preview = None;
                             self.find.focus = true;
                         }
                     });
@@ -2159,6 +2175,9 @@ impl EditorApp {
             Tool::Compress => self.compression.open = true,
             Tool::Sanitize => self.sanitize.open = true,
             Tool::Compare => self.compare.open = true,
+            Tool::Privacy => {
+                self.privacy.open = true;
+            }
             Tool::Redact => {
                 self.redaction.open = true;
                 if let Some(o) = self.text_tool.selection.get(self.text_tool.selected) {
@@ -2921,7 +2940,7 @@ impl EditorApp {
                     );
                     self.tool_anchor = Some(screen.expand(2.0));
                 }
-                if self.find.open {
+                if self.find.open || (self.privacy.open && self.privacy.preview.is_some()) {
                     for (n, (_, boxes)) in self
                         .find
                         .matches
@@ -4034,6 +4053,15 @@ impl eframe::App for EditorApp {
             self.busy += 1;
             self.send(request);
         }
+        if let Some(index) = self.privacy.jump.take() {
+            self.find.active = index;
+            self.go_match();
+        }
+        if let Some(request) = self.privacy.show(&ctx, &p, self.busy == 0) {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
         if let Some(request) = self.redaction.show(
             &ctx,
             &p,
@@ -4981,6 +5009,7 @@ mod tests {
                 organize: Default::default(),
                 markup: Default::default(),
                 pictures: Default::default(),
+                privacy: Default::default(),
                 redaction: Default::default(),
                 compression: Default::default(),
                 sanitize: Default::default(),
@@ -5952,6 +5981,7 @@ mod tests {
             app.markup.open = true;
             app.pictures.open = true;
             app.redaction.open = true;
+            app.privacy.open = true;
             app.compression.open = true;
             app.stamps.open = true;
             app.export.open = true;
@@ -5979,6 +6009,7 @@ mod tests {
                         assert!(app.markup.show(&ctx, &p, true, 1).is_none());
                         assert!(app.pictures.show(&ctx, &p, true, 1).is_none());
                         assert!(app.redaction.show(&ctx, &p, true, 1).is_none());
+                        assert!(app.privacy.show(&ctx, &p, true).is_none());
                         assert!(app.compression.show(&ctx, &p, true).is_none());
                         assert!(app.stamps.show(&ctx, &p, true).is_none());
                         assert!(app.export.show(&ctx, &p, true).is_none());
@@ -6006,6 +6037,7 @@ mod tests {
                 "Markup and notes",
                 "Images",
                 "Secure redaction",
+                "Search and redact",
                 "Compress images",
                 "Headers, footers and watermark",
                 "Export page images",

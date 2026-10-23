@@ -23,6 +23,8 @@ mod pictures;
 mod recovery;
 mod redaction;
 mod sanitize;
+
+mod privacy;
 mod replace;
 mod shortcuts;
 mod signatures;

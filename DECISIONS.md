@@ -597,3 +597,11 @@ successful hidden-text removal. Removal counts describe entries, not unique file
 Reject shared inherited-resource Forms, unprocessed retained Forms/appearances and
 aliased attachment/script/metadata payloads to prevent visible-content loss or residual data.
 Generated regressions cover each rejection and require unchanged bytes/history.
+
+### Search redaction previews
+Use PDFium page-text search for rectangle mapping across text runs. Pattern
+recognition remains dependency-free and deliberately reports candidates for
+review rather than promising account or identity validation. Keep an exact
+source snapshot with the preview so switching documents cannot apply stale
+rectangles even when revision numbers coincide. Reuse canvas search highlights
+and provide clickable page/rectangle rows before applying true redaction.
