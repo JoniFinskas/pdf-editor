@@ -8,7 +8,7 @@ use pdf_editor_core::{Document, Engine, PageInfo, Substitution, TextObject};
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     path::PathBuf,
-    sync::mpsc::{Receiver, Sender, TryRecvError, channel},
+    sync::mpsc::{Receiver, Sender, SyncSender, TryRecvError, channel, sync_channel},
     thread,
 };
 
@@ -189,7 +189,7 @@ pub struct Worker {
 impl Worker {
     pub fn spawn(ctx: eframe::egui::Context, library: PathBuf, policy: Substitution) -> Self {
         let (requests, inbox) = channel();
-        let (outbox, replies) = channel();
+        let (outbox, replies) = sync_channel(1);
         // If spawning fails the closure and its sender are dropped, so the
         // first poll reports a disconnected engine.
         let _ = thread::Builder::new()
@@ -208,7 +208,12 @@ impl Worker {
         let mut out = Vec::new();
         loop {
             match self.replies.try_recv() {
-                Ok(reply) => out.push(reply),
+                Ok(reply) => {
+                    out.push(reply);
+                    if out.len() == 4 {
+                        return Some(out);
+                    }
+                }
                 Err(TryRecvError::Empty) => return Some(out),
                 Err(TryRecvError::Disconnected) => {
                     return if out.is_empty() { None } else { Some(out) };
@@ -231,7 +236,7 @@ fn run(
     library: PathBuf,
     policy: Substitution,
     inbox: Receiver<Request>,
-    outbox: Sender<Reply>,
+    outbox: SyncSender<Reply>,
 ) {
     let (engine, engine_error) = match Engine::new(&library) {
         Ok(engine) => (Some(engine), String::new()),
@@ -265,6 +270,8 @@ fn run(
                     })
                 });
             if let Some(reply) = reply {
+                // Wake the UI before a bounded send can wait for a free slot.
+                ctx.request_repaint();
                 if outbox.send(reply).is_err() {
                     return;
                 }

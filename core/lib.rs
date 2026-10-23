@@ -214,11 +214,12 @@ impl Engine {
         guarded(|| {
             let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
             pdf.pages()
-                .iter()
-                .map(|p| {
+                .page_sizes()?
+                .into_iter()
+                .map(|size| {
                     Ok(PageInfo {
-                        width: p.width().value,
-                        height: p.height().value,
+                        width: size.width().value,
+                        height: size.height().value,
                     })
                 })
                 .collect()
