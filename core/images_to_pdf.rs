@@ -119,7 +119,7 @@ impl Engine {
                     return Err(err("Choose at most 100 images"));
                 }
                 let mut rgb = Vec::with_capacity(picture.rgba.len() / 4 * 3);
-                for p in picture.rgba.chunks_exact(4) {
+                for p in picture.rgba.as_chunks::<4>().0 {
                     for c in &p[..3] {
                         rgb.push(
                             ((u32::from(*c) * u32::from(p[3]) + 255 * (255 - u32::from(p[3])))

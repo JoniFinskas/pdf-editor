@@ -3019,7 +3019,7 @@ impl EditorApp {
                         .selected_item
                         .as_ref()
                         .filter(|item| doc.object_mode && item.page == page_no)
-                        .and_then(|item| page.objects.as_ref().map(|objects| (item, objects)))
+                        .zip(page.objects.as_ref())
                         .and_then(|(item, objects)| {
                             let bounds = bounds_rect(&objects.transform, item.bounds);
                             at.and_then(|at| {
@@ -4745,7 +4745,7 @@ fn resized_rect(mut bounds: Rect, handle: usize, delta: Vec2) -> Rect {
     if matches!(handle, 0 | 6 | 7) {
         bounds.min.x = (bounds.min.x + delta.x).min(bounds.max.x - 1.0);
     }
-    if matches!(handle, 2 | 3 | 4) {
+    if matches!(handle, 2..=4) {
         bounds.max.x = (bounds.max.x + delta.x).max(bounds.min.x + 1.0);
     }
     if matches!(handle, 0..=2) {

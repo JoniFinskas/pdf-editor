@@ -148,17 +148,16 @@ impl Engine {
                     let mut prev = None;
                     for s in segments.iter() {
                         let p = (s.x().value, s.y().value);
-                        if let Some((x, y)) = prev {
-                            if s.segment_type() == PdfPathSegmentType::LineTo
-                                && area.contains(p.0, p.1)
-                                && area.contains(x, y)
-                            {
-                                if (p.0 - x).abs() < 1. && (p.1 - y).abs() > 5. {
-                                    xs.push(x);
-                                }
-                                if (p.1 - y).abs() < 1. && (p.0 - x).abs() > 5. {
-                                    ys.push(y);
-                                }
+                        if let Some((x, y)) = prev
+                            && s.segment_type() == PdfPathSegmentType::LineTo
+                            && area.contains(p.0, p.1)
+                            && area.contains(x, y)
+                        {
+                            if (p.0 - x).abs() < 1. && (p.1 - y).abs() > 5. {
+                                xs.push(x);
+                            }
+                            if (p.1 - y).abs() < 1. && (p.0 - x).abs() > 5. {
+                                ys.push(y);
                             }
                         }
                         prev = Some(p);
