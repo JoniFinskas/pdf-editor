@@ -42,13 +42,13 @@ impl Redaction {
                 widgets::hint(
                     ui,
                     p,
-                    "Remove content inside the box and replace it with black pixels.",
+                    "Remove intersecting text, images and vector objects, then draw a black box.",
                 );
                 widgets::notice(
                     ui,
                     p,
                     Tone::Warn,
-                    "This rebuilds every page as an image. Text layers, forms, annotations and bookmarks are flattened or removed. Original PDF objects are not copied into the result.",
+                    "Whole intersecting text runs, images and groups are removed, including portions outside the box. Other page text stays editable. Forms, annotations, bookmarks, attachments and metadata are removed from the document.",
                 );
                 let mut page = usize::from(self.page) + 1;
                 widgets::number(
@@ -73,7 +73,7 @@ impl Redaction {
                 ui.add_space(2.0);
                 widgets::checkbox(ui,
                     &mut self.acknowledged,
-                    "Flatten this document and remove the boxed content",
+                    "Remove intersecting objects and document extras",
                 );
                 widgets::hint(
                     ui,

@@ -21,8 +21,8 @@ Implementation requirements and scope are documented in [SPEC.md](SPEC.md).
 - Add editable highlights, underlines, strikethroughs and notes; draw freehand,
   rectangles, ellipses, lines and arrows as PDF annotations.
 - Open password-protected PDFs and optionally protect a new saved copy with AES-256.
-- Recognize scanned pages with Windows OCR; redact content using a sanitized,
-  image-only document rebuild.
+- Recognize scanned pages with Windows OCR; redact entire intersecting text, image and
+  vector objects while retaining other editable page content.
 - Compress supported images, add page numbers/watermarks, export PNG/JPG pages at
   a chosen DPI, and print through the Windows print dialog.
 - Compare two saved PDFs with shared scrolling/zoom, text highlights, a visual
@@ -169,11 +169,12 @@ to reveal its close button. Closing a dirty tab asks whether to discard changes.
 - OCR recognizes an image-only current page with installed Windows OCR languages
   and adds invisible searchable text. It needs a supported Windows OCR language;
   there is no bundled engine or cloud service.
-- Redaction permanently removes source content from the saved copy by rebuilding
-  **every page as an image**, blackening the selected area before encoding. This
-  also removes searchable text, forms, bookmarks and metadata throughout the
-  document. The tool explains this and requires acknowledgment. In-memory Undo
-  restores the original until the document closes; the source file is untouched.
+- Redaction removes whole intersecting text runs, images, vectors and form groups,
+  including portions outside the box. Other page content stays editable. It drops
+  forms, annotations, bookmarks, attachments and metadata throughout the document.
+  Tagged properties, Type 3 fonts, patterns, shadings and soft-mask graphics states
+  that cannot be verified are refused. Save As writes the sanitized copy; Undo and
+  the source file retain the original.
 - Compress downsizes and JPEG-compresses supported RGB images, showing before/after
   byte sizes. Unsupported image encodings remain unchanged, and a larger result
   is not accepted.
