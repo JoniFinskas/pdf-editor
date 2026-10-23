@@ -9,6 +9,8 @@ Implementation requirements and scope are documented in [SPEC.md](SPEC.md).
 ## Features
 
 - Edit existing text with font preservation; add, delete and restyle text objects.
+- Move and resize text, images and vector artwork with selection handles; copy
+  editable objects between tabs and ungroup supported Form XObjects.
 - Edit compatible paragraphs as a block with alignment-preserving reflow; ambiguous
   layouts keep line editing.
 - Find all matches, navigate results, and replace one or all editable matches.
@@ -18,11 +20,21 @@ Implementation requirements and scope are documented in [SPEC.md](SPEC.md).
   split, extract and crop pages.
 - Fill existing PDF forms, add reusable drawn or imported signatures, and insert,
   move and resize PNG/JPG images.
+- Design text/date fields, checkboxes, radio groups and dropdowns; move, resize,
+  rename, require or delete fields, and flatten filled forms into page content.
+- Check Finnish and English spelling with installed Windows dictionaries,
+  underlines and right-click suggestions in existing and new text.
 - Add editable highlights, underlines, strikethroughs and notes; draw freehand,
   rectangles, ellipses, lines and arrows as PDF annotations.
 - Open password-protected PDFs and optionally protect a new saved copy with AES-256.
 - Recognize scanned pages with Windows OCR; redact entire intersecting text, image and
   vector objects while retaining other editable page content.
+- Create PDFs from ordered JPG/PNG/HEIC images. Clean photo scans with detected
+  edges, draggable corners, perspective correction, deskew, grayscale or black
+  and white, then optional OCR. HEIC uses installed Windows codecs.
+- Preview and redact literal text, email addresses, phone numbers, IBANs,
+  Finnish personal identity codes or credit-card patterns. Sanitize metadata,
+  invisible text, attachments and actions, with optional comments/link removal.
 - Compress supported images, add page numbers/watermarks, export PNG/JPG pages at
   a chosen DPI, and print through the Windows print dialog.
 - Compare two saved PDFs with shared scrolling/zoom, text highlights, a visual
@@ -33,6 +45,8 @@ Implementation requirements and scope are documented in [SPEC.md](SPEC.md).
 - Select a table area, correct the detected grid, and export Excel (`.xlsx`) or CSV.
   Extraction uses text alignment and ruling lines; complex tables need review.
 - Export editable Word documents with paragraphs, font styling, images and simple ruled tables (best-effort layout).
+- Add ranged headers/footers with date/page tokens and Bates numbering; batch
+  stamp PDF folders from the CLI with dry-run and separate output files.
 - Use light/dark themes, a grouped document menu and movable tool windows.
 
 See the controls and limitations below, especially redaction, encrypted-source
@@ -339,7 +353,22 @@ No crashes, panics, timeouts or render-diff failures were observed. This is not
 full Part H acceptance: the 3,000-file Govdocs minimum and fuzz testing remain
 incomplete. The native desktop itself is not container-sandboxed.
 
-Headers and footers are available in the page-number/watermark tool. Select Header or Footer, enter page ranges such as `1-3,5` (blank means all), and use `{date}`, `{page}` and `{pages}` tokens. The date defaults to UTC and is editable.
+## Additional editing tools
+
+**Objects → Ungroup** expands supported grouped artwork into independently
+editable text, images and paths. Transparency groups, optional-content forms and
+inline images are rejected without changes. Undo restores the original group.
+
+**Search and redact** previews matches before applying. Patterns are detection
+heuristics: review the marked regions. Redaction removes whole intersecting
+objects, so a match inside a long text run or group can remove surrounding content.
+It also removes document extras that could retain private data. Save As creates
+the cleaned copy; undo and recovery snapshots may still retain the original.
+
+Headers and footers are available in the stamping tool. Select Header or Footer,
+enter page ranges such as `1-3,5` (blank means all), and use `{date}`, `{page}` and
+`{pages}` tokens. The date defaults to UTC and is editable. Bates numbering adds a
+prefix and fixed-width sequence in document order; overflow aborts the operation.
 
 ### Sanitize document
 
@@ -354,8 +383,6 @@ is not a complete visual-concealment audit.
 Sanitization also rejects XFA forms, retained annotation appearances, unused retained Form
 streams, Forms without their own resources, and aliased attachment/script/metadata payloads.
 These cases leave the original document unchanged.
-
-Enable Bates numbering in the stamping tool to add a prefix and fixed-width sequence, with the same page range and placement controls. Numbering follows document order. Overflow or insufficient digits aborts the entire operation.
 
 ### Batch headers, footers and Bates numbering
 
