@@ -6,6 +6,7 @@ mod icons;
 mod markup;
 mod organize;
 mod passwords;
+mod pictures;
 mod recovery;
 mod replace;
 mod shortcuts;

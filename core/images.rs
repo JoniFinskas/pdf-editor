@@ -206,8 +206,8 @@ impl Engine {
             data.extend(b"\nQ\n");
             data.extend(
                 format!(
-                    "q {} 0 0 {} {} {} cm /{} Do Q\n",
-                    at.width, at.height, at.left, at.bottom, name
+                    "q /{} BMC {} 0 0 {} {} {} cm /{} Do EMC Q\n",
+                    name, at.width, at.height, at.left, at.bottom, name
                 )
                 .as_bytes(),
             );

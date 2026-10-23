@@ -17,6 +17,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Insert PNG/JPG images and edit their positions and dimensions after insertion.
+
 - Editable PDF highlights, underlines, strikethroughs and sticky notes.
 
 - Merge multiple PDFs, split by page ranges and extract selected pages.

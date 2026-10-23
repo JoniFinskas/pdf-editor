@@ -338,3 +338,7 @@ Use native PDFium page import into a fresh document for extraction, keeping sele
 ## Part F: Real markup annotations
 
 Store markup in page Annots arrays with standard Highlight, Underline, StrikeOut and Text subtypes, QuadPoints where applicable, UTF-16 comments and explicit appearance streams. Opacity uses an appearance graphics state. Existing editable annotations retain their indirect identity when updated. Selection revisions prevent edits after another document mutation. Selecting a text object before opening the markup tool initializes its page and bounds; precise point controls handle other placements.
+
+## Part F: PNG/JPG insertion
+
+Reuse the bounded PNG/JPEG decoder and transparent image embedding API. Mark each inserted image with standard marked-content operators, so placement identifiers survive content-stream recomposition during text edits and save/reopen. Position and dimensions are editable in PDF points. Existing arbitrary PDF image transforms are left intact; the image tool lists editor-inserted images and signatures.

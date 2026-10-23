@@ -22,6 +22,8 @@ pub enum Request {
     OpenPassword(PathBuf, String),
     SavePassword(PathBuf, String),
     Print,
+    Pictures,
+    MovePicture(pdf_editor_core::PlacedPicture, pdf_editor_core::Placement),
     Annotations,
     AddAnnotation(pdf_editor_core::Markup),
     UpdateAnnotation(pdf_editor_core::Annotation, pdf_editor_core::Markup),
@@ -86,6 +88,7 @@ impl PageTransform {
 
 pub enum Reply {
     Printed(bool),
+    Pictures(Vec<pdf_editor_core::PlacedPicture>),
     Annotations(Vec<pdf_editor_core::Annotation>),
     Exported(String),
     PasswordRequired(PathBuf),
@@ -340,6 +343,19 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
         }
         Request::DeleteAnnotation(item) => {
             match engine.delete_annotation(state.doc.as_mut()?, &item) {
+                Ok(()) => {
+                    state.generation += 1;
+                    Some(changed(state, ChangeKind::Edit, None, 1))
+                }
+                Err(e) => failed(e),
+            }
+        }
+        Request::Pictures => match engine.placed_pictures(state.doc.as_ref()?) {
+            Ok(items) => Some(Reply::Pictures(items)),
+            Err(e) => failed(e),
+        },
+        Request::MovePicture(item, placement) => {
+            match engine.move_picture(state.doc.as_mut()?, &item, placement) {
                 Ok(()) => {
                     state.generation += 1;
                     Some(changed(state, ChangeKind::Edit, None, 1))

@@ -10,6 +10,8 @@ mod fonts;
 mod forms;
 pub use forms::{FieldValue, FormField};
 mod images;
+mod pictures;
+pub use pictures::PlacedPicture;
 mod organize;
 mod pages;
 pub use organize::page_ranges;

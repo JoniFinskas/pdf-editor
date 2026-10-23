@@ -124,3 +124,8 @@ Keyboard commands are UI dispatch only: Open/Save As use `Engine::open`/`Documen
 - `Engine::add_annotation(document, markup) -> Result<()>`: create highlight, underline, strikethrough or note with geometry, color, opacity and comment.
 - `Engine::update_annotation(document, selected, markup) -> Result<()>`: update the selected annotation and its appearance.
 - `Engine::delete_annotation(document, selected) -> Result<()>`: remove the selected annotation as an undoable edit.
+
+## Placed images
+
+- `Engine::placed_pictures(document) -> Result<Vec<PlacedPicture>>`: list images inserted by the editor with revision identifiers and point geometry.
+- `Engine::move_picture(document, selected, placement) -> Result<()>`: change an inserted image position and dimensions in one undoable operation.

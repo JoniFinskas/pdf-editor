@@ -1397,3 +1397,73 @@ fn real_annotations_edit_delete_and_roundtrip() {
     );
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn inserted_images_move_resize_and_survive_text_edits() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    let image = Picture {
+        width: 2,
+        height: 2,
+        rgba: vec![
+            200, 30, 80, 255, 20, 180, 40, 255, 20, 50, 200, 255, 255, 255, 255, 128,
+        ],
+    };
+    e.place_picture(
+        &mut doc,
+        &image,
+        Placement {
+            page: 0,
+            left: 20.0,
+            bottom: 20.0,
+            width: 50.0,
+            height: 50.0,
+        },
+    )
+    .unwrap();
+    let items = e.placed_pictures(&doc).unwrap();
+    assert_eq!(items.len(), 1);
+    let before = e.render(&doc, 0, 1.0).unwrap().rgba;
+    let at = Placement {
+        page: 0,
+        left: 100.0,
+        bottom: 80.0,
+        width: 90.0,
+        height: 30.0,
+    };
+    e.move_picture(&mut doc, &items[0], at).unwrap();
+    assert!(before != e.render(&doc, 0, 1.0).unwrap().rgba);
+    assert!(e.move_picture(&mut doc, &items[0], at).is_err());
+    let object = e.text_objects(&doc, 0).unwrap().remove(0);
+    e.edit(&mut doc, &object, "AB").unwrap();
+    let items = e.placed_pictures(&doc).unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].placement.width, 90.0);
+    let path = temp("images.pdf");
+    let _ = fs::remove_file(&path);
+    doc.save_as(&path).unwrap();
+    let reopened = e.open(&path).unwrap();
+    assert_eq!(e.placed_pictures(&reopened).unwrap().len(), 1);
+    assert!(e.render(&doc, 0, 1.0).unwrap().rgba == e.render(&reopened, 0, 1.0).unwrap().rgba);
+    fs::remove_file(path).unwrap();
+    for format in [image::ImageFormat::Png, image::ImageFormat::Jpeg] {
+        let path = temp(if format == image::ImageFormat::Png {
+            "image.png"
+        } else {
+            "image.jpg"
+        });
+        image::save_buffer_with_format(
+            &path,
+            &[200, 30, 80, 20, 180, 40, 20, 50, 200, 255, 255, 255],
+            2,
+            2,
+            image::ExtendedColorType::Rgb8,
+            format,
+        )
+        .unwrap();
+        let loaded = Picture::open(&path).unwrap();
+        assert_eq!((loaded.width, loaded.height), (2, 2));
+        fs::remove_file(path).unwrap();
+    }
+}

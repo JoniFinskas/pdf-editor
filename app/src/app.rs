@@ -59,6 +59,7 @@ pub struct EditorApp {
     password: crate::passwords::PasswordDialog,
     organize: crate::organize::Organize,
     markup: crate::markup::MarkupTool,
+    pictures: crate::pictures::Pictures,
     find: FindState,
     worker: Worker,
     engine_alive: bool,
@@ -336,6 +337,7 @@ impl EditorApp {
             password: Default::default(),
             organize: Default::default(),
             markup: Default::default(),
+            pictures: Default::default(),
             find: FindState::default(),
             worker,
             engine_alive: true,
@@ -592,6 +594,11 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::Pictures(items) => {
+                self.busy = self.busy.saturating_sub(1);
+                self.pictures.items = items;
+                self.pictures.selected = None;
+            }
             Reply::Annotations(items) => {
                 self.busy = self.busy.saturating_sub(1);
                 self.markup.items = items;
@@ -1625,6 +1632,19 @@ impl EditorApp {
             let mut open = None;
             Popup::menu(&recent).show(|ui| {
                 ui.set_min_width(260.0);
+                if Btn::new("Images…")
+                    .enabled(idle)
+                    .min_width(260.0)
+                    .align_left()
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.pictures.open = true;
+                    self.commit_edit();
+                    self.busy += 1;
+                    self.send(Request::Pictures);
+                    ui.close();
+                }
                 if Btn::new("Markup and notes…")
                     .enabled(idle)
                     .min_width(260.0)
@@ -2956,6 +2976,16 @@ impl eframe::App for EditorApp {
             self.floating_tools(&ctx, central.response.rect, &p);
         }
 
+        if let Some(request) = self.pictures.show(
+            &ctx,
+            &p,
+            self.busy == 0,
+            self.doc.as_ref().map_or(0, |d| d.pages.len()),
+        ) {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
         if let Some(request) = self.markup.show(
             &ctx,
             &p,
@@ -3672,6 +3702,7 @@ mod tests {
                 password: Default::default(),
                 organize: Default::default(),
                 markup: Default::default(),
+                pictures: Default::default(),
                 find: FindState::default(),
                 worker,
                 engine_alive: true,
