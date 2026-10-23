@@ -7,7 +7,7 @@ use crate::theme::{self, Palette};
 use crate::widgets::{self, Btn, Look};
 use crate::worker::{ChangeKind, PageTransform, Reply, Request, Worker};
 use eframe::egui::{
-    self, Align, Align2, Button, Color32, Context, CornerRadius, CursorIcon, FontId, Frame, Id,
+    self, Align, Align2, Color32, Context, CornerRadius, CursorIcon, FontId, Frame, Id,
     Key, Layout, Margin, Popup, Pos2, Rect, RectAlign, RichText, ScrollArea, Sense, Shadow, Shape,
     Stroke, StrokeKind, TextEdit, TextureHandle, TextureOptions, Ui, Vec2, ViewportCommand,
     WidgetInfo, WidgetType, pos2, vec2,
@@ -3452,6 +3452,14 @@ impl EditorApp {
 
     fn banners(&mut self, ctx: &Context, top: f32, p: &Palette) {
         let now = ctx.input(|i| i.time);
+        for banner in &mut self.banners {
+            let lifetime = match banner.kind {
+                BannerKind::Error => 12.0,
+                BannerKind::Warning => 10.0,
+                BannerKind::Success => 5.0,
+            };
+            banner.expires.get_or_insert(now + lifetime);
+        }
         self.banners.retain(|b| b.expires.is_none_or(|t| t > now));
         if let Some(next) = self
             .banners
@@ -3466,6 +3474,7 @@ impl EditorApp {
         }
         let mut dismissed = Vec::new();
         egui::Area::new(Id::new("banners"))
+            .movable(false)
             .anchor(Align2::CENTER_TOP, vec2(0.0, top + 12.0))
             .order(egui::Order::Foreground)
             .interactable(true)
@@ -3495,22 +3504,25 @@ impl EditorApp {
                         })
                         .show(ui, |ui| {
                             ui.set_width(560.0);
-                            ui.horizontal(|ui| {
+                            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                                if Btn::new("×")
+                                    .id(&format!("dismiss-banner-{}", banner.id))
+                                    .height(28.0)
+                                    .min_width(28.0)
+                                    .tip("Dismiss")
+                                    .show(ui, p)
+                                    .clicked()
+                                {
+                                    dismissed.push(banner.id);
+                                }
+                                let text_width = (ui.available_width() - 20.0).max(40.0);
+                                ui.add_sized(
+                                    vec2(text_width, 0.0),
+                                    egui::Label::new(RichText::new(&banner.text).color(fg)).wrap(),
+                                );
                                 let (dot, _) =
                                     ui.allocate_exact_size(vec2(8.0, 8.0), Sense::hover());
                                 ui.painter().circle_filled(dot.center(), 3.5, fg);
-                                ui.add(
-                                    egui::Label::new(RichText::new(&banner.text).color(fg)).wrap(),
-                                );
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let close =
-                                        Button::new(RichText::new("×").size(16.0).color(fg))
-                                            .frame(false)
-                                            .min_size(vec2(26.0, 26.0));
-                                    if ui.add(close).on_hover_text("Dismiss").clicked() {
-                                        dismissed.push(banner.id);
-                                    }
-                                });
                             });
                         });
                     ui.add_space(6.0);
@@ -4950,6 +4962,37 @@ fn round_rect(rect: Rect, ppp: f32) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_banners_dismiss_expire_and_remain_bounded() {
+        let ctx = Context::default();
+        theme::install(&ctx);
+        let (mut app, _, _) = mock_app();
+        let frame = |app: &mut EditorApp, time: f64, events| {
+            let mut output = ctx.run_ui(egui::RawInput {
+                time: Some(time),
+                events,
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 600.0))),
+                ..Default::default()
+            }, |ui| { app.banners(ui.ctx(), 40.0, &theme::palette(ui)); });
+            output.textures_delta.clear();
+        };
+        for _ in 0..100 { app.banner(BannerKind::Error, "Repeated error with enough text to wrap across the available banner width. ".repeat(4)); }
+        assert_eq!(app.banners.len(), 1);
+        frame(&mut app, 1.0, vec![]);
+        frame(&mut app, 1.1, vec![]);
+        let key = format!("dismiss-banner-{}", app.banners[0].id);
+        let at = tool_center(&ctx, &key);
+        let events = click_at(at);
+        frame(&mut app, 1.2, events[..2].to_vec());
+        frame(&mut app, 1.3, events[2..].to_vec());
+        assert!(app.banners.is_empty(), "Dismiss must remove even a long banner: {:?}", ctx.read_response(widgets::tool_id(&key)));
+        for n in 0..100 { app.banner(BannerKind::Error, format!("Error {n}")); }
+        assert_eq!(app.banners.len(), 4);
+        frame(&mut app, 2.0, vec![]);
+        frame(&mut app, 15.0, vec![]);
+        assert!(app.banners.is_empty(), "Errors must expire without interaction");
+    }
 
     /// Mirrors the core's dimension check: ceil(points * scale) per side.
     fn pixels(info: &PageInfo, scale: f32) -> f32 {

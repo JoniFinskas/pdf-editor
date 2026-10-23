@@ -3,6 +3,7 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Keep error dismiss buttons stable for wrapped messages; expire notifications automatically and bound repeated errors.
 - Allow grouped text editing alongside other page objects and existing page transparency, with render-preservation checks.
 - Allow clicking supported grouped PDF content in text mode to ungroup it and open the text at the clicked position. Preserve undo and report unsupported groups.
 - Add local batch stamp and Bates CLI commands with dry-run, checked sequences and create-only output.
