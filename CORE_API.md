@@ -18,6 +18,7 @@ I/O, lopdf and PDFium errors intentionally discard internal diagnostic details.
 | `Engine::pixel_to_page` | Document, page, render scale, integer pixel x/y | Corresponding PDF-point x/y, including page rotation. |
 | `Engine::page_to_pixel` | Document, page, render scale, PDF-point x/y | Corresponding integer raster coordinates, including page rotation. |
 | `Engine::edit` | Mutable document, current selected TextObject, single-run replacement | Atomic edit, EditResult warning and changed-object count; stale selections and failed round trips are rejected. |
+| `Engine::edit_group` | Mutable document, current TextObjects from one page, single-run replacement | One atomic, undoable edit: the first object in paint order receives the text, the others are removed. |
 | `Bounds::contains` | Bounds, PDF-point x/y | Inclusive axis-aligned hit-test boolean. |
 | `Document::can_undo` | Document | Whether a previous snapshot exists. |
 | `Document::can_redo` | Document | Whether a redo snapshot exists. |
@@ -37,6 +38,10 @@ I/O, lopdf and PDFium errors intentionally discard internal diagnostic details.
 - `TextObject::index` is a native object index, not an index into the returned
   text-only vector. Pass the complete object to edit. Refresh selections after
   edit/undo/redo, which invalidate their revision. Empty text deletes the run.
+- Browser print output often places each glyph in its own text object. Use
+  `edit_group` to replace such a line at once. Space-only glyph objects report
+  empty text. Icon-font glyphs whose text differs between parsers cannot be
+  edited and return an error.
 - `TextObject::matrix` is `[a,b,c,d,e,f]`; size is the unscaled font size in points;
   color is `[r,g,b,a]`; bounds use PDF coordinates. They are axis-aligned extents,
   including for rotated text. Font warnings are display data, never markup.

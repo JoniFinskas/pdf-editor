@@ -2,10 +2,30 @@ use crate::{
     Document, EditResult, Engine, MAX_STREAM, Result, Substitution, TextObject, err, fonts, parse,
 };
 use lopdf::{
-    Dictionary, Object, ObjectId, Stream,
+    Dictionary, Encoding, Object, ObjectId, Stream,
     content::{Content, Operation},
 };
 
+/// Text decoding for a font. A ToUnicode CMap takes precedence over /Encoding,
+/// matching PDFium's text extraction; lopdf otherwise ignores ToUnicode when
+/// /Encoding is present (common for Type3 fonts with custom glyph names).
+fn decoding<'a>(doc: &'a lopdf::Document, font: &'a Dictionary) -> Result<Encoding<'a>> {
+    if font.has(b"Encoding")
+        && font
+            .get_deref(b"ToUnicode", doc)
+            .and_then(Object::as_stream)
+            .is_ok()
+    {
+        let mut unicode_only = font.clone();
+        unicode_only.remove(b"Encoding");
+        if let Encoding::UnicodeMapEncoding(cmap) =
+            unicode_only.get_font_encoding_with_limit(doc, MAX_STREAM)?
+        {
+            return Ok(Encoding::UnicodeMapEncoding(cmap));
+        }
+    }
+    Ok(font.get_font_encoding_with_limit(doc, MAX_STREAM)?)
+}
 struct Run {
     op: usize,
     key: Vec<u8>,
@@ -51,7 +71,7 @@ fn runs(
             }
             "Tj" | "TJ" | "'" | "\"" => {
                 let font = fonts.get(&key).ok_or_else(|| err("Missing text font"))?;
-                let encoding = font.get_font_encoding_with_limit(doc, MAX_STREAM)?;
+                let encoding = decoding(doc, font)?;
                 let items = if op.operator == "TJ" {
                     op.operands
                         .first()
@@ -67,12 +87,16 @@ fn runs(
                     ]
                 };
                 let mut text = String::new();
+                let mut glyphs = false;
                 for item in items {
                     if let Object::String(bytes, _) = item {
+                        glyphs |= !bytes.is_empty();
                         text.push_str(&encoding.bytes_to_string(&bytes)?);
                     }
                 }
-                if !text.is_empty() {
+                // PDFium creates a text object for every operator that shows
+                // glyphs, even when they decode to no text (such as spaces).
+                if glyphs {
                     result.push(Run {
                         op: index,
                         key: key.clone(),
@@ -91,7 +115,7 @@ fn runs(
     Ok(result)
 }
 fn encode(doc: &lopdf::Document, font: &Dictionary, text: &str) -> Result<Vec<u8>> {
-    let encoding = font.get_font_encoding_with_limit(doc, MAX_STREAM)?;
+    let encoding = decoding(doc, font)?;
     let bytes = encoding.string_to_bytes(text);
     if encoding.bytes_to_string(&bytes)? != text {
         return Err(err("Font encoding does not contain the replacement text"));
@@ -99,11 +123,52 @@ fn encode(doc: &lopdf::Document, font: &Dictionary, text: &str) -> Result<Vec<u8
     Ok(bytes)
 }
 fn font_name(font: &Dictionary) -> Result<String> {
-    let name = String::from_utf8_lossy(font.get(b"BaseFont")?.as_name()?);
+    // Type3 fonts have no BaseFont; their glyph procedures identify them.
+    let name = match font.get(b"BaseFont").or_else(|_| font.get(b"Name")) {
+        Ok(name) => String::from_utf8_lossy(name.as_name()?).into_owned(),
+        Err(_) => match font.get(b"CharProcs") {
+            Ok(procs) => {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                format!("{procs:?}").hash(&mut hasher);
+                format!("type3-{:016x}", hasher.finish())
+            }
+            Err(_) => String::new(),
+        },
+    };
     if name.is_empty() {
         return Err(err("Missing font identity"));
     }
     Ok(fonts::base_name(&name).to_lowercase())
+}
+/// True when a Type3 font has a glyph procedure for every code of `text`.
+fn type3_covers(doc: &lopdf::Document, font: &Dictionary, text: &str) -> bool {
+    let check = || -> Result<bool> {
+        if font.get(b"Subtype")?.as_name()? != b"Type3" {
+            return Ok(false);
+        }
+        let procs = doc.dereference(font.get(b"CharProcs")?)?.1.as_dict()?;
+        let encoding = doc.dereference(font.get(b"Encoding")?)?.1.as_dict()?;
+        let mut names: Vec<Option<&[u8]>> = vec![None; 256];
+        let mut code = 0usize;
+        for item in encoding.get(b"Differences")?.as_array()? {
+            match item {
+                Object::Integer(start) => code = usize::try_from(*start).unwrap_or(256),
+                Object::Name(name) => {
+                    if let Some(slot) = names.get_mut(code) {
+                        *slot = Some(name);
+                    }
+                    code += 1;
+                }
+                _ => return Ok(false),
+            }
+        }
+        let bytes = encode(doc, font, text)?;
+        Ok(bytes
+            .iter()
+            .all(|b| names[usize::from(*b)].is_some_and(|name| procs.has(name))))
+    };
+    check().unwrap_or(false)
 }
 fn resources(doc: &lopdf::Document, page: ObjectId) -> Result<Dictionary> {
     let (local, parents) = doc.get_page_resources(page)?;
@@ -117,13 +182,18 @@ fn resources(doc: &lopdf::Document, page: ObjectId) -> Result<Dictionary> {
     }
     Ok(Dictionary::new())
 }
+/// Replaces the runs at `targets` (ordinal, replacement) on the page of
+/// `selected`, the first targeted object, in one transaction.
 pub(crate) fn edit(
     engine: &Engine,
     state: &Document,
     selected: &TextObject,
-    ordinal: usize,
-    text: &str,
+    targets: &[(usize, String)],
 ) -> Result<(Vec<u8>, EditResult)> {
+    let (ordinal, _) = targets.first().ok_or_else(|| err("Nothing to edit"))?;
+    let ordinal = *ordinal;
+    let text: String = targets.iter().map(|(_, t)| t.as_str()).collect();
+    let text = text.as_str();
     let mut pdf = parse(&state.bytes)?;
     let pages = pdf.get_pages();
     let page = *pages
@@ -134,12 +204,19 @@ pub(crate) fn edit(
     let source = runs(&pdf, page, &content)?;
     let native = engine.text_objects(state, selected.page)?;
     verify_mapping(&source, &native)?;
+    for (o, _) in targets {
+        match (source.get(*o), native.get(*o)) {
+            (Some(r), Some(n)) if same_text(&r.text, &n.text) => {}
+            _ => return Err(err("This run uses symbol glyphs that cannot be edited")),
+        }
+    }
     let run = source
         .get(ordinal)
         .ok_or_else(|| err("Unsupported text-object mapping"))?;
     let embedded_original = fonts::embedded_font(&pdf, &run.font, text);
-    let reuse =
-        text.is_empty() || (embedded_original.is_some() && encode(&pdf, &run.font, text).is_ok());
+    let reuse = text.is_empty()
+        || (embedded_original.is_some() && encode(&pdf, &run.font, text).is_ok())
+        || type3_covers(&pdf, &run.font, text);
     let chosen = if reuse {
         None
     } else if let Some(font) = embedded_original {
@@ -162,12 +239,13 @@ pub(crate) fn edit(
         verify_mapping(&records, &before)?;
         let mut changes = vec![];
         for (i, r) in records.iter().enumerate() {
-            let is_selected = number == selected.page as u32 + 1 && i == ordinal;
-            if is_selected || (whole && font_name(&r.font)? == missing_name) {
-                let replacement = if is_selected {
-                    text.to_string()
-                } else {
-                    r.text.clone()
+            let target = (number == selected.page as u32 + 1)
+                .then(|| targets.iter().find(|(o, _)| *o == i))
+                .flatten();
+            if target.is_some() || (whole && font_name(&r.font)? == missing_name) {
+                let replacement = match target {
+                    Some((_, t)) => t.clone(),
+                    None => r.text.clone(),
                 };
                 combined.push_str(&replacement);
                 changes.push((i, replacement));
@@ -398,9 +476,14 @@ pub(crate) fn edit(
     pdf.prune_objects();
     bytes.clear();
     pdf.save_to(&mut bytes)?;
-    let warning = chosen
-        .filter(|f| !f.exact)
-        .map(|f| format!("Font {} not found, used {}", selected.font, f.name));
+    let warning = chosen.filter(|f| !f.exact).map(|f| {
+        let missing = if selected.font.trim().is_empty() {
+            "(unnamed embedded font)"
+        } else {
+            selected.font.as_str()
+        };
+        format!("Font {missing} not found, used {}", f.name)
+    });
     Ok((
         bytes,
         EditResult {
@@ -409,11 +492,71 @@ pub(crate) fn edit(
         },
     ))
 }
+fn same_text(a: &str, b: &str) -> bool {
+    a.chars()
+        .filter(|c| !c.is_whitespace())
+        .eq(b.chars().filter(|c| !c.is_whitespace()))
+}
+fn private_use(text: &str) -> bool {
+    !text.is_empty()
+        && text.chars().all(
+            |c| matches!(u32::from(c), 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD),
+        )
+}
 fn verify_mapping(runs: &[Run], objects: &[TextObject]) -> Result<()> {
-    if runs.len() != objects.len() || runs.iter().zip(objects).any(|(r, o)| r.text != o.text) {
+    // PDFium reports space-only glyph runs as empty text, so whitespace is not
+    // compared; every other character must match in order.
+    // Icon fonts map a glyph to a private-use code point while PDFium may
+    // report the glyph's name; such runs keep their position in the mapping
+    // but cannot be edited.
+    if runs.len() != objects.len()
+        || runs
+            .iter()
+            .zip(objects)
+            .any(|(r, o)| !same_text(&r.text, &o.text) && !private_use(&r.text))
+    {
         return Err(err(
             "This PDF's nested or combined text runs cannot be edited safely",
         ));
     }
     Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn run(text: &str) -> Run {
+        Run {
+            op: 0,
+            key: vec![],
+            size: 12.0,
+            text: text.into(),
+            font: Dictionary::new(),
+        }
+    }
+    fn object(text: &str) -> TextObject {
+        TextObject {
+            page: 0,
+            index: 0,
+            revision: 0,
+            text: text.into(),
+            font: String::new(),
+            size: 12.0,
+            bounds: crate::Bounds {
+                left: 0.0,
+                bottom: 0.0,
+                right: 1.0,
+                top: 1.0,
+            },
+            color: [0, 0, 0, 255],
+            matrix: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        }
+    }
+    #[test]
+    fn mapping_tolerates_spaces_and_icon_glyphs_only() {
+        let runs = [run("A"), run(" "), run("\u{e32c}")];
+        let objects = [object("A"), object(""), object("smartphone")];
+        assert!(verify_mapping(&runs, &objects).is_ok());
+        assert!(verify_mapping(&runs, &[object("B"), object(""), object("x")]).is_err());
+        assert!(verify_mapping(&runs[..2], &objects[..1]).is_err());
+    }
 }

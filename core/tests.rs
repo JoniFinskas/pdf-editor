@@ -129,6 +129,129 @@ fn generated(
     pdf.save_to(&mut bytes).unwrap();
     bytes
 }
+/// Browser-print style page: a Type3 font without BaseFont, glyph names in
+/// /Differences plus a ToUnicode CMap, and one show operator per glyph placed
+/// with Td, followed by an ordinary run on a second line.
+fn type3_glyph_runs() -> Vec<u8> {
+    let mut pdf = lopdf::Document::with_version("1.7");
+    let alphabet: Vec<char> = "Helo wrdunchag".chars().collect();
+    let code = |c: char| alphabet.iter().position(|a| *a == c).unwrap() as u8 + 1;
+    let mut procs = lopdf::Dictionary::new();
+    let mut differences = vec![Object::Integer(1)];
+    let mut widths = vec![];
+    let mut cmap = String::new();
+    for (i, c) in alphabet.iter().enumerate() {
+        let name = format!("g{}", i + 1);
+        let width = if *c == ' ' { 250 } else { 500 };
+        // Distinct shapes per glyph keep render diffs meaningful.
+        let body = if *c == ' ' {
+            format!("{width} 0 d0")
+        } else {
+            format!(
+                "{width} 0 0 0 450 700 d1 40 0 {} {} re f",
+                360 - i * 10,
+                300 + i * 25
+            )
+        };
+        let proc_id = pdf.add_object(Stream::new(lopdf::Dictionary::new(), body.into_bytes()));
+        procs.set(name.as_bytes(), proc_id);
+        differences.push(Object::Name(name.into_bytes()));
+        widths.push(Object::Integer(width));
+        cmap.push_str(&format!("<{:02X}> <{:04X}>\n", i + 1, *c as u32));
+    }
+    let to_unicode = format!(
+        "/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n/CMapName /PdfEditorGlyphs def /CMapType 2 def\n1 begincodespacerange <00> <FF> endcodespacerange\n{} beginbfchar\n{cmap}endbfchar\nendcmap CMapName currentdict /CMap defineresource pop end end",
+        alphabet.len()
+    );
+    let to_unicode = pdf.add_object(Stream::new(
+        lopdf::Dictionary::new(),
+        to_unicode.into_bytes(),
+    ));
+    let font = pdf.add_object(dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type3",
+        "FontBBox" => vec![0.into(), 0.into(), 500.into(), 700.into()],
+        "FontMatrix" => vec![0.001.into(), 0.into(), 0.into(), 0.001.into(), 0.into(), 0.into()],
+        "CharProcs" => procs,
+        "Encoding" => dictionary! {"Type" => "Encoding", "Differences" => differences},
+        "FirstChar" => 1,
+        "LastChar" => alphabet.len() as i64,
+        "Widths" => widths,
+        "Resources" => lopdf::Dictionary::new(),
+        "ToUnicode" => to_unicode,
+    });
+    let show = |text: &str| {
+        Operation::new(
+            "Tj",
+            vec![Object::String(
+                text.chars().map(code).collect(),
+                lopdf::StringFormat::Hexadecimal,
+            )],
+        )
+    };
+    let mut operations = vec![
+        Operation::new("BT", vec![]),
+        Operation::new("Tf", vec![Object::Name(b"T3".to_vec()), 24.into()]),
+        Operation::new(
+            "Tm",
+            vec![
+                0.75.into(),
+                0.into(),
+                0.into(),
+                0.75.into(),
+                50.into(),
+                200.into(),
+            ],
+        ),
+    ];
+    let line: Vec<char> = "Hello world".chars().collect();
+    for (i, c) in line.iter().enumerate() {
+        if i > 0 {
+            let advance = if line[i - 1] == ' ' { 6.0 } else { 12.5 };
+            operations.push(Operation::new("Td", vec![advance.into(), 0.into()]));
+        }
+        operations.push(show(&c.to_string()));
+    }
+    operations.extend([
+        Operation::new("ET", vec![]),
+        Operation::new("BT", vec![]),
+        Operation::new("Tf", vec![Object::Name(b"T3".to_vec()), 18.into()]),
+        Operation::new(
+            "Tm",
+            vec![
+                1.into(),
+                0.into(),
+                0.into(),
+                1.into(),
+                50.into(),
+                100.into(),
+            ],
+        ),
+        show("unchanged"),
+        Operation::new("ET", vec![]),
+    ]);
+    let content = pdf.add_object(Stream::new(
+        lopdf::Dictionary::new(),
+        Content { operations }.encode().unwrap(),
+    ));
+    let pages = pdf.new_object_id();
+    let page = pdf.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages,
+        "MediaBox" => vec![0.into(), 0.into(), 500.into(), 300.into()],
+        "Resources" => dictionary! {"Font" => dictionary! {"T3" => font}},
+        "Contents" => content,
+    });
+    pdf.objects.insert(
+        pages,
+        dictionary! {"Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1}.into(),
+    );
+    let catalog = pdf.add_object(dictionary! {"Type" => "Catalog", "Pages" => pages});
+    pdf.trailer.set("Root", catalog);
+    let mut bytes = vec![];
+    pdf.save_to(&mut bytes).unwrap();
+    bytes
+}
 #[test]
 #[ignore = "Explicit fixture regeneration"]
 fn generate_fixtures() {
@@ -156,6 +279,7 @@ fn generate_fixtures() {
         )
         .unwrap();
     }
+    fs::write(fixture("glyph-runs.pdf"), type3_glyph_runs()).unwrap();
     fs::write(
         fixture("malformed.pdf"),
         b"%PDF-1.7\nthis is not a PDF\n%%EOF",
@@ -330,6 +454,9 @@ fn fixture_roundtrip_and_render_diff() {
                 "test Subset"
             } else if name == "missing-glyph.pdf" {
                 "XYZ"
+            } else if name == "glyph-runs.pdf" {
+                // Glyphs present in the Type3 font are reused.
+                "eH"
             } else {
                 "BA"
             };
@@ -613,4 +740,52 @@ fn encryption_and_compression_limits_are_explicit() {
         .unwrap()
         .set("Contents", id);
     assert!(pdf.get_page_content_with_limit(page, MAX_STREAM).is_err());
+}
+
+#[test]
+fn browser_glyph_runs_edit_as_one_line() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|p| p.into_inner());
+    let e = engine();
+    let mut d = e.open(&fixture("glyph-runs.pdf")).unwrap();
+    let before = e.text_objects(&d, 0).unwrap();
+    // "Hello world" is eleven one-glyph objects; the space reports no text.
+    assert_eq!(before.len(), 12);
+    assert_eq!(before[5].text.trim(), "");
+    let original = e.open(&fixture("glyph-runs.pdf")).unwrap();
+    let hello = &before[0..5];
+    let result = e.edit_group(&mut d, hello, "Hole").unwrap();
+    assert!(result.warning.is_none(), "Type3 glyphs are reused");
+    let after = e.text_objects(&d, 0).unwrap();
+    assert_eq!(after.len(), before.len() - 4);
+    assert_eq!(after[0].text, "Hole");
+    assert_eq!(after[0].font, before[0].font);
+    assert_eq!(after[0].matrix, before[0].matrix);
+    for (new, old) in after[1..].iter().zip(&before[5..]) {
+        assert_eq!(new.matrix, old.matrix, "neighbor moved");
+        assert_eq!(new.text, old.text);
+    }
+    let mut union = before[0].clone();
+    for o in hello {
+        union.bounds.left = union.bounds.left.min(o.bounds.left);
+        union.bounds.right = union.bounds.right.max(o.bounds.right);
+        union.bounds.bottom = union.bounds.bottom.min(o.bounds.bottom);
+        union.bounds.top = union.bounds.top.max(o.bounds.top);
+    }
+    assert_outside_equal(&e, &original, &d, &union, &after[0]);
+    assert!(d.undo());
+    assert_eq!(e.text_objects(&d, 0).unwrap().len(), before.len());
+    // Letters missing from the Type3 font fall back to a system font.
+    let before = e.text_objects(&d, 0).unwrap();
+    let result = e.edit_group(&mut d, &before[6..11], "Zebra").unwrap();
+    assert!(
+        result
+            .warning
+            .is_some_and(|w| w.contains(" not found, used "))
+    );
+    let after = e.text_objects(&d, 0).unwrap();
+    assert_eq!(after[6].text, "Zebra");
+    assert_eq!(after.last().unwrap().text, "unchanged");
+    assert!(e.edit_group(&mut d, &[], "x").is_err());
+    let stale = before[0].clone();
+    assert!(e.edit_group(&mut d, &[stale], "x").is_err());
 }

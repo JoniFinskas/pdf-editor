@@ -292,8 +292,22 @@ impl Engine {
         selected: &TextObject,
         replacement: &str,
     ) -> Result<EditResult> {
+        self.edit_group(doc, std::slice::from_ref(selected), replacement)
+    }
+    /// Replaces adjacent runs on one page as a single edit: the first run in
+    /// paint order receives `replacement` and the others are removed.
+    pub fn edit_group(
+        &self,
+        doc: &mut Document,
+        selected: &[TextObject],
+        replacement: &str,
+    ) -> Result<EditResult> {
         guarded(|| {
-            if selected.revision != doc.revision {
+            let first = selected.first().ok_or_else(|| err("Nothing selected"))?;
+            if selected.len() > 4096 || selected.iter().any(|o| o.page != first.page) {
+                return Err(err("Select runs from one page"));
+            }
+            if selected.iter().any(|o| o.revision != doc.revision) {
                 return Err(err("Selection is stale; select the object again"));
             }
             if replacement.chars().count() > 16_384 || replacement.chars().any(char::is_control) {
@@ -301,19 +315,44 @@ impl Engine {
                     "Replacement must be a single run of at most 16384 printable characters",
                 ));
             }
-            let objects = self.text_objects(doc, selected.page)?;
-            let ordinal = objects
+            let objects = self.text_objects(doc, first.page)?;
+            let mut ordinals = selected
                 .iter()
-                .position(|o| o.index == selected.index)
-                .ok_or_else(|| err("Text object no longer exists"))?;
+                .map(|s| {
+                    objects
+                        .iter()
+                        .position(|o| o.index == s.index)
+                        .ok_or_else(|| err("Text object no longer exists"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            ordinals.sort_unstable();
+            ordinals.dedup();
+            if ordinals.len() != selected.len() {
+                return Err(err("The same run was selected twice"));
+            }
+            let ordinal = ordinals[0];
             let actual = &objects[ordinal];
-            if actual.text == replacement {
+            if ordinals.len() == 1 && actual.text == replacement {
                 return Ok(EditResult {
                     warning: None,
                     objects_changed: 0,
                 });
             }
-            let (bytes, result) = content::edit(self, doc, actual, ordinal, replacement)?;
+            let targets: Vec<(usize, String)> = ordinals
+                .iter()
+                .enumerate()
+                .map(|(i, &o)| {
+                    (
+                        o,
+                        if i == 0 {
+                            replacement.to_string()
+                        } else {
+                            String::new()
+                        },
+                    )
+                })
+                .collect();
+            let (bytes, result) = content::edit(self, doc, actual, &targets)?;
             if bytes.len() > MAX_FILE {
                 return Err(err("Edited PDF exceeds 64 MiB"));
             }
@@ -326,10 +365,11 @@ impl Engine {
                 revision: doc.revision,
                 substitution: doc.substitution,
             };
-            let reopened = self.text_objects(&candidate, selected.page)?;
-            if (!replacement.is_empty()
-                && reopened.get(ordinal).map(|o| o.text.as_str()) != Some(replacement))
-                || (replacement.is_empty() && reopened.len() + 1 != objects.len())
+            let reopened = self.text_objects(&candidate, first.page)?;
+            let removed = targets.iter().filter(|(_, t)| t.is_empty()).count();
+            if reopened.len() + removed != objects.len()
+                || (!replacement.is_empty()
+                    && reopened.get(ordinal).map(|o| o.text.as_str()) != Some(replacement))
             {
                 return Err(err(
                     "Edited text failed round-trip verification; document unchanged",
