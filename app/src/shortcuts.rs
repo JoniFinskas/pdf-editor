@@ -66,7 +66,8 @@ mod tests {
             }],
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| commands = consume(ui.ctx(), editing));
+        let mut output = ctx.run_ui(input, |ui| commands = consume(ui.ctx(), editing));
+        output.textures_delta.clear();
         commands
     }
     #[test]
