@@ -635,3 +635,11 @@ text. When absent, promote the selected group's dictionary. Surrounding artwork
 is not itself a reason to reject editing: the opacity restrictions and complete
 page render comparison remain the acceptance checks. Cover both layouts in the
 generated edit/save/undo regression.
+
+## Interaction and tool access
+
+- Keep native Open, Save As and Compare pickers on bounded background tasks. Each editor tab owns its pending result; cancellation is distinct from a pending result, and duplicate launches are ignored.
+- Apply pending text before switching to object movement. Clear drawing and table-selection modes so they cannot consume the same drag. Preserve the clicked text location across the worker refresh.
+- Keep the existing grouped, scrollable Tools menu and expose it with a labelled toolbar control. Put Edit text, Move / resize objects and Compare PDFs beside it so common actions do not depend on discovering a chevron.
+- Object layer ordering preserves the relative order within the selected and unselected sets. Native object removal/reinsertion occurs only in a candidate document and is committed as one undo step.
+- Error banners expire after twelve seconds, warnings after ten and success messages after five; all retain an explicit close button. Top-align the close button so wrapped text cannot shift its hit target between pointer events.
