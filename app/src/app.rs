@@ -5619,7 +5619,7 @@ mod tests {
                 "Images",
                 "Secure redaction",
                 "Compress images",
-                "Page numbers and watermark",
+                "Headers, footers and watermark",
                 "Export page images",
                 "Crop page",
                 "Save options",
