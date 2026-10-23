@@ -2031,3 +2031,27 @@ fn compare_generated_pages_is_read_only_and_detects_edits() {
             .all(|change| change.kind == ChangeKind::Added)
     );
 }
+
+#[test]
+fn loaded_page_geometry_matches_fast_metadata_for_generated_rotations() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|p| p.into_inner());
+    let engine = engine();
+    for rotation in [0, 90, 180, 270] {
+        let bytes = generated("Generated geometry", false, rotation, 0.0, false, false);
+        let native = engine
+            .pdfium
+            .load_pdf_from_byte_slice(&bytes, None)
+            .unwrap();
+        let metadata = native.pages().page_sizes().unwrap();
+        let loaded = loaded_page_sizes(native.pages()).unwrap();
+        assert_eq!(metadata.len(), loaded.len());
+        assert!(!loaded.is_empty());
+        for (expected, actual) in metadata.iter().zip(loaded) {
+            assert_eq!(expected.width().value, actual.width);
+            assert_eq!(expected.height().value, actual.height);
+        }
+    }
+    assert!(checked_page_size(f32::NAN, 100.0).is_err());
+    assert!(checked_page_size(100.0, f32::INFINITY).is_err());
+    assert!(checked_page_size(0.0, 100.0).is_err());
+}

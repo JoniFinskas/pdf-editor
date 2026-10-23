@@ -218,16 +218,14 @@ impl Engine {
     pub fn pages(&self, doc: &Document) -> Result<Vec<PageInfo>> {
         guarded(|| {
             let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
-            pdf.pages()
-                .page_sizes()?
-                .into_iter()
-                .map(|size| {
-                    Ok(PageInfo {
-                        width: size.width().value,
-                        height: size.height().value,
-                    })
-                })
-                .collect()
+            let pages = pdf.pages();
+            match pages.page_sizes() {
+                Ok(sizes) => sizes
+                    .into_iter()
+                    .map(|size| checked_page_size(size.width().value, size.height().value))
+                    .collect(),
+                Err(_) => loaded_page_sizes(pages),
+            }
         })
     }
     pub fn text_objects(&self, doc: &Document, page: u16) -> Result<Vec<TextObject>> {
@@ -523,4 +521,23 @@ impl Document {
         file.sync_all()?;
         Ok(())
     }
+}
+
+fn checked_page_size(width: f32, height: f32) -> Result<PageInfo> {
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        return Err(err("Invalid page dimensions"));
+    }
+    Ok(PageInfo { width, height })
+}
+
+fn loaded_page_sizes(pages: &PdfPages<'_>) -> Result<Vec<PageInfo>> {
+    // Loading can recover geometry that the metadata-only PDFium API rejects.
+    // Explicit indexing preserves failures instead of truncating the iterator.
+    pages
+        .as_range()
+        .map(|index| {
+            let page = pages.get(index)?;
+            checked_page_size(page.width().value, page.height().value)
+        })
+        .collect()
 }
