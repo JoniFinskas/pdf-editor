@@ -102,8 +102,12 @@ using a fresh isolated profile. Tests treat exported files as read-only.
   PDFium bounds are glyph-tight (text without descenders is shorter than the
   em box). Bounds height is the fallback when the matrix disagrees with them.
   The box widens with the text and uses the run's color, in the Inter UI font.
-- Enter applies an edit; Escape or moving focus elsewhere cancels it. Unchanged
-  text sends no edit. Clicking another run switches the selection.
+- Enter or moving focus elsewhere applies an edit, and only Escape cancels it,
+  matching common editors so typed text is not lost silently. Unchanged text
+  sends no edit. Clicking another line applies the open edit first, then opens
+  the clicked line once the page's objects are refreshed, because the earlier
+  selection becomes stale. Open, Save As, Settings and closing the window apply
+  an open edit first; with uncommitted typing, Undo discards the typing only.
 - Save As is the only save path (Ctrl+S also opens Save As). A missing `.pdf`
   extension is appended. Opening another file or closing with unsaved edits asks
   for confirmation; the original file is never modified in either case.

@@ -16,6 +16,12 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 - Whole-line editing: adjacent runs on one baseline are selected and edited as
   one line (`Engine::edit_group`).
 
+### Changed
+
+- Clicking away from the edit box applies the edit, like Enter; only Escape
+  cancels. Open, Save As, Settings and closing the window apply an open edit
+  first.
+
 ### Fixed
 
 - PDFs printed from Chrome and other browsers could not be edited: text using

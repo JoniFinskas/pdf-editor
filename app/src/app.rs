@@ -80,6 +80,9 @@ struct DocView {
     position: i64,
     saved: Option<i64>,
     edit: Option<EditState>,
+    /// Page and raster point of a line clicked while the previous edit was
+    /// applied; it opens once that page's objects are refreshed.
+    reopen: Option<(usize, Pos2)>,
     /// Page, raster rect and object count of an edit being applied.
     applying: Option<(usize, Rect, usize)>,
     scroll_to: Option<Vec2>,
@@ -267,7 +270,8 @@ impl EditorApp {
     }
 
     fn request_open(&mut self, path: Option<PathBuf>) {
-        if self.doc.as_ref().is_some_and(DocView::dirty) {
+        let committed = self.commit_edit();
+        if committed || self.doc.as_ref().is_some_and(DocView::dirty) {
             self.confirm = Some(Pending::Open(path));
         } else {
             self.open_dialog_or_path(path);
@@ -296,8 +300,11 @@ impl EditorApp {
     }
 
     fn save_as(&mut self) {
+        // The worker handles requests in order, so a committed edit is
+        // applied before the save.
+        let committed = self.commit_edit();
         let Some(doc) = &self.doc else { return };
-        if self.busy > 0 {
+        if self.busy > u32::from(committed) {
             return;
         }
         let mut dialog = rfd::FileDialog::new()
@@ -319,6 +326,16 @@ impl EditorApp {
     }
 
     fn undo(&mut self) {
+        // With uncommitted typing, Undo discards the typing only.
+        if self
+            .doc
+            .as_ref()
+            .and_then(|d| d.edit.as_ref())
+            .is_some_and(|e| e.text != e.line.text)
+        {
+            self.cancel_edit();
+            return;
+        }
         if self.busy == 0 && self.doc.as_ref().is_some_and(|d| d.can_undo) {
             self.cancel_edit();
             self.busy += 1;
@@ -340,11 +357,17 @@ impl EditorApp {
         }
     }
 
-    fn apply_edit(&mut self) {
-        let Some(doc) = &mut self.doc else { return };
-        let Some(edit) = doc.edit.take() else { return };
-        if edit.text == edit.line.text || self.busy > 0 {
-            return;
+    /// Applies the open edit box, if its text changed, and closes it.
+    /// Returns true when an edit was sent.
+    fn commit_edit(&mut self) -> bool {
+        let Some(doc) = &mut self.doc else {
+            return false;
+        };
+        let Some(edit) = doc.edit.take() else {
+            return false;
+        };
+        if edit.text == edit.line.text {
+            return false;
         }
         doc.applying = Some((edit.page, edit.line.rect, edit.line.objects.len()));
         self.busy += 1;
@@ -352,6 +375,7 @@ impl EditorApp {
             objects: edit.line.objects,
             text: edit.text,
         });
+        true
     }
 
     fn set_policy(&mut self, policy: Substitution) {
@@ -489,6 +513,7 @@ impl EditorApp {
                     saved: if restored.is_some() { None } else { Some(0) },
                     restored_from: restored,
                     edit: None,
+                    reopen: None,
                     applying: None,
                     scroll_to: Some(Vec2::ZERO),
                     offset: Vec2::ZERO,
@@ -766,10 +791,11 @@ impl EditorApp {
     }
 
     fn close_guard(&mut self, ctx: &Context) {
-        if ctx.input(|i| i.viewport().close_requested())
-            && !self.allow_close
-            && self.doc.as_ref().is_some_and(DocView::dirty)
-        {
+        if !ctx.input(|i| i.viewport().close_requested()) || self.allow_close {
+            return;
+        }
+        let committed = self.commit_edit();
+        if committed || self.doc.as_ref().is_some_and(DocView::dirty) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.confirm = Some(Pending::Close);
         }
@@ -838,7 +864,7 @@ impl EditorApp {
                 .clicked()
                 {
                     self.settings_open = !self.settings_open;
-                    self.cancel_edit();
+                    self.commit_edit();
                 }
                 if self.busy > 0 {
                     ui.add(egui::Spinner::new().size(14.0).color(p.muted));
@@ -914,7 +940,7 @@ impl EditorApp {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let hint = if self.doc.as_ref().is_some_and(|d| d.edit.is_some()) {
-                    "Enter applies · Esc cancels"
+                    "Enter or click away applies · Esc cancels"
                 } else if self.doc.is_some() {
                     "Click text to edit it in place"
                 } else {
@@ -1001,7 +1027,7 @@ impl EditorApp {
         }
         let mut requests = Vec::new();
         let mut start_edit: Option<EditState> = None;
-        let mut clicked_empty = false;
+        let mut clicked_at: Option<(usize, Pos2)> = None;
 
         let output = area.show_viewport(ui, |ui, viewport| {
             let origin = ui.max_rect().min;
@@ -1069,6 +1095,24 @@ impl EditorApp {
 
                 // Hover and click hit testing against cached object extents.
                 let response = ui.interact(rect, Id::new(("pdf-page", index)), Sense::click());
+                // A line clicked while the previous edit was applied opens
+                // once this page's objects reflect that edit.
+                if let Some((reopen_page, at)) = doc.reopen
+                    && reopen_page == index
+                    && !busy
+                    && let Some(objects) = &page.objects
+                    && objects.generation == doc.generation
+                {
+                    doc.reopen = None;
+                    if let Some(line) = objects.lines.iter().rev().find(|l| l.rect.contains(at)) {
+                        start_edit = Some(EditState {
+                            page: index,
+                            line: line.clone(),
+                            text: line.text.clone(),
+                            focus: true,
+                        });
+                    }
+                }
                 let hit = response.hover_pos().and_then(|pos| {
                     let at = ((pos - rect.min) / scale).to_pos2();
                     page.objects.as_ref().and_then(|o| {
@@ -1101,9 +1145,10 @@ impl EditorApp {
                             text: line.text.clone(),
                             focus: true,
                         });
+                        clicked_at = response
+                            .interact_pointer_pos()
+                            .map(|pos| (index, ((pos - rect.min) / scale).to_pos2()));
                     }
-                } else if response.clicked() {
-                    clicked_empty = true;
                 }
                 if let Some((applying_page, raster, _)) = doc.applying
                     && applying_page == index
@@ -1128,12 +1173,23 @@ impl EditorApp {
                 }
             }
 
+            // Clicking elsewhere ends the edit box through its lost focus,
+            // which applies the text. Clicking another line applies the open
+            // edit first, then opens the clicked line from refreshed objects.
+            let mut outcome = None;
             if let Some(edit) = start_edit.take() {
-                doc.edit = Some(edit);
-            } else if clicked_empty {
-                doc.edit = None;
+                let changed = doc.edit.as_ref().is_some_and(|e| e.text != e.line.text);
+                if changed {
+                    outcome = Some(true);
+                    doc.reopen = clicked_at;
+                } else {
+                    doc.edit = Some(edit);
+                }
             }
-            edit_box(ui, doc, &page_rects, scale, p)
+            match outcome {
+                Some(apply) => Some(apply),
+                None => edit_box(ui, doc, &page_rects, scale, p),
+            }
         });
 
         doc.offset = output.state.offset;
@@ -1143,7 +1199,9 @@ impl EditorApp {
             self.send(request);
         }
         match apply {
-            Some(true) => self.apply_edit(),
+            Some(true) => {
+                self.commit_edit();
+            }
             Some(false) => self.cancel_edit(),
             None => {}
         }
@@ -1784,7 +1842,8 @@ fn paint_page(painter: &egui::Painter, ui: &Ui, rect: Rect, page: &PageView, p: 
     );
 }
 
-/// Draws the in-place edit box. Returns Some(true) to apply, Some(false) to cancel.
+/// Draws the in-place edit box. Returns Some(true) to apply (Enter or focus
+/// moved elsewhere) and Some(false) to cancel (Escape).
 fn edit_box(
     ui: &mut Ui,
     doc: &mut DocView,
@@ -1865,8 +1924,8 @@ fn edit_box(
         return None;
     }
     if response.lost_focus() {
-        let enter = ui.input(|i| i.key_pressed(Key::Enter));
-        return Some(enter);
+        let escape = ui.input(|i| i.key_pressed(Key::Escape));
+        return Some(!escape);
     }
     None
 }
