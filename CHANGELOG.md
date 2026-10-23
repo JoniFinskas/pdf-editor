@@ -17,6 +17,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Image downscaling and recompression with before/after document sizes.
+
 - Secure rectangle redaction through a fresh image-only document rebuild.
 
 - Windows OCR for scanned pages with an invisible searchable text layer.

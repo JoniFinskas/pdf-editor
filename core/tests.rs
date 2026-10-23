@@ -1624,3 +1624,67 @@ fn redaction_removes_source_objects_and_pixels() {
     assert_eq!(doc.bytes, original);
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn compression_reduces_images_and_preserves_text() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    let mut seed = 12345u32;
+    let mut rgba = vec![];
+    for _ in 0..512 * 512 {
+        for _ in 0..3 {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            rgba.push((seed >> 24) as u8);
+        }
+        rgba.push(255);
+    }
+    e.place_picture(
+        &mut doc,
+        &Picture {
+            width: 512,
+            height: 512,
+            rgba,
+        },
+        Placement {
+            page: 0,
+            left: 20.0,
+            bottom: 20.0,
+            width: 150.0,
+            height: 150.0,
+        },
+    )
+    .unwrap();
+    let original = doc.bytes.clone();
+    let text = e
+        .text_objects(&doc, 0)
+        .unwrap()
+        .into_iter()
+        .map(|o| o.text)
+        .collect::<Vec<_>>();
+    let result = e.compress_images(&mut doc, 128, 55).unwrap();
+    assert!(result.after < result.before);
+    assert_eq!(result.images, 1);
+    assert_eq!(
+        text,
+        e.text_objects(&doc, 0)
+            .unwrap()
+            .into_iter()
+            .map(|o| o.text)
+            .collect::<Vec<_>>()
+    );
+    let pdf = parse(&doc.bytes).unwrap();
+    assert!(
+        pdf.objects
+            .values()
+            .filter_map(|o| o.as_stream().ok())
+            .any(
+                |s| s.dict.get(b"Filter").ok().and_then(|o| o.as_name().ok()) == Some(b"DCTDecode")
+                    && s.dict.get(b"Width").unwrap().as_i64().unwrap() == 128
+            )
+    );
+    e.render(&doc, 0, 1.0).unwrap();
+    doc.undo();
+    assert_eq!(doc.bytes, original);
+    assert!(e.compress_images(&mut doc, 0, 90).is_err());
+}

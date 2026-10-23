@@ -358,3 +358,7 @@ Write recognized words as embedded Unicode text with invisible rendering mode 3.
 Use a conservative raster rebuild for secure redaction. All pages are freshly encoded at up to 200 DPI, with a bounded pixel budget; selected pixels are replaced with black before encoding. No source objects, resource dictionaries, attachments, form values, metadata, annotation dictionaries or text layers are copied. This avoids recoverable content in unused image resources, nested forms or incremental history.
 
 The tradeoff is explicit in the UI: the whole document becomes image-only, with interactive features and bookmarks removed. Require acknowledgment of flattening before application. The original file remains untouched; in-memory undo can restore the pre-redaction snapshot, but Save As serializes only sanitized current bytes. A one-pixel margin covers edge antialiasing. Large outputs fail atomically at the existing size limit.
+
+## Part G: Image compression
+
+Compress standard 8-bit DeviceRGB images using bounded JPEG decoding/encoding and proportional downscaling. Preserve transparency through independently resized soft masks; preserve text and page geometry. Unsupported color spaces, predictors, masks or decode transforms are skipped. Retain the current bytes if the complete candidate would be larger. Report input/output byte counts and changed/skipped images, with one undo step for an accepted result.

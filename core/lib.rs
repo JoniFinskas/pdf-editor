@@ -2,8 +2,10 @@
 mod annotations;
 mod change_state;
 pub use annotations::{Annotation, Markup, MarkupKind};
+mod compression;
 mod content;
 pub use change_state::ChangeState;
+pub use compression::CompressionReport;
 mod features;
 pub use features::NewText;
 mod fonts;

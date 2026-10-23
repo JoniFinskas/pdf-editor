@@ -141,3 +141,7 @@ Each `Document` owns its byte snapshots, revision, undo/redo stacks and source i
 ## Secure redaction
 
 - `Engine::redact(document, page, bounds) -> Result<()>`: black out the selected rectangle in rendered pixels and rebuild every page into a fresh image-only PDF, retaining no original object graph; one undo step.
+
+## Image compression
+
+- `Engine::compress_images(document, maximum_edge, jpeg_quality) -> Result<CompressionReport>`: downscale/recompress supported RGB XObjects while preserving text and alpha masks; report byte sizes and changed/skipped counts, retaining the original when no bytes are saved.

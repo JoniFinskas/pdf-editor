@@ -22,6 +22,7 @@ pub enum Request {
     OpenPassword(PathBuf, String),
     SavePassword(PathBuf, String),
     Print,
+    Compress(u32, u8),
     Redact(u16, pdf_editor_core::Bounds),
     Ocr(u16),
     Pictures,
@@ -384,6 +385,23 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             }
             Err(e) => failed(e),
         },
+        Request::Compress(edge, quality) => {
+            match engine.compress_images(state.doc.as_mut()?, edge, quality) {
+                Ok(report) => {
+                    state.generation += u64::from(report.images > 0);
+                    Some(changed(
+                        state,
+                        ChangeKind::Edit,
+                        Some(format!(
+                            "Compression: {} → {} bytes; {} images changed, {} unsupported images skipped.",
+                            report.before, report.after, report.images, report.skipped
+                        )),
+                        usize::from(report.images > 0),
+                    ))
+                }
+                Err(e) => failed(e),
+            }
+        }
         Request::Print => {
             let doc = state.doc.as_ref()?;
             let result = (|| -> pdf_editor_core::Result<bool> {
