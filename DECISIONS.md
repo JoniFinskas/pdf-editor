@@ -200,3 +200,7 @@ using a fresh isolated profile. Tests treat exported files as read-only.
   minutes. The setting is stored in `%APPDATA%\PdfEditorpp-settings.txt`
   because the core's settings file accepts only the substitution policy. An
   unreadable value falls back to the default.
+
+## Part D: Find text
+
+Use PDFium Unicode search across adjacent runs, case-insensitive, with bounded query/result counts. Search runs on the existing worker and highlights precise match rectangles; navigation wraps. Refresh results after document changes.

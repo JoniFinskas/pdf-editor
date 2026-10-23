@@ -789,3 +789,16 @@ fn browser_glyph_runs_edit_as_one_line() {
     let stale = before[0].clone();
     assert!(e.edit_group(&mut d, &[stale], "x").is_err());
 }
+
+#[test]
+fn search_matches_and_empty_query() {
+    let _lock = PDFIUM.lock().unwrap();
+    let e = engine();
+    let doc = e.open(&fixture("unicode-cid.pdf")).unwrap();
+    assert!(e.find_text(&doc, "").unwrap().is_empty());
+    assert!(e.find_text(&doc, "not-present-xyz").unwrap().is_empty());
+    let matches = e.find_text(&doc, "UNCHANGED").unwrap();
+    assert!(!matches.is_empty());
+    assert!(matches.iter().all(|m| !m.bounds.is_empty()));
+    assert!(e.find_text(&doc, "\0").is_err());
+}

@@ -19,6 +19,7 @@ const SAMPLE_SPAN: f32 = 1000.0;
 
 pub enum Request {
     Open(PathBuf),
+    Find(String),
     Render {
         page: u16,
         scale: f32,
@@ -52,6 +53,11 @@ impl PageTransform {
 }
 
 pub enum Reply {
+    Found {
+        generation: u64,
+        query: String,
+        matches: Vec<(u16, Vec<[f32; 4]>)>,
+    },
     Opened {
         generation: u64,
         path: PathBuf,
@@ -237,6 +243,43 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
+        Request::Find(query) => {
+            let doc = state.doc.as_ref()?;
+            let result = (|| -> pdf_editor_core::Result<_> {
+                let mut out = Vec::new();
+                for found in engine.find_text(doc, &query)? {
+                    let t = page_transform(engine, doc, found.page)?;
+                    let rects = found
+                        .bounds
+                        .iter()
+                        .map(|b| {
+                            let points = [
+                                t.apply(b.left, b.bottom),
+                                t.apply(b.right, b.bottom),
+                                t.apply(b.left, b.top),
+                                t.apply(b.right, b.top),
+                            ];
+                            [
+                                points.iter().map(|p| p.0).fold(f32::INFINITY, f32::min),
+                                points.iter().map(|p| p.1).fold(f32::INFINITY, f32::min),
+                                points.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max),
+                                points.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max),
+                            ]
+                        })
+                        .collect();
+                    out.push((found.page, rects));
+                }
+                Ok(out)
+            })();
+            match result {
+                Ok(matches) => Some(Reply::Found {
+                    generation: state.generation,
+                    query,
+                    matches,
+                }),
+                Err(e) => failed(e),
+            }
+        }
         Request::Open(path) => {
             let mut doc = match engine.open(&path) {
                 Ok(doc) => doc,

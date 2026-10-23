@@ -33,6 +33,7 @@ const MAX_RENDER_PIXELS: f32 = 15_500_000.0;
 const KEEP_PAGES: usize = 2;
 
 pub struct EditorApp {
+    find: FindState,
     worker: Worker,
     engine_alive: bool,
     setup_error: Option<String>,
@@ -57,6 +58,15 @@ pub struct EditorApp {
     orphans: Vec<Orphan>,
     /// The copy being opened for restore.
     restoring: Option<Orphan>,
+}
+
+#[derive(Default)]
+struct FindState {
+    open: bool,
+    focus: bool,
+    query: String,
+    matches: Vec<(u16, Vec<[f32; 4]>)>,
+    active: usize,
 }
 
 struct DocView {
@@ -207,6 +217,7 @@ impl EditorApp {
         let orphans = recovery::orphans();
         let worker = Worker::spawn(cc.egui_ctx.clone(), library.unwrap_or_default(), policy);
         let mut app = Self {
+            find: FindState::default(),
             worker,
             engine_alive: true,
             setup_error,
@@ -457,6 +468,22 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::Found {
+                generation,
+                query,
+                matches,
+            } => {
+                if self
+                    .doc
+                    .as_ref()
+                    .is_some_and(|d| d.generation == generation)
+                    && self.find.query == query
+                {
+                    self.find.matches = matches;
+                    self.find.active = 0;
+                    self.go_match();
+                }
+            }
             Reply::Opened {
                 generation,
                 path,
@@ -464,6 +491,8 @@ impl EditorApp {
                 pages,
                 suggested,
             } => {
+                self.find.matches.clear();
+                self.find.query.clear();
                 self.busy = self.busy.saturating_sub(1);
                 self.opening = false;
                 self.banners.retain(|b| b.kind != BannerKind::Error);
@@ -623,6 +652,10 @@ impl EditorApp {
                 }
                 if doc.generation != generation {
                     doc.generation = generation;
+                    self.find.matches.clear();
+                    if !self.find.query.is_empty() {
+                        self.worker.send(Request::Find(self.find.query.clone()));
+                    }
                     doc.edit = None;
                     for page in &mut doc.pages {
                         page.pending_render = None;
@@ -735,6 +768,52 @@ impl EditorApp {
         }
     }
 
+    fn go_match(&mut self) {
+        if let Some((page, boxes)) = self.find.matches.get(self.find.active) {
+            if let Some(doc) = &mut self.doc {
+                let y = CANVAS_PAD
+                    + doc
+                        .pages
+                        .iter()
+                        .take(*page as usize)
+                        .map(|p| p.info.height * doc.scale() + PAGE_GAP)
+                        .sum::<f32>()
+                    + boxes.first().map_or(0.0, |b| b[1] * doc.scale());
+                doc.scroll_to = Some(vec2(doc.offset.x, (y - 80.0).max(0.0)));
+            }
+        }
+    }
+    fn find_bar(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.label("Find");
+            let field = ui.text_edit_singleline(&mut self.find.query);
+            if self.find.focus {
+                field.request_focus();
+                self.find.focus = false;
+            }
+            if field.changed() {
+                self.find.matches.clear();
+                self.send(Request::Find(self.find.query.clone()));
+            }
+            let count = self.find.matches.len();
+            ui.label(format!(
+                "{} / {count}",
+                if count == 0 { 0 } else { self.find.active + 1 }
+            ));
+            if ui.add_enabled(count > 0, Button::new("Previous")).clicked() {
+                self.find.active = (self.find.active + count - 1) % count;
+                self.go_match();
+            }
+            if ui.add_enabled(count > 0, Button::new("Next")).clicked() {
+                self.find.active = (self.find.active + 1) % count;
+                self.go_match();
+            }
+            if ui.button("Close").clicked() {
+                self.find.open = false;
+            }
+        });
+    }
+
     fn page_mut(&mut self, page: u16) -> Option<&mut PageView> {
         self.doc.as_mut()?.pages.get_mut(usize::from(page))
     }
@@ -748,6 +827,10 @@ impl EditorApp {
         let pressed = |m: Modifiers, k: Key| {
             ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)))
         };
+        if pressed(Modifiers::COMMAND, Key::F) {
+            self.find.open = true;
+            self.find.focus = true;
+        }
         let shift = Modifiers::COMMAND | Modifiers::SHIFT;
         if pressed(Modifiers::COMMAND, Key::O) {
             self.request_open(None);
@@ -1092,6 +1175,33 @@ impl EditorApp {
                     continue;
                 }
                 paint_page(&painter, ui, rect, page, p);
+                if self.find.open {
+                    for (n, (_, boxes)) in self
+                        .find
+                        .matches
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, m)| usize::from(m.0) == index)
+                    {
+                        for b in boxes {
+                            let r = to_screen(
+                                Rect::from_min_max(pos2(b[0], b[1]), pos2(b[2], b[3])),
+                                rect,
+                                scale,
+                            );
+                            painter.rect_filled(
+                                r,
+                                0.0,
+                                Color32::from_rgba_unmultiplied(
+                                    255,
+                                    185,
+                                    30,
+                                    if n == self.find.active { 140 } else { 65 },
+                                ),
+                            );
+                        }
+                    }
+                }
 
                 // Hover and click hit testing against cached object extents.
                 let response = ui.interact(rect, Id::new(("pdf-page", index)), Sense::click());
@@ -1639,6 +1749,9 @@ impl eframe::App for EditorApp {
             .exact_size(28.0)
             .show(ui, |ui| self.status_bar(ui, &p));
 
+        if self.find.open && !self.settings_open {
+            egui::Panel::top("find").show(ui, |ui| self.find_bar(ui));
+        }
         egui::CentralPanel::no_frame()
             .frame(Frame::new().fill(p.canvas))
             .show(ui, |ui| {

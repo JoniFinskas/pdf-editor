@@ -6,6 +6,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Find text with Ctrl+F, match highlights and wrapping next/previous navigation.
+
 - Version number shown in the status bar and Settings.
 - Versioning rules in VERSIONING.md; the workspace version is set in one place.
 - Settings page with font substitution, auto-save and About sections, replacing
