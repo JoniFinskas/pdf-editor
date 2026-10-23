@@ -30,6 +30,8 @@ mod shortcuts;
 mod signatures;
 mod stamps;
 mod table_export;
+
+mod spelling;
 mod theme;
 mod widgets;
 mod windows_integration;

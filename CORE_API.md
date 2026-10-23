@@ -290,3 +290,9 @@ candidates, not identity/account validation. `apply_redaction_preview` rejects
 changed or different documents and applies all rectangles in one undo step.
 Intersecting text runs and grouped artwork may be removed in full.
 Redaction rebuilds a clean page graph, dropping document-wide annotations, forms, bookmarks, attachments, tags, metadata and actions; unsupported retained content fails without changing the document.
+
+## Spell checking
+
+- `check_spelling(text, language)` returns bounded spelling issues using installed Windows dictionaries (`en-US` or `fi-FI`); UTF-16 results are converted to UTF-8 byte ranges. Unsupported platforms/dictionaries return a readable error. Run on a background thread.
+- `SpellingIssue` contains a byte range, original word and up to eight suggestions.
+- `replace_spelling(text, issue, replacement)` checks the current word and Unicode boundaries before replacement; stale results fail without changing text.

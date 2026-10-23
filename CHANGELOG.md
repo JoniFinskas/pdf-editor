@@ -35,6 +35,10 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 - Preview and redact literal text or privacy patterns across the document.
 
+### Added
+
+- Local Windows spell checking for existing and new text, with Finnish/English selection, underlines and context-menu suggestions.
+
 ### Performance
 
 - Load page-size metadata without parsing every page, cap page texture storage, and bound background-render replies. Add a generated 1,000-page startup benchmark.
