@@ -22,6 +22,7 @@ pub enum Request {
     OpenPassword(PathBuf, String),
     SavePassword(PathBuf, String),
     Print,
+    Ocr(u16),
     Pictures,
     MovePicture(pdf_editor_core::PlacedPicture, pdf_editor_core::Placement),
     Annotations,
@@ -363,6 +364,18 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 Err(e) => failed(e),
             }
         }
+        Request::Ocr(page) => match engine.ocr_page(state.doc.as_mut()?, page) {
+            Ok(words) => {
+                state.generation += 1;
+                Some(changed(
+                    state,
+                    ChangeKind::Edit,
+                    Some(format!("Added {words} searchable words using Windows OCR.")),
+                    words,
+                ))
+            }
+            Err(e) => failed(e),
+        },
         Request::Print => {
             let doc = state.doc.as_ref()?;
             let result = (|| -> pdf_editor_core::Result<bool> {

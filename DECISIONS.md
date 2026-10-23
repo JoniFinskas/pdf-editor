@@ -346,3 +346,9 @@ Reuse the bounded PNG/JPEG decoder and transparent image embedding API. Mark eac
 ## Part F: Document tabs
 
 Each tab owns its entire editor state and worker, including undo history, unsaved/savepoint state, view, selection, tools and recovery lock. Native PDFium calls remain serialized by the shared bindings. Background tabs continue polling completed work and scheduling recovery. Open creates a new tab instead of discarding the active document. Closing one tab checks its pending edits; closing the window checks all tabs, including inactive ones. Limit open tabs to 32 to bound worker and document allocation.
+
+## Part G: Windows OCR
+
+Use the installed Windows.Media.Ocr recognizer through the exact existing `windows = 0.62.2` crate. It and the activated Windows support crates were released 2025-10-06, well before the 14-day cutoff. No OCR engine, model download or cloud request is bundled. Initialize a scoped WinRT apartment on the worker and recognize a bounded raster. Missing Windows language support returns an actionable error.
+
+Write recognized words as embedded Unicode text with invisible rendering mode 3. Map OCR pixel geometry back into PDF coordinates, including page rotation, and use actual font advances for horizontal fitting. Refuse pages with an existing text layer to avoid duplicate text. Recognition and layer insertion are one atomic history operation.

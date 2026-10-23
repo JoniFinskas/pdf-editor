@@ -2226,6 +2226,7 @@ dependencies = [
  "lopdf",
  "pdfium-render",
  "skrifa 0.48.0",
+ "windows",
 ]
 
 [[package]]

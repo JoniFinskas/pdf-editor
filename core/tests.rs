@@ -1491,3 +1491,76 @@ fn independent_documents_keep_separate_undo_histories() {
     first.redo();
     assert_ne!(first.bytes, original);
 }
+
+#[test]
+fn ocr_layer_is_invisible_searchable_and_undoable() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    let before = e.render(&doc, 0, 1.0).unwrap().rgba;
+    e.add_ocr_words(
+        &mut doc,
+        0,
+        1.0,
+        &[crate::ocr::RecognizedWord {
+            text: "ScannedWord".into(),
+            x: 20.0,
+            y: 30.0,
+            width: 150.0,
+            height: 20.0,
+        }],
+    )
+    .unwrap();
+    assert!(before == e.render(&doc, 0, 1.0).unwrap().rgba);
+    assert_eq!(e.find_text(&doc, "ScannedWord").unwrap().len(), 1);
+    let path = temp("ocr-layer.pdf");
+    let _ = fs::remove_file(&path);
+    doc.save_as(&path).unwrap();
+    assert_eq!(
+        e.find_text(&e.open(&path).unwrap(), "ScannedWord")
+            .unwrap()
+            .len(),
+        1
+    );
+    doc.undo();
+    assert!(e.find_text(&doc, "ScannedWord").unwrap().is_empty());
+    assert!(e.ocr_page(&mut doc, 0).is_err());
+    fs::remove_file(path).unwrap();
+}
+#[test]
+#[ignore = "Requires an installed Windows OCR recognition language"]
+fn windows_ocr_recognizes_scanned_page() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let path = temp("ocr-source.pdf");
+    fs::write(&path, generated("HELLO WORLD", false, 0, 0.0, false, false)).unwrap();
+    let mut doc = e.open(&path).unwrap();
+    let image = e.render(&doc, 0, 2.0).unwrap();
+    let mut pdf = parse(&doc.bytes).unwrap();
+    let id = pdf.get_pages()[&1];
+    pdf.get_dictionary_mut(id).unwrap().remove(b"Contents");
+    pdf.get_dictionary_mut(id).unwrap().remove(b"Resources");
+    doc = e.candidate(&doc, pdf).unwrap();
+    e.place_picture(
+        &mut doc,
+        &Picture {
+            width: image.width,
+            height: image.height,
+            rgba: image.rgba,
+        },
+        Placement {
+            page: 0,
+            left: 0.0,
+            bottom: 0.0,
+            width: 500.0,
+            height: 300.0,
+        },
+    )
+    .unwrap();
+    assert!(e.text_objects(&doc, 0).unwrap().is_empty());
+    let before = e.render(&doc, 0, 1.0).unwrap().rgba;
+    assert!(e.ocr_page(&mut doc, 0).unwrap() > 0);
+    assert!(!e.find_text(&doc, "HELLO").unwrap().is_empty());
+    assert!(before == e.render(&doc, 0, 1.0).unwrap().rgba);
+    fs::remove_file(path).unwrap();
+}

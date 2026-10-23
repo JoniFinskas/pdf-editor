@@ -17,6 +17,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Windows OCR for scanned pages with an invisible searchable text layer.
+
 - Multiple document tabs with independent undo history, unsaved state and recovery.
 
 - Insert PNG/JPG images and edit their positions and dimensions after insertion.

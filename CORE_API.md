@@ -133,3 +133,7 @@ Keyboard commands are UI dispatch only: Open/Save As use `Engine::open`/`Documen
 ## Multiple documents
 
 Each `Document` owns its byte snapshots, revision, undo/redo stacks and source identity. Multiple documents may share one `Engine`; mutations and history operations affect only the supplied document. The UI owns one worker/session per tab.
+
+## Windows OCR
+
+- `Engine::ocr_page(document, page) -> Result<usize>`: recognize a scanned page with installed Windows OCR languages and add an invisible, searchable text layer as one undo step; returns the number of recognized words.

@@ -1823,6 +1823,19 @@ impl EditorApp {
             let mut open = None;
             Popup::menu(&recent).show(|ui| {
                 ui.set_min_width(260.0);
+                if Btn::new("OCR current page")
+                    .enabled(idle)
+                    .min_width(260.0)
+                    .align_left()
+                    .show(ui, p)
+                    .clicked()
+                {
+                    let page = self.doc.as_ref().map_or(0, |d| d.current_page as u16);
+                    self.commit_edit();
+                    self.busy += 1;
+                    self.send(Request::Ocr(page));
+                    ui.close();
+                }
                 if Btn::new("Images…")
                     .enabled(idle)
                     .min_width(260.0)

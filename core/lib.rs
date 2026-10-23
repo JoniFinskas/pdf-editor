@@ -12,6 +12,7 @@ pub use forms::{FieldValue, FormField};
 mod images;
 mod pictures;
 pub use pictures::PlacedPicture;
+mod ocr;
 mod organize;
 mod pages;
 pub use organize::page_ranges;
