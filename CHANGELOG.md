@@ -16,6 +16,10 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Changed
 
+- Remove intersecting text, image and vector objects directly, including nested
+  groups, while preserving unrelated editable content. Add atomic batch redaction
+  and remove unused source streams.
+
 - Refresh portable release instructions and manual checks for paragraph editing,
   comparison, command-line tools and Windows integration; document corpus limits.
 

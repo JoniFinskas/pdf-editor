@@ -513,3 +513,7 @@ Headers and footers use the visible page crop and rotation, with an edge margin 
 
 ### Image document creation
 Images are decoded one at a time and embedded as JPEG at quality 95 against white, preserving order without retaining all decoded inputs. A4 and Letter center the image without cropping; image-size pages use 96 DPI. HEIC uses the existing Windows imaging API and installed codecs; no engine or codec download occurs. Imports are limited to 100 images, 16 million pixels per image and a 64 MiB resulting PDF. Output uses exclusive creation.
+
+## Object-level redaction
+
+Remove whole intersecting native PDF objects instead of clipping text runs or rasterizing every page. This conservatively removes complete images and nested form groups when partially intersected. Rebuild the catalog and page tree with only page geometry, content and cleaned resources; discard document extras that can retain removed data. Reject marked content with properties rather than preserving unverified alternate text. Validate extraction and object bounds before drawing covers. Redaction is one atomic undo step; source files and session history are not erased.

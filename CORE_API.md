@@ -144,7 +144,7 @@ Each `Document` owns its byte snapshots, revision, undo/redo stacks and source i
 
 ## Secure redaction
 
-- `Engine::redact(document, page, bounds) -> Result<()>`: black out the selected rectangle in rendered pixels and rebuild every page into a fresh image-only PDF, retaining no original object graph; one undo step.
+- `Engine::redact(document, page, bounds) -> Result<()>` and `Engine::redact_regions(document, &[(page, bounds)]) -> Result<()>`: atomically remove entire intersecting text runs, images, paths and form groups, prune unused resources and old streams, verify extraction, then draw black rectangles. Other page content stays editable. Batch redaction creates one undo step. A fresh page tree drops forms, annotations, bookmarks, attachments, actions, tags and metadata. Marked content with properties, retained Type 3 fonts, patterns, shadings, soft-mask graphics states and unverifiable geometry fail closed. Save As writes a fresh file; the original and in-session undo history remain unchanged.
 
 ## Image compression
 

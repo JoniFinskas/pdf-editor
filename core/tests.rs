@@ -1600,16 +1600,10 @@ fn redaction_removes_source_objects_and_pixels() {
     )
     .unwrap();
     assert_eq!(e.pages(&doc).unwrap().len(), pages);
-    assert!(e.text_objects(&doc, 0).unwrap().is_empty());
+    assert!(!e.text_objects(&doc, 0).unwrap().is_empty());
     assert!(e.placed_pictures(&doc).unwrap().is_empty());
     let pdf = parse(&doc.bytes).unwrap();
     assert!(!pdf.trailer.has(b"Info"));
-    assert!(
-        pdf.objects
-            .values()
-            .filter_map(|o| o.as_dict().ok())
-            .all(|d| d.get(b"Type").ok().and_then(|o| o.as_name().ok()) != Some(b"Font"))
-    );
     let image = e.render(&doc, 0, 1.0).unwrap();
     let (x, y) = e.page_to_pixel(&doc, 0, 1.0, 60.0, 60.0).unwrap();
     let offset = (y as usize * image.width as usize + x as usize) * 4;
@@ -1618,7 +1612,7 @@ fn redaction_removes_source_objects_and_pixels() {
     let _ = fs::remove_file(&path);
     doc.save_as(&path).unwrap();
     let reopened = e.open(&path).unwrap();
-    assert!(e.text_objects(&reopened, 0).unwrap().is_empty());
+    assert!(!e.text_objects(&reopened, 0).unwrap().is_empty());
     assert!(image.rgba == e.render(&reopened, 0, 1.0).unwrap().rgba);
     doc.undo();
     assert_eq!(doc.bytes, original);
@@ -2322,3 +2316,6 @@ fn image_import_decodes_png_jpeg_and_rejects_bad_heic() {
     fs::write(&bad,b"not a HEIC image").unwrap();
     assert!(import_picture(&bad).is_err());
 }
+
+#[path = "redaction_tests.rs"]
+mod redaction_tests;
