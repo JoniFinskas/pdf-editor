@@ -184,3 +184,9 @@ All destinations retain the core exclusive-create and original-file protections.
 - `Engine::compare_page(left, right, page, overlay)` -> `ComparePage` containing optional side images, text changes, changed-pixel count and raster-space highlight rectangles. Uses a shared scale capped at one megapixel and 4096 pixels per edge, permits missing pages on either side, rejects an index missing on both. Documents remain unchanged.
 
 Comparison UI runs file loading, text extraction, rendering and raster comparison on a background thread with bounded queues, cancellable between pages. It retains one displayed page pair and numeric per-page summaries, and compares saved files rather than unsaved editor state. Encrypted inputs accept separate transient passwords. Page order aligns by index; raster previews are bounded and may omit changes smaller than the preview resolution. No source text is written to logs or disk.
+
+### Windows shell boundary
+
+Single-instance IPC and per-user shell registration live in the desktop application.
+They introduce no core API: incoming paths use existing document open operations,
+while merge/compress/export use the existing public operations after UI confirmation.

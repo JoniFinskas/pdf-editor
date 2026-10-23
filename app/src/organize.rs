@@ -11,8 +11,28 @@ pub struct Organize {
     range: String,
     groups: String,
     paths: Vec<std::path::PathBuf>,
+    shell_collecting: bool,
 }
 impl Organize {
+    pub fn collect_shell_selection(&mut self) {
+        self.open = true;
+        self.shell_collecting = true;
+    }
+    pub fn collecting_shell_selection(&self) -> bool {
+        self.open && self.shell_collecting
+    }
+
+    pub fn add_path(&mut self, path: std::path::PathBuf) -> bool {
+        self.open = true;
+        if self.paths.contains(&path) {
+            return true;
+        }
+        if self.paths.len() >= 100 {
+            return false;
+        }
+        self.paths.push(path);
+        true
+    }
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, idle: bool) -> Option<Request> {
         let mut request = None;
         ToolWindow::new("Merge, split and extract", Icon::Layers)
@@ -20,6 +40,7 @@ impl Organize {
             .show(ctx, p, &mut self.open, |ui| {
                 let width = ui.available_width();
                 widgets::subheading(ui, p, "Merge");
+                if self.shell_collecting { widgets::hint(ui, p, "Pending Explorer selection. Additional selections join this list until Merge or Close. Review the order below."); }
                 widgets::hint(ui, p, "Append PDFs after the current document.");
                 let mut movement = None;
                 for (i, path) in self.paths.iter().enumerate() {
@@ -69,6 +90,7 @@ impl Organize {
                         .show(ui, p)
                         .clicked()
                     {
+                        self.shell_collecting = false;
                         request = Some(Request::Merge(self.paths.clone()));
                     }
                     if Btn::new("Choose PDFs…")
@@ -129,6 +151,38 @@ impl Organize {
                     "Exports use new filenames and do not alter the open document. Exported PDFs have no password.",
                 );
             });
+        if !self.open {
+            self.shell_collecting = false;
+        }
         request
+    }
+}
+
+#[cfg(test)]
+mod shell_tests {
+    use super::*;
+    #[test]
+    fn shell_selection_keeps_order_deduplicates_and_is_bounded() {
+        let mut tool = Organize::default();
+        tool.collect_shell_selection();
+        assert!(tool.collecting_shell_selection());
+        tool.add_path("second.pdf".into());
+        tool.add_path("third.pdf".into());
+        tool.add_path("second.pdf".into());
+        assert!(tool.open);
+        assert_eq!(
+            tool.paths,
+            vec![
+                std::path::PathBuf::from("second.pdf"),
+                std::path::PathBuf::from("third.pdf")
+            ]
+        );
+        for i in 0..200 {
+            tool.add_path(format!("generated-{i}.pdf").into());
+        }
+        assert_eq!(tool.paths.len(), 100);
+        assert!(!tool.add_path("overflow.pdf".into()));
+        tool.open = false;
+        assert!(!tool.collecting_shell_selection());
     }
 }

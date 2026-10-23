@@ -445,3 +445,18 @@ sibling desktop binary through argument arrays without command-shell interpretat
 - Scan page summaries in the background, prioritize requested previews between pages, and retain only one rendered page pair. Shared scroll and zoom keep the two panes aligned. The change sidebar includes text-only and visual-only changed pages and visible per-page errors.
 - Use a one-megapixel, 4096-pixel-edge preview bound with exact raster pixel comparison. Fine differences below preview resolution may be lost. Text extraction remains independent of raster downscaling. Queue capacities and text budgets bound retained work; cancellation is checked between native page operations.
 - Comparison remains read-only, including undo history and original files. Generated fixtures verify unchanged inputs and detect text/raster changes; pure tests cover Unicode insertion/deletion, missing rasters, unchanged pixels and resource limits.
+
+## Per-user Windows integration
+
+- Use an OS-held exclusive file lock and bounded file mailbox under LOCALAPPDATA.
+  This introduces no dependency or network listener. Requests contain a known action
+  and one absolute local PDF path, at most 64 KiB. Reject redirects/reparse points,
+  malformed/oversized input and stale requests from previous sessions. The existing
+  profile ACL is the boundary; processes already running as the same user remain trusted.
+- Register capabilities and a private ProgID only under HKCU, then open Windows
+  Default Apps for the protected user choice. Never edit UserChoice or HKLM.
+- Explorer commands invoke the adjacent console CLI with individually quoted paths,
+  without cmd.exe or PowerShell. The CLI routes actions into reviewable GUI tools.
+  Merge launches collect into one ordered list until Merge is clicked or the organizer closes, so slow Explorer launches retain their selection. The list is capped at 100 additional PDFs with a visible overflow error.
+- Do not automatically register or remove anything at startup. Only Settings actions
+  change registration. Generated registry records are tested without live mutation.
