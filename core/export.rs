@@ -32,7 +32,9 @@ impl Engine {
                 PageImageFormat::Jpeg => {
                     let rgb: Vec<u8> = image
                         .rgba
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .flat_map(|p| p[..3].iter().copied())
                         .collect();
                     let mut encoder =

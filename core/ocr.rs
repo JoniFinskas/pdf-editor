@@ -179,7 +179,7 @@ fn recognize(image: &Image) -> Result<Vec<RecognizedWord>> {
         return Err(err("Page exceeds the Windows OCR image limit"));
     }
     let mut bgra = image.rgba.clone();
-    for pixel in bgra.chunks_exact_mut(4) {
+    for pixel in bgra.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
     let writer = DataWriter::new().map_err(failure)?;

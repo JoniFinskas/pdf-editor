@@ -1840,206 +1840,211 @@ impl EditorApp {
                 .id("recent")
                 .min_width(24.0)
                 .height(34.0)
-                .tip("Recent files")
+                .tip("Document tools and recent files")
                 .show(ui, p);
             let mut open = None;
             Popup::menu(&recent).show(|ui| {
-                ui.set_min_width(260.0);
-                if Btn::new("Bookmarks sidebar")
-                    .enabled(self.doc.is_some() && self.busy == 0)
-                    .show(ui, p)
-                    .clicked()
-                {
-                    self.commit_edit();
-                    self.bookmarks.open = true;
-                    self.pages_open = false;
-                    self.busy += 1;
-                    self.worker.send(Request::Bookmarks);
-                    ui.close();
-                }
-                if Btn::new("Draw and shapes…")
-                    .enabled(idle)
-                    .min_width(260.0)
-                    .align_left()
-                    .show(ui, p)
-                    .clicked()
-                {
-                    self.drawing.open = true;
-                    ui.close();
-                }
-                if Btn::new("Crop page…")
-                    .enabled(idle)
-                    .min_width(260.0)
-                    .align_left()
-                    .show(ui, p)
-                    .clicked()
-                {
-                    self.crop.open = true;
-                    ui.close();
-                }
-                if Btn::new("Export pages as images…")
-                    .enabled(idle)
-                    .min_width(260.0)
-                    .align_left()
-                    .show(ui, p)
-                    .clicked()
-                {
-                    self.export.open = true;
-                    ui.close();
-                }
-                if Btn::new("Page numbers / watermark…")
-                    .enabled(idle)
-                    .min_width(260.0)
-                    .align_left()
-                    .show(ui, p)
-                    .clicked()
-                {
-                    self.stamps.open = true;
-                    ui.close();
-                }
-                if Btn::new("Compress images…")
-                    .enabled(idle)
-                    .min_width(260.0)
-                    .align_left()
-                    .show(ui, p)
-                    .clicked()
-                {
-                    self.compression.open = true;
-                    ui.close();
-                }
-                if Btn::new("Redact…")
-                    .enabled(idle)
-                    .min_width(260.0)
-                    .align_left()
-                    .show(ui, p)
-                    .clicked()
-                {
-                    self.redaction.open = true;
-                    if let Some(o) = self.text_tool.selection.get(self.text_tool.selected) {
-                        self.redaction.page = o.page;
-                        self.redaction.bounds = o.bounds;
-                    }
-                    ui.close();
-                }
-                if Btn::new("OCR current page")
-                    .enabled(idle)
-                    .min_width(260.0)
-                    .align_left()
-                    .show(ui, p)
-                    .clicked()
-                {
-                    let page = self.doc.as_ref().map_or(0, |d| d.current_page as u16);
-                    self.commit_edit();
-                    self.busy += 1;
-                    self.send(Request::Ocr(page));
-                    ui.close();
-                }
-                if Btn::new("Images…")
-                    .enabled(idle)
-                    .min_width(260.0)
-                    .align_left()
-                    .show(ui, p)
-                    .clicked()
-                {
-                    self.pictures.open = true;
-                    self.commit_edit();
-                    self.busy += 1;
-                    self.send(Request::Pictures);
-                    ui.close();
-                }
-                if Btn::new("Markup and notes…")
-                    .enabled(idle)
-                    .min_width(260.0)
-                    .align_left()
-                    .show(ui, p)
-                    .clicked()
-                {
-                    self.markup.open = true;
-                    if let Some(o) = self.text_tool.selection.get(self.text_tool.selected) {
-                        self.markup.draft.page = o.page;
-                        self.markup.draft.bounds = o.bounds;
-                    }
-                    self.commit_edit();
-                    self.busy += 1;
-                    self.send(Request::Annotations);
-                    ui.close();
-                }
-                if Btn::new("Merge, split and extract…")
-                    .enabled(idle)
-                    .min_width(260.0)
-                    .align_left()
-                    .show(ui, p)
-                    .clicked()
-                {
-                    self.organize.open = true;
-                    ui.close();
-                }
-                if Btn::new("Find and replace…")
-                    .enabled(idle)
-                    .min_width(260.0)
-                    .align_left()
-                    .show(ui, p)
-                    .clicked()
-                {
-                    self.replace.open = true;
-                    ui.close();
-                }
-                if Btn::new("Fill form…")
-                    .enabled(idle)
-                    .min_width(260.0)
-                    .align_left()
-                    .show(ui, p)
-                    .clicked()
-                {
-                    self.commit_edit();
-                    self.forms.open = true;
-                    self.busy += 1;
-                    self.send(Request::FormFields);
-                    ui.close();
-                }
-                if Btn::new("Signatures…")
-                    .enabled(idle)
-                    .min_width(260.0)
-                    .align_left()
-                    .show(ui, p)
-                    .clicked()
-                {
-                    self.signatures.open = true;
-                    ui.close();
-                }
-                if Btn::new("Print…")
-                    .enabled(idle)
-                    .min_width(260.0)
-                    .align_left()
-                    .show(ui, p)
-                    .clicked()
-                {
-                    self.commit_edit();
-                    self.busy += 1;
-                    self.send(Request::Print);
-                    ui.close();
-                }
-                ui.separator();
-                if self.recent_files.is_empty() {
-                    ui.label(RichText::new("No recent files").color(p.muted));
-                }
-                for path in &self.recent_files {
-                    let name = path.file_name().unwrap_or_default().to_string_lossy();
-                    let tip = shown_path(path);
-                    if Btn::new(&name)
-                        .with_icon(Icon::File)
-                        .align_left()
-                        .min_width(260.0)
-                        .height(32.0)
-                        .enabled(idle)
-                        .tip(&tip)
-                        .show(ui, p)
-                        .clicked()
-                    {
-                        open = Some(path.clone());
-                        ui.close();
-                    }
-                }
+                egui::ScrollArea::vertical()
+                    .max_height((ui.ctx().content_rect().height() - 120.0).max(160.0))
+                    .show(ui, |ui| {
+                        ui.set_min_width(260.0);
+                        if Btn::new("Bookmarks sidebar")
+                            .enabled(self.doc.is_some() && self.busy == 0)
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.commit_edit();
+                            self.bookmarks.open = true;
+                            self.pages_open = false;
+                            self.busy += 1;
+                            self.worker.send(Request::Bookmarks);
+                            ui.close();
+                        }
+                        if Btn::new("Draw and shapes…")
+                            .enabled(idle)
+                            .min_width(260.0)
+                            .align_left()
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.drawing.open = true;
+                            ui.close();
+                        }
+                        if Btn::new("Crop page…")
+                            .enabled(idle)
+                            .min_width(260.0)
+                            .align_left()
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.crop.open = true;
+                            ui.close();
+                        }
+                        if Btn::new("Export pages as images…")
+                            .enabled(idle)
+                            .min_width(260.0)
+                            .align_left()
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.export.open = true;
+                            ui.close();
+                        }
+                        if Btn::new("Page numbers / watermark…")
+                            .enabled(idle)
+                            .min_width(260.0)
+                            .align_left()
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.stamps.open = true;
+                            ui.close();
+                        }
+                        if Btn::new("Compress images…")
+                            .enabled(idle)
+                            .min_width(260.0)
+                            .align_left()
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.compression.open = true;
+                            ui.close();
+                        }
+                        if Btn::new("Redact…")
+                            .enabled(idle)
+                            .min_width(260.0)
+                            .align_left()
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.redaction.open = true;
+                            if let Some(o) = self.text_tool.selection.get(self.text_tool.selected) {
+                                self.redaction.page = o.page;
+                                self.redaction.bounds = o.bounds;
+                            }
+                            ui.close();
+                        }
+                        if Btn::new("OCR current page")
+                            .enabled(idle)
+                            .min_width(260.0)
+                            .align_left()
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            let page = self.doc.as_ref().map_or(0, |d| d.current_page as u16);
+                            self.commit_edit();
+                            self.busy += 1;
+                            self.send(Request::Ocr(page));
+                            ui.close();
+                        }
+                        if Btn::new("Images…")
+                            .enabled(idle)
+                            .min_width(260.0)
+                            .align_left()
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.pictures.open = true;
+                            self.commit_edit();
+                            self.busy += 1;
+                            self.send(Request::Pictures);
+                            ui.close();
+                        }
+                        if Btn::new("Markup and notes…")
+                            .enabled(idle)
+                            .min_width(260.0)
+                            .align_left()
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.markup.open = true;
+                            if let Some(o) = self.text_tool.selection.get(self.text_tool.selected) {
+                                self.markup.draft.page = o.page;
+                                self.markup.draft.bounds = o.bounds;
+                            }
+                            self.commit_edit();
+                            self.busy += 1;
+                            self.send(Request::Annotations);
+                            ui.close();
+                        }
+                        if Btn::new("Merge, split and extract…")
+                            .enabled(idle)
+                            .min_width(260.0)
+                            .align_left()
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.organize.open = true;
+                            ui.close();
+                        }
+                        if Btn::new("Find and replace…")
+                            .enabled(idle)
+                            .min_width(260.0)
+                            .align_left()
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.replace.open = true;
+                            ui.close();
+                        }
+                        if Btn::new("Fill form…")
+                            .enabled(idle)
+                            .min_width(260.0)
+                            .align_left()
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.commit_edit();
+                            self.forms.open = true;
+                            self.busy += 1;
+                            self.send(Request::FormFields);
+                            ui.close();
+                        }
+                        if Btn::new("Signatures…")
+                            .enabled(idle)
+                            .min_width(260.0)
+                            .align_left()
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.signatures.open = true;
+                            ui.close();
+                        }
+                        if Btn::new("Print…")
+                            .id("print-document")
+                            .enabled(idle)
+                            .min_width(260.0)
+                            .align_left()
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.commit_edit();
+                            self.busy += 1;
+                            self.send(Request::Print);
+                            ui.close();
+                        }
+                        ui.separator();
+                        if self.recent_files.is_empty() {
+                            ui.label(RichText::new("No recent files").color(p.muted));
+                        }
+                        for path in &self.recent_files {
+                            let name = path.file_name().unwrap_or_default().to_string_lossy();
+                            let tip = shown_path(path);
+                            if Btn::new(&name)
+                                .with_icon(Icon::File)
+                                .align_left()
+                                .min_width(260.0)
+                                .height(32.0)
+                                .enabled(idle)
+                                .tip(&tip)
+                                .show(ui, p)
+                                .clicked()
+                            {
+                                open = Some(path.clone());
+                                ui.close();
+                            }
+                        }
+                    });
             });
             if let Some(path) = open {
                 self.request_open(Some(path));
@@ -4579,5 +4584,55 @@ mod tests {
         assert_eq!(tabs.tabs.len(), 1);
         assert_eq!(tabs.active, 0);
         assert!(tabs.tabs[0].1.doc.as_ref().unwrap().dirty());
+    }
+    #[test]
+    fn document_tools_scroll_and_dispatch_print_at_small_height() {
+        let ctx = Context::default();
+        theme::install(&ctx);
+        let (mut app, inbox, _outbox) = mock_app();
+        opened(&mut app, &ctx);
+        let frame = |app: &mut EditorApp, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(640.0, 420.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let p = theme::palette(ui);
+                    egui::Panel::top("toolbar").show(ui, |ui| app.toolbar(ui, &p));
+                },
+            );
+            output.textures_delta.clear();
+        };
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        frame(&mut app, click_at(tool_center(&ctx, "recent")));
+        frame(&mut app, vec![]);
+        let mut print = tool_center(&ctx, "print-document");
+        for _ in 0..30 {
+            if print.y > 80.0 && print.y < 310.0 {
+                break;
+            }
+            frame(
+                &mut app,
+                vec![
+                    egui::Event::PointerMoved(pos2(print.x, 180.0)),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        phase: egui::TouchPhase::Move,
+                        delta: vec2(0.0, -80.0),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+            print = tool_center(&ctx, "print-document");
+        }
+        assert!(
+            print.y > 60.0 && print.y < 380.0,
+            "Print is outside the viewport: {print:?}"
+        );
+        frame(&mut app, click_at(print));
+        assert!(matches!(inbox.try_recv().unwrap(), Request::Print));
     }
 }

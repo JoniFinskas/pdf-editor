@@ -61,11 +61,11 @@ impl Engine {
                         return Err(err("Invalid annotation bounds"));
                     }
                     let mut color = [255, 210, 40];
-                    if let Ok(c) = d.get(b"C").and_then(Object::as_array) {
-                        if c.len() == 3 {
-                            for i in 0..3 {
-                                color[i] = (number(&c[i])?.clamp(0.0, 1.0) * 255.0) as u8;
-                            }
+                    if let Ok(c) = d.get(b"C").and_then(Object::as_array)
+                        && c.len() == 3
+                    {
+                        for i in 0..3 {
+                            color[i] = (number(&c[i])?.clamp(0.0, 1.0) * 255.0) as u8;
                         }
                     }
                     let text = d
@@ -141,10 +141,10 @@ impl Engine {
                 .get(&(u32::from(page_no) + 1))
                 .ok_or_else(|| err("Invalid page"))?;
             let mut objects = annots(&pdf, page)?;
-            if let Some(selected) = selected {
-                if selected.index >= objects.len() {
-                    return Err(err("Annotation no longer exists"));
-                }
+            if let Some(selected) = selected
+                && selected.index >= objects.len()
+            {
+                return Err(err("Annotation no longer exists"));
             }
             if let Some(markup) = markup {
                 let dictionary = make_annotation(&mut pdf, markup, page)?;
@@ -176,7 +176,9 @@ fn decode_text(bytes: &[u8]) -> String {
     if bytes.starts_with(&[0xfe, 0xff]) {
         String::from_utf16_lossy(
             &bytes[2..]
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|p| u16::from_be_bytes([p[0], p[1]]))
                 .collect::<Vec<_>>(),
         )

@@ -165,7 +165,7 @@ impl Engine {
                 .ok_or_else(|| err("Invalid page"))?;
             let mut rgb = Vec::with_capacity(image.rgba.len() / 4 * 3);
             let mut alpha = Vec::with_capacity(image.rgba.len() / 4);
-            for pixel in image.rgba.chunks_exact(4) {
+            for pixel in image.rgba.as_chunks::<4>().0 {
                 rgb.extend_from_slice(&pixel[..3]);
                 alpha.push(pixel[3]);
             }

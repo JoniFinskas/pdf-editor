@@ -15,6 +15,10 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
   page with General, Editing, Shortcuts and About sections, floating find and
   text toolbars, and a pages sidebar that can be hidden.
 
+### Fixed
+
+- Keep the expanded document-tools menu scrollable on smaller windows.
+
 ### Added
 
 - Bookmarks sidebar with nested navigation, add, rename, delete and sibling reordering.

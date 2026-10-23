@@ -83,8 +83,52 @@ existing files and the original path are never overwritten.
 - Ctrl+O opens, Ctrl+S saves a new copy, Ctrl+Z/Ctrl+Y undo/redo, and Ctrl+Plus/Minus zoom.
   Text fields keep their own undo history while focused.
 - Recent lists the last ten opened PDFs in the existing local settings file.
-  Opening another file or closing warns about unsaved changes.
+  Opening another file creates a separate tab. Closing a dirty tab or the app warns
+  about unsaved changes. Each tab has its own undo history.
 - `pdf-editor.exe "C:\Documents\My report.pdf"` opens a PDF at startup.
+
+## Daily and extra tools
+
+Open the menu beside **Open** for document tools. Tool windows use PDF points for
+placement and size; page numbers in controls start at one.
+
+- Print opens the Windows print dialog and prints rendered pages, including edits.
+- Signatures supports drawing, PNG/JPG import, and a reusable local library. Place
+  and size a signature before adding it; the Images tool can adjust inserted image
+  positions and dimensions. Signatures are flattened page graphics, not digital
+  certificates.
+- Forms lists existing text, checkbox, radio and dropdown fields. Select a field,
+  edit its value, and Apply. JavaScript and external form actions are disabled.
+- Replace counts editable matches and replaces one or all while retaining the
+  existing font where possible. Unsupported text mappings produce an error.
+- Encrypted PDFs prompt for a password. Save As optionally encrypts the new copy
+  with AES-256. Recovery copies are disabled for encrypted sources. A blank Save As
+  password deliberately exports an unencrypted copy.
+- Merge appends PDFs in the chosen order. Extract accepts ranges such as `1-3,5`;
+  Split separates groups with semicolons, such as `1-3;4-6`. These exports are
+  unencrypted. Encrypted merge inputs need a separately decrypted copy.
+- Markup creates editable PDF highlights, underlines, strikethroughs and sticky
+  notes. Select an entry in its list to update or delete it.
+- OCR recognizes an image-only current page with installed Windows OCR languages
+  and adds invisible searchable text. It needs a supported Windows OCR language;
+  there is no bundled engine or cloud service.
+- Redaction permanently removes source content from the saved copy by rebuilding
+  **every page as an image**, blackening the selected area before encoding. This
+  also removes searchable text, forms, bookmarks and metadata throughout the
+  document. The tool explains this and requires acknowledgment. In-memory Undo
+  restores the original until the document closes; the source file is untouched.
+- Compress downsizes and JPEG-compresses supported RGB images, showing before/after
+  byte sizes. Unsupported image encodings remain unchanged, and a larger result
+  is not accepted.
+- Page numbers and watermarks accept `{page}` and `{pages}`, font, position, size,
+  color and opacity. They are undoable text content on all pages.
+- Export creates PNG/JPG files for selected page ranges at 36–600 DPI, within the
+  render limit. Crop changes visible page bounds; hidden content is retained.
+- Draw and shapes supports freehand, rectangle, ellipse, line and arrow. Enable
+  Draw on page and drag; every stroke is a real PDF annotation and one undo step.
+- Bookmarks opens a sidebar for navigation and nested entries. Add targets the
+  current page; Rename, Delete and Move up/down act on the selected entry. Delete
+  includes children; moving preserves the selected subtree.
 
 ## Editing behavior
 
@@ -103,8 +147,7 @@ The current text editor targets page-level text runs. Nested Form XObject text,
 unsupported encodings, and ambiguous native/parser object mappings fail safely
 rather than being rewritten heuristically. Replacement system fonts support
 TrueType files and TrueType collections; CFF-only/Type1 font substitution may use
-a TrueType fallback. Complex-script shaping, paragraph reflow, OCR, annotations,
-form editing, and image editing are not provided.
+a TrueType fallback. Complex-script shaping and paragraph reflow are not provided.
 
 Limits: 64 MiB source/result PDFs, 16 MiB per decoded content/font stream,
 10,000 pages, 16 megapixels per render, 16,384 replacement characters, and

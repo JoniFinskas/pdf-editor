@@ -90,10 +90,10 @@ impl Engine {
             if std::mem::discriminant(&actual.value) != std::mem::discriminant(value) {
                 return Err(err("Field type mismatch"));
             }
-            if let FieldValue::Text(text) = value {
-                if text.len() > 16384 || text.contains('\0') {
-                    return Err(err("Form text exceeds the supported length"));
-                }
+            if let FieldValue::Text(text) = value
+                && (text.len() > 16384 || text.contains('\0'))
+            {
+                return Err(err("Form text exceeds the supported length"));
             }
             let bindings = self.raw;
             // The wrapper exposes field values but not interactive appearance regeneration.

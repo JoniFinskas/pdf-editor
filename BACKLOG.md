@@ -43,6 +43,6 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
 
 ## Out of scope for v1
 
-Defined in SPEC.md: paragraph reflow across lines, forms, annotations, image
-editing and OCR. Nested Form XObject text and ambiguous text mappings are
+Paragraph reflow across lines remains excluded. Parts F and G add forms,
+annotations, image editing and OCR. Nested Form XObject text and ambiguous text mappings are
 refused rather than rewritten heuristically.

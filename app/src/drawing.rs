@@ -42,7 +42,7 @@ impl DrawingTool {
             });
             ui.horizontal(|ui| {ui.color_edit_button_srgb(&mut self.color);ui.label("Width");ui.add(egui::DragValue::new(&mut self.width).range(0.1..=100.0));});
             ui.add(egui::Slider::new(&mut self.opacity,0.0..=1.0).text("Opacity"));
-            if Btn::new(if self.active {"Finish drawing"}else{"Draw on page"}).show(ui,p).clicked() {self.active=!self.active;self.points.clear();}
+            if Btn::new(if self.active {"Finish drawing"}else{"Draw on page"}).show(ui,p).clicked() {self.active = !self.active;self.points.clear();}
             ui.label("Drag on a page to draw. Each stroke or shape becomes a PDF annotation and one undo step.");
         });
     }

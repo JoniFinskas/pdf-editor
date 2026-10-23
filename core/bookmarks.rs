@@ -94,7 +94,7 @@ fn named_tree(
         if items.len() % 2 != 0 || items.len() > 20000 {
             return Err(err("Invalid destination names"));
         }
-        for pair in items.chunks_exact(2) {
+        for pair in items.as_chunks::<2>().0 {
             names.insert(pair[0].as_str()?.to_vec(), pair[1].clone());
         }
     }
@@ -112,10 +112,10 @@ fn destinations(pdf: &lopdf::Document) -> Result<BTreeMap<Vec<u8>, Object>> {
             names.insert(key.clone(), value.clone());
         }
     }
-    if let Ok(root) = pdf.catalog()?.get(b"Names") {
-        if let Ok(dests) = pdf.dereference(root)?.1.as_dict()?.get(b"Dests") {
-            named_tree(pdf, dests, &mut names, &mut 0, 0)?;
-        }
+    if let Ok(root) = pdf.catalog()?.get(b"Names")
+        && let Ok(dests) = pdf.dereference(root)?.1.as_dict()?.get(b"Dests")
+    {
+        named_tree(pdf, dests, &mut names, &mut 0, 0)?;
     }
     Ok(names)
 }

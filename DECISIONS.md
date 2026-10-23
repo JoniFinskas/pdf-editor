@@ -382,3 +382,7 @@ Capture page drags through the inverse native page transform so drawing respects
 ### Bookmarks
 
 Decided to preserve nested outline trees and destination dictionaries while rewriting sibling links after edits. New bookmarks target the current page with Fit; existing local direct and named destinations resolve for navigation. External actions remain inert. Reordering stays within the current sibling group, deletion includes descendants, and undo restores the complete tree. Traversal rejects cycles, more than 10,000 entries and nesting beyond 64 levels. Titles use Unicode PDF text strings. The sidebar is refreshed after document changes to prevent stale identifiers from modifying another revision.
+
+### Final interface review
+
+Decided to make the expanded document-tools menu scroll within the viewport so Print and recent files remain reachable at the minimum window height. A pointer-and-wheel interaction regression test covers reaching and dispatching Print at 640×420. Updated the usage guide and manual checklist for all daily and extra tools, including encrypted-source recovery restrictions and whole-document redaction flattening.
