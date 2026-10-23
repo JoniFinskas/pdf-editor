@@ -535,3 +535,7 @@ safely. The Objects context menu exposes Ungroup for Form XObjects.
 
 Generated fixtures cover nested shared forms, four page rotations, exact rendered
 pixel identity, independent move/delete, undo, stale selection and save/reopen.
+
+## Redaction resource validation
+
+Clean nested encoding, CID system, decoder parameter and transparency group dictionaries by semantic role, including indirect dictionaries without a Type entry. This prevents auxiliary references from retaining removed data. Reject retained PDF function resources and forms that inherit resources: unsupported function serialization can change colors, and binding a shared form to one parent's resources can change other pages. Both cases retain the original bytes and undo state on failure.

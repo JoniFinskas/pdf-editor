@@ -194,7 +194,10 @@ fn clean_page_graph(mut pdf: lopdf::Document) -> Result<lopdf::Document> {
     );
     let catalog = pdf.add_object(dictionary! {"Type"=>"Catalog","Pages"=>root});
     pdf.trailer = dictionary! {"Root"=>catalog};
+    pdf.prune_objects();
+    let source = pdf.clone();
     for object in pdf.objects.values_mut() {
+        clean_resource_roles(object, &source, 0)?;
         strip_auxiliary(object, 0)?;
     }
     pdf.prune_objects();
@@ -233,7 +236,6 @@ fn clean_resources(
             "Redaction does not support marked content with properties",
         ));
     }
-    let inherited_resources = resources.clone();
     let mut result = Dictionary::new();
     for (key, operators) in [
         (b"XObject".as_slice(), &["Do"][..]),
@@ -305,7 +307,9 @@ fn clean_resources(
                         .map(|o| pdf.dereference(o).and_then(|(_, o)| o.as_dict()))
                         .transpose()?
                         .cloned()
-                        .unwrap_or(inherited_resources.clone());
+                        .ok_or_else(|| {
+                            err("Redaction does not support forms with inherited resources")
+                        })?;
                     let cleaned = clean_resources(pdf, r, &data, visited, depth + 1)?;
                     stream.dict.set("Resources", cleaned);
                 }
@@ -330,6 +334,80 @@ fn clean_resources(
     }
 
     Ok(result)
+}
+
+// Resource dictionary meaning comes from its owning key, not an optional /Type.
+// Resolve these small dictionaries before pruning so private references cannot
+// survive merely because the containing resource is still in use.
+fn clean_resource_roles(object: &mut Object, pdf: &lopdf::Document, depth: usize) -> Result<()> {
+    if depth > 64 {
+        return Err(err("Resource nesting exceeds redaction limit"));
+    }
+    let dictionary = match object {
+        Object::Dictionary(d) => Some(d),
+        Object::Stream(s) => Some(&mut s.dict),
+        Object::Array(values) => {
+            for value in values {
+                clean_resource_roles(value, pdf, depth + 1)?;
+            }
+            None
+        }
+        _ => None,
+    };
+    if let Some(dictionary) = dictionary {
+        if dictionary.has(b"FunctionType") {
+            return Err(err(
+                "Redaction does not support retained function resources",
+            ));
+        }
+        for (key, value) in dictionary.iter_mut() {
+            let allowed: Option<&[&[u8]]> = match key.as_slice() {
+                b"Encoding" => Some(&[b"Type", b"BaseEncoding", b"Differences"]),
+                b"CIDSystemInfo" => Some(&[b"Registry", b"Ordering", b"Supplement"]),
+                b"DecodeParms" => Some(&[
+                    b"Predictor",
+                    b"Colors",
+                    b"BitsPerComponent",
+                    b"Columns",
+                    b"EarlyChange",
+                    b"K",
+                    b"EndOfLine",
+                    b"EncodedByteAlign",
+                    b"Rows",
+                    b"EndOfBlock",
+                    b"BlackIs1",
+                    b"DamagedRowsBeforeError",
+                    b"JBIG2Globals",
+                    b"ColorTransform",
+                ]),
+                b"Group" => Some(&[b"Type", b"S", b"CS", b"I", b"K"]),
+                _ => None,
+            };
+            if let Some(allowed) = allowed {
+                let (_, resolved) = pdf.dereference(value)?;
+                if let Object::Dictionary(d) = resolved {
+                    let mut cleaned = d.clone();
+                    let removed: Vec<_> = cleaned
+                        .iter()
+                        .filter(|(k, _)| !allowed.contains(&k.as_slice()))
+                        .map(|(k, _)| k.clone())
+                        .collect();
+                    for k in removed {
+                        cleaned.remove(&k);
+                    }
+                    if key.as_slice() == b"Encoding" {
+                        cleaned.set("Type", "Encoding");
+                        if !cleaned.has(b"Differences") {
+                            cleaned.set("Differences", Vec::<Object>::new());
+                        }
+                    }
+                    *value = Object::Dictionary(cleaned);
+                }
+            }
+            clean_resource_roles(value, pdf, depth + 1)?;
+        }
+    }
+    Ok(())
 }
 
 fn strip_auxiliary(object: &mut Object, depth: usize) -> Result<()> {
