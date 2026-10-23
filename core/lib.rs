@@ -13,6 +13,7 @@ mod printing;
 pub use images::{Picture, Placement, signature_files, signature_image, store_signature};
 pub use pages::PageEdit;
 pub use printing::PrintJob;
+mod replace;
 mod search;
 mod settings;
 mod startup;

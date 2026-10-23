@@ -55,6 +55,7 @@ pub struct EditorApp {
     text_tool: TextTool,
     signatures: crate::signatures::Signatures,
     forms: crate::forms::Forms,
+    replace: crate::replace::Replace,
     find: FindState,
     worker: Worker,
     engine_alive: bool,
@@ -327,6 +328,7 @@ impl EditorApp {
             text_tool: TextTool::default(),
             signatures: Default::default(),
             forms: Default::default(),
+            replace: Default::default(),
             find: FindState::default(),
             worker,
             engine_alive: true,
@@ -584,6 +586,12 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::ReplacementCount(query, count) => {
+                self.busy = self.busy.saturating_sub(1);
+                if self.replace.query == query {
+                    self.replace.count = Some(count);
+                }
+            }
             Reply::FormFields(fields) => {
                 self.busy = self.busy.saturating_sub(1);
                 self.forms.fields = fields;
@@ -826,6 +834,7 @@ impl EditorApp {
                     self.text_tool.selection.clear();
                     doc.generation = generation;
                     self.find.matches.clear();
+                    self.replace.count = None;
                     if !self.find.query.is_empty() {
                         self.worker.send(Request::Find(self.find.query.clone()));
                     }
@@ -1422,6 +1431,11 @@ impl EditorApp {
                         }
                     });
                 });
+            if Btn::new("Replace…").show(ui, p).clicked() {
+                self.replace.open = true;
+                self.replace.query = self.find.query.clone();
+                self.replace.count = None;
+            }
             let count = self.find.matches.len();
             let position = if count == 0 { 0 } else { self.find.active + 1 };
             ui.add_sized(
@@ -1589,6 +1603,16 @@ impl EditorApp {
             let mut open = None;
             Popup::menu(&recent).show(|ui| {
                 ui.set_min_width(260.0);
+                if Btn::new("Find and replace…")
+                    .enabled(idle)
+                    .min_width(260.0)
+                    .align_left()
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.replace.open = true;
+                    ui.close();
+                }
                 if Btn::new("Fill form…")
                     .enabled(idle)
                     .min_width(260.0)
@@ -2879,6 +2903,11 @@ impl eframe::App for EditorApp {
             self.floating_tools(&ctx, central.response.rect, &p);
         }
 
+        if let Some(request) = self.replace.show(&ctx, &p, self.busy == 0) {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
         if let Some(request) = self.forms.show(&ctx, &p, self.busy == 0) {
             self.commit_edit();
             self.busy += 1;
@@ -3566,6 +3595,7 @@ mod tests {
                 text_tool: TextTool::default(),
                 signatures: Default::default(),
                 forms: Default::default(),
+                replace: Default::default(),
                 find: FindState::default(),
                 worker,
                 engine_alive: true,

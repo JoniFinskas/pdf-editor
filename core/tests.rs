@@ -1215,3 +1215,41 @@ fn forms_edit_all_supported_types_and_undo() {
 fn generate_form_fixture() {
     fs::write(fixture("forms.pdf"), form_fixture()).unwrap();
 }
+
+#[test]
+fn replace_one_all_preserves_fonts_and_is_atomic() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let path = temp("replace.pdf");
+    fs::write(&path, generated("AB AB", false, 0, 0.0, false, false)).unwrap();
+    let mut doc = e.open(&path).unwrap();
+    let before = doc.bytes.clone();
+    let font = e.text_objects(&doc, 0).unwrap()[0].font.clone();
+    assert_eq!(e.replacement_count(&doc, "ab").unwrap(), 2);
+    assert_eq!(e.replace_text(&mut doc, "ab", "ä", Some(1)).unwrap(), 1);
+    assert_eq!(e.text_objects(&doc, 0).unwrap()[0].text, "AB ä");
+    assert_eq!(e.text_objects(&doc, 0).unwrap()[0].font, font);
+    doc.undo();
+    assert_eq!(doc.bytes, before);
+    assert_eq!(e.replace_text(&mut doc, "AB", "ö", None).unwrap(), 2);
+    assert_eq!(e.text_objects(&doc, 0).unwrap()[0].text, "ö ö");
+    let stable = doc.bytes.clone();
+    assert!(e.replace_text(&mut doc, "ö", "bad\ntext", None).is_err());
+    assert_eq!(doc.bytes, stable);
+    doc.undo();
+    assert_eq!(doc.bytes, before);
+    e.edit_pages(
+        &mut doc,
+        &PageEdit::Insert {
+            path: path.clone(),
+            before: 1,
+        },
+    )
+    .unwrap();
+    assert_eq!(e.replacement_count(&doc, "AB").unwrap(), 4);
+    assert_eq!(e.replace_text(&mut doc, "AB", "å", None).unwrap(), 4);
+    assert_eq!(e.replacement_count(&doc, "å").unwrap(), 4);
+    doc.undo();
+    assert_eq!(e.replacement_count(&doc, "AB").unwrap(), 4);
+    fs::remove_file(path).unwrap();
+}

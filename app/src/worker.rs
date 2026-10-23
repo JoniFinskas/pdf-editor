@@ -24,6 +24,12 @@ pub enum Request {
     FillField(pdf_editor_core::FormField, pdf_editor_core::FieldValue),
     PlacePicture(pdf_editor_core::Picture, pdf_editor_core::Placement),
     Find(String),
+    ReplacementCount(String),
+    Replace {
+        query: String,
+        text: String,
+        occurrence: Option<usize>,
+    },
     Fonts,
     Thumbnail(u16),
     Pages(pdf_editor_core::PageEdit),
@@ -71,6 +77,7 @@ impl PageTransform {
 
 pub enum Reply {
     Printed(bool),
+    ReplacementCount(String, usize),
     FormFields(Vec<pdf_editor_core::FormField>),
     Thumbnail {
         generation: u64,
@@ -356,6 +363,28 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 Err(e) => failed(e),
             }
         }
+        Request::ReplacementCount(query) => {
+            match engine.replacement_count(state.doc.as_ref()?, &query) {
+                Ok(count) => Some(Reply::ReplacementCount(query, count)),
+                Err(e) => failed(e),
+            }
+        }
+        Request::Replace {
+            query,
+            text,
+            occurrence,
+        } => match engine.replace_text(state.doc.as_mut()?, &query, &text, occurrence) {
+            Ok(count) => {
+                state.generation += u64::from(count > 0);
+                Some(changed(
+                    state,
+                    ChangeKind::Edit,
+                    Some(format!("Replaced {count} matches.")),
+                    count,
+                ))
+            }
+            Err(e) => failed(e),
+        },
         Request::FormFields => match engine.form_fields(state.doc.as_ref()?) {
             Ok(fields) => Some(Reply::FormFields(fields)),
             Err(e) => failed(e),

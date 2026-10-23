@@ -320,3 +320,7 @@ Promoted the existing locked `image = 0.25.10` crate to an exact direct dependen
 Use PDFium form interaction APIs for focus, text replacement, button clicks and dropdown selection. The high-level setters only write dictionary values and do not regenerate appearances. A second binding to the same trusted DLL is retained before runtime initialization to access raw APIs; both bindings use the library's shared thread marshaller. Native handles and the callback table are lifetime-bound and released in order. No JavaScript, external-action, upload or network callbacks are installed.
 
 Treat the explicit Off appearance as unchecked: the wrapper's radio fallback compares the group value with its appearance and can otherwise classify Off/Off as selected. Persisted values and visible appearance changes are tested for every supported field type. Form controls remain editable PDF widgets.
+
+## Part F: Find and replace
+
+Replacement searches editable text runs with Unicode-aware case folding and original byte boundaries. Adjacent runs can share matches; separate lines and distant columns are not concatenated. The replacement appears in the first affected run and unaffected prefixes/suffixes retain their run. All page changes are staged and independently parsed before one history update. Unsupported content mapping fails the entire operation. The replacement dialog counts editable occurrences separately from general PDF text search, which can also find noneditable nested content.
