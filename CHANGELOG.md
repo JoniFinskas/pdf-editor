@@ -6,6 +6,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Scrollable page thumbnail sidebar with click navigation.
+
 - Change the size and color of an existing text object.
 
 - Delete individual PDF text objects from the selected-line toolbar.

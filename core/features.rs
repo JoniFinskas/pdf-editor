@@ -17,6 +17,17 @@ pub struct NewText {
 }
 
 impl Engine {
+    pub fn thumbnail(&self, doc: &Document, page: u16, edge: u16) -> Result<Image> {
+        if !(16..=512).contains(&edge) {
+            return Err(err("Thumbnail edge must be 16 to 512 pixels"));
+        }
+        let pages = self.pages(doc)?;
+        let info = pages
+            .get(page as usize)
+            .ok_or_else(|| err("Invalid page"))?;
+        self.render(doc, page, edge as f32 / info.width.max(info.height))
+    }
+
     pub fn style_text(
         &self,
         doc: &mut Document,

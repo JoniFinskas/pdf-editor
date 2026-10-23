@@ -895,3 +895,18 @@ fn style_preserves_text_font_and_neighbors() {
         assert!(doc.redo());
     }
 }
+
+#[test]
+fn thumbnail_dimensions_and_limits() {
+    let _lock = PDFIUM.lock().unwrap();
+    let e = engine();
+    for file in ["rotated.pdf", "unicode-cid.pdf"] {
+        let doc = e.open(&fixture(file)).unwrap();
+        let image = e.thumbnail(&doc, 0, 150).unwrap();
+        assert!(image.width <= 151 && image.height <= 151);
+        assert!(image.width.max(image.height) >= 149);
+        assert_eq!(image.rgba.len(), (image.width * image.height * 4) as usize);
+        assert!(e.thumbnail(&doc, 0, 0).is_err());
+        assert!(e.thumbnail(&doc, u16::MAX, 150).is_err());
+    }
+}

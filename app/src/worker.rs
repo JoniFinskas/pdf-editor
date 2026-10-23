@@ -21,6 +21,7 @@ pub enum Request {
     Open(PathBuf),
     Find(String),
     Fonts,
+    Thumbnail(u16),
     DeleteText(TextObject),
     StyleText {
         object: TextObject,
@@ -64,6 +65,11 @@ impl PageTransform {
 }
 
 pub enum Reply {
+    Thumbnail {
+        generation: u64,
+        page: u16,
+        image: pdf_editor_core::Image,
+    },
     Fonts(Vec<String>),
     Found {
         generation: u64,
@@ -255,6 +261,17 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
+        Request::Thumbnail(page) => {
+            let doc = state.doc.as_ref()?;
+            match engine.thumbnail(doc, page, 150) {
+                Ok(image) => Some(Reply::Thumbnail {
+                    generation: state.generation,
+                    page,
+                    image,
+                }),
+                Err(e) => failed(e),
+            }
+        }
         Request::StyleText {
             object,
             size,
@@ -457,7 +474,9 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
 
 fn page_of(request: &Request) -> Option<u16> {
     match request {
-        Request::Render { page, .. } | Request::Objects { page } => Some(*page),
+        Request::Render { page, .. } | Request::Objects { page } | Request::Thumbnail(page) => {
+            Some(*page)
+        }
         _ => None,
     }
 }

@@ -216,3 +216,7 @@ The selected-line toolbar exposes its individual PDF runs so deletion targets ex
 ## Part D: Text size and color
 
 Style changes retain the original encoded glyph operators, font resource and spacing. Scoped graphics state restores surrounding style, and existing cursor correction preserves subsequent positions. Size is bounded to 1–1000 points. The individual-run picker identifies the exact object being styled.
+
+## Part D: Page thumbnails
+
+A virtualized sidebar renders visible 150-pixel thumbnails on the worker, keeps a small nearby cache, and navigates by click. Edits invalidate thumbnails. This bounds texture memory even for long PDFs.

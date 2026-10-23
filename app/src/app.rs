@@ -130,6 +130,8 @@ struct DocView {
 }
 
 struct PageView {
+    thumbnail: Option<TextureHandle>,
+    pending_thumbnail: bool,
     info: PageInfo,
     texture: Option<PageTexture>,
     pending_render: Option<(f32, u64)>,
@@ -497,6 +499,29 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::Thumbnail {
+                generation,
+                page,
+                image,
+            } => {
+                if self
+                    .doc
+                    .as_ref()
+                    .is_some_and(|d| d.generation == generation)
+                {
+                    if let Some(p) = self.page_mut(page) {
+                        p.pending_thumbnail = false;
+                        p.thumbnail = Some(ctx.load_texture(
+                            format!("thumb-{generation}-{page}"),
+                            egui::ColorImage::from_rgba_unmultiplied(
+                                [image.width as usize, image.height as usize],
+                                &image.rgba,
+                            ),
+                            TextureOptions::LINEAR,
+                        ));
+                    }
+                }
+            }
             Reply::Fonts(fonts) => self.text_tool.fonts = fonts,
             Reply::Found {
                 generation,
@@ -558,6 +583,8 @@ impl EditorApp {
                     pages: pages
                         .into_iter()
                         .map(|info| PageView {
+                            thumbnail: None,
+                            pending_thumbnail: false,
                             info,
                             texture: None,
                             pending_render: None,
@@ -692,6 +719,8 @@ impl EditorApp {
                     }
                     doc.edit = None;
                     for page in &mut doc.pages {
+                        page.thumbnail = None;
+                        page.pending_thumbnail = false;
                         page.pending_render = None;
                         page.pending_objects = None;
                         page.objects = None;
@@ -799,6 +828,63 @@ impl EditorApp {
                 }
                 self.banner(BannerKind::Error, message);
             }
+        }
+    }
+
+    fn thumbnails(&mut self, ui: &mut Ui) {
+        ui.heading("Pages");
+        let Some(doc) = &mut self.doc else { return };
+        let mut requests = Vec::new();
+        let mut jump = None;
+        ScrollArea::vertical().show_rows(ui, 180.0, doc.pages.len(), |ui, range| {
+            for index in range.clone() {
+                let page = &mut doc.pages[index];
+                ui.vertical_centered(|ui| {
+                    let response = if let Some(texture) = &page.thumbnail {
+                        ui.add(
+                            egui::Image::new((texture.id(), texture.size_vec2()))
+                                .sense(Sense::click_and_drag()),
+                        )
+                    } else {
+                        if !page.pending_thumbnail && page.error.is_none() {
+                            page.pending_thumbnail = true;
+                            requests.push(Request::Thumbnail(index as u16));
+                        }
+                        ui.add_sized(
+                            vec2(120.0, 150.0),
+                            Button::new(if page.error.is_some() {
+                                "Unavailable"
+                            } else {
+                                "Loading…"
+                            }),
+                        )
+                    };
+                    if response.clicked() {
+                        jump = Some(index);
+                    }
+                    ui.selectable_label(doc.current_page == index, format!("Page {}", index + 1))
+                        .clicked()
+                        .then(|| jump = Some(index));
+                });
+            }
+            for (i, page) in doc.pages.iter_mut().enumerate() {
+                if i + 2 < range.start || i > range.end + 2 {
+                    page.thumbnail = None;
+                }
+            }
+        });
+        if let Some(index) = jump {
+            let y = CANVAS_PAD
+                + doc
+                    .pages
+                    .iter()
+                    .take(index)
+                    .map(|p| p.info.height * doc.scale() + PAGE_GAP)
+                    .sum::<f32>();
+            doc.scroll_to = Some(vec2(doc.offset.x, y));
+        }
+        for request in requests {
+            self.send(request);
         }
     }
 
@@ -1932,6 +2018,12 @@ impl eframe::App for EditorApp {
         }
         if self.find.open && !self.settings_open {
             egui::Panel::top("find").show(ui, |ui| self.find_bar(ui));
+        }
+        if self.doc.is_some() && !self.settings_open {
+            egui::Panel::left("thumbnails")
+                .default_size(180.0)
+                .resizable(true)
+                .show(ui, |ui| self.thumbnails(ui));
         }
         egui::CentralPanel::no_frame()
             .frame(Frame::new().fill(p.canvas))
