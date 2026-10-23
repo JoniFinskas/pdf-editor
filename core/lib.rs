@@ -46,7 +46,7 @@ mod settings;
 mod stamps;
 mod startup;
 pub use search::SearchMatch;
-pub use stamps::{RangeStamp, StampPlacement, TextStamp, stamp_date_today};
+pub use stamps::{BatesNumber, RangeStamp, StampPlacement, TextStamp, stamp_date_today};
 pub use startup::startup_path;
 #[cfg(test)]
 mod tests;

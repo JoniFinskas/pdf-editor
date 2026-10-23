@@ -209,3 +209,5 @@ The opt-in corpus-runner binary exercises existing core APIs inside Docker only.
 
 ### Ranged headers and footers
 `RangeStamp` combines a `TextStamp`, one-based `pages` ranges (empty selects all), a literal date and `StampPlacement::{Header,Footer,Absolute}`. `Engine::stamp_page_range` expands `{page}`, `{pages}` and `{date}` in one atomic undo step. Header/footer offsets follow the visible cropped/rotated page; y is the edge margin. Invalid ranges, margins and control characters fail without modifying the document. `stamp_date_today()` supplies a UTC date; callers capture it once and may override it.
+
+`BatesNumber { prefix, start, digits }` formats fixed-width decimal labels. `label(offset)` rejects invalid prefixes, widths outside 1–20, overflow or a number wider than the chosen width. `Engine::stamp_bates(doc, range_stamp, bates)` numbers selected pages in document order, preserving leading zeroes in one atomic undo step; the text template is ignored.

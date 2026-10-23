@@ -333,3 +333,5 @@ full Part H acceptance: the 3,000-file Govdocs minimum and fuzz testing remain
 incomplete. The native desktop itself is not container-sandboxed.
 
 Headers and footers are available in the page-number/watermark tool. Select Header or Footer, enter page ranges such as `1-3,5` (blank means all), and use `{date}`, `{page}` and `{pages}` tokens. The date defaults to UTC and is editable.
+
+Enable Bates numbering in the stamping tool to add a prefix and fixed-width sequence, with the same page range and placement controls. Numbering follows document order. Overflow or insufficient digits aborts the entire operation.

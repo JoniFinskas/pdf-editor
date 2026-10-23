@@ -28,6 +28,7 @@ pub enum Request {
     Crop(u16, pdf_editor_core::Bounds),
     ExportImages(String, u16, pdf_editor_core::PageImageFormat, PathBuf),
     Stamp(pdf_editor_core::RangeStamp),
+    Bates(pdf_editor_core::RangeStamp, pdf_editor_core::BatesNumber),
     Compress(u32, u8),
     Redact(u16, pdf_editor_core::Bounds),
     Ocr(u16),
@@ -442,6 +443,15 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                         )),
                         usize::from(report.images > 0),
                     ))
+                }
+                Err(e) => failed(e),
+            }
+        }
+        Request::Bates(stamp, bates) => {
+            match engine.stamp_bates(state.doc.as_mut()?, &stamp, &bates) {
+                Ok(()) => {
+                    state.generation += 1;
+                    Some(changed(state, ChangeKind::Edit, None, 1))
                 }
                 Err(e) => failed(e),
             }
