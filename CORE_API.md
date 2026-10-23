@@ -11,7 +11,7 @@ I/O, lopdf and PDFium errors intentionally discard internal diagnostic details.
 | --- | --- | --- |
 | `Engine::new` | Absolute trusted PDFium DLL path | Runtime handle; reuses the process-wide runtime for the same canonical path. |
 | `Engine::open` | Source path | Document with immutable original bytes and empty history; rejects encrypted/invalid/oversized PDFs. |
-| `Engine::pages` | Document | Page dimensions in PDF points, in page order; reads PDFium page-size metadata without loading page content. |
+| `Engine::pages` | Document | Page dimensions in PDF points, in page order; uses fast PDFium metadata, with indexed page-loading fallback on metadata failure; rejects invalid dimensions and propagates loading errors. |
 | `Engine::text_objects` | Document, zero-based u16 page | Page-level text objects in paint order, with revision, native index, text, font, size, color, matrix and bounds. |
 | `Engine::hit_test` | Document, page, PDF-point x/y | Last-painted text object containing the point, or None. |
 | `Engine::render` | Document, page, positive finite pixels-per-point scale | Image with width, height and tightly packed RGBA bytes, top-left raster origin. |

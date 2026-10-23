@@ -26,9 +26,13 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Fixed
 
+- Fall back to indexed page loading when metadata sizing fails, preserving loading errors and rejecting invalid geometry.
+
 - Keep the expanded document-tools menu scrollable on smaller windows.
 
 ### Added
+
+- Add an isolated, on-demand corpus downloader and validator with Defender pre-scan, bounded container execution and aggregate-only reporting.
 
 - Headless merge, split, extract, compress, rotate, image export, Windows OCR, and
   font-preserving find/replace commands with folder dry-run counts and exit codes.
@@ -107,6 +111,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
   first.
 
 ### Fixed
+
+- Fall back to indexed page loading when metadata sizing fails, preserving loading errors and rejecting invalid geometry.
 
 - Keep all toolbar actions accessible in narrow windows and isolate background search failures from document operations.
 

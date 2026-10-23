@@ -470,3 +470,11 @@ sibling desktop binary through argument arrays without command-shell interpretat
 
 ## Corpus isolation
 Added an on-demand process-isolated corpus harness and allowlisted Govdocs archive downloader. Only fixed error categories and timing cross the parser boundary. Linux PDFium chromium/8111 SHA256 is pinned from release metadata; corpus and output remain ignored. Defender scan is mandatory between download and execution. No new public core API is introduced.
+
+## Integrated local validation
+
+Kept all branches, merges, builds and results local. No remote was added and no repository content was published. Downloaded corpus bytes and per-file outputs remain ignored; only aggregate outcomes enter project documentation. Defender scanning precedes container parsing; unchanged scanned inputs are reused read-only for validation. Exact-host redirects fail closed and failed sources remain documented rather than being replaced. Fuzz target/run coverage and the minimum corpus size remain incomplete instead of being inferred from smaller regression tests.
+
+## Page geometry fallback
+
+Keep metadata-only sizing for the common startup path. If PDFium cannot supply metadata, load pages by explicit index and validate finite positive geometry. Never use the page iterator for validation: it stops silently on a page-loading error and can return a truncated page list as success. Generated rotated-page tests compare fallback and metadata dimensions. Corpus success counts from the former iterator are historical rather than complete-coverage evidence.
