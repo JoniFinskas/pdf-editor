@@ -6,6 +6,28 @@ built on its public API.
 
 Implementation requirements and scope are documented in [SPEC.md](SPEC.md).
 
+## Features
+
+- Edit existing text with font preservation; add, delete and restyle text objects.
+- Find all matches, navigate results, and replace one or all editable matches.
+- Work in document tabs with separate undo/redo, unsaved-change warnings, recent
+  files and optional recovery copies.
+- Navigate page thumbnails and bookmarks; rotate, delete, reorder, insert, merge,
+  split, extract and crop pages.
+- Fill existing PDF forms, add reusable drawn or imported signatures, and insert,
+  move and resize PNG/JPG images.
+- Add editable highlights, underlines, strikethroughs and notes; draw freehand,
+  rectangles, ellipses, lines and arrows as PDF annotations.
+- Open password-protected PDFs and optionally protect a new saved copy with AES-256.
+- Recognize scanned pages with Windows OCR; redact content using a sanitized,
+  image-only document rebuild.
+- Compress supported images, add page numbers/watermarks, export PNG/JPG pages at
+  a chosen DPI, and print through the Windows print dialog.
+- Use light/dark themes, a grouped document menu and movable tool windows.
+
+See the controls and limitations below, especially redaction, encrypted-source
+recovery and supported text/image formats.
+
 ## Build on Windows
 
 Requirements: Windows x64, PowerShell, stable Rust with the
@@ -15,7 +37,7 @@ from the repository root:
 
 ```powershell
 ./scripts/setup-pdfium.ps1
-cargo build --release --locked
+cargo build --release --workspace --locked
 .\target\release\pdf-editor.exe
 # Or open a document immediately:
 .\target\release\pdf-editor.exe "C:\Documents\My report.pdf"
@@ -89,8 +111,21 @@ existing files and the original path are never overwritten.
 
 ## Daily and extra tools
 
-Open the menu beside **Open** for document tools. Tool windows use PDF points for
-placement and size; page numbers in controls start at one.
+Click the arrow beside **Open** for the document menu. Its **Edit** section holds
+Find and replace, Fill form, Signatures, Images, Markup and notes, Draw and shapes,
+Redact, and OCR current page. **Document** holds Bookmarks sidebar, Merge/split/
+extract, Crop page, Page numbers and watermark, Export pages as images, Compress
+images, and Print. Recent files appear below these sections; scroll the menu when
+needed.
+
+Tool windows have a labeled title row, can be moved beside the page, and close
+with their X button. They stay open while interacting with the page. The password
+prompt opens centered. Tool positions and dimensions use PDF points (72 per inch);
+page numbers in controls start at one. Drawing uses shape icon toggles, while
+markup type and image export format use segmented selectors.
+
+The active document tab has an accent line. Unsaved tabs show a dot; hover a tab
+to reveal its close button. Closing a dirty tab asks whether to discard changes.
 
 - Print opens the Windows print dialog and prints rendered pages, including edits.
 - Signatures supports drawing, PNG/JPG import, and a reusable local library. Place

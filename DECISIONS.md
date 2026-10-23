@@ -417,3 +417,7 @@ The tools added in Parts F and G now use the Part E style, with visual changes o
   and export format use the segmented control.
 - Twenty more line icons were added for the tools, still painted with egui
   shapes.
+
+## Part C refresh for the current application
+
+Decided to retain the existing size-optimized release profile and all current direct dependencies after checking their use and compiler diagnostics. The current build includes the tool-window restyle and Parts F/G. Updated the feature overview and manual checks to use the grouped Edit/Document menu and current tab/window controls. Kept version 0.1.0 and the Unreleased changelog because producing a local release-mode build does not complete the manual acceptance requirements for a versioned release.

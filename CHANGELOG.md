@@ -6,6 +6,9 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Changed
 
+- Refresh release-build verification, the feature overview and manual checks for
+  the current daily/extra features and restyled tool windows.
+
 - Size-focused release profile with thin LTO and stripped symbols; preserve panic recovery.
 - PDFium setup reuses verified downloads and includes all bundled native license notices.
 - Complete Windows release build instructions and a manual test checklist.
