@@ -516,3 +516,13 @@ existing field values and appearances while moving or resizing widget rectangles
 Date fields remain script-free text with a date-format tooltip. The designer uses
 a separate draft canvas and coordinate controls; an explicit Apply commits one
 undoable change. Refresh replaces stale selections after document mutations.
+
+## Form flattening
+
+Reuse the selected normal appearance stream as a page XObject, with its original
+resources and transform. This preserves filled text, checkmarks and dropdown
+appearances without rasterizing or rebuilding them. Preserve non-widget
+annotations. Reject missing appearances atomically rather than dropping values.
+Remove the AcroForm tree after all widgets are flattened; normal candidate
+pruning removes detached field objects. Generated fixture checks cover PDFium
+extraction, rendered appearance, save/reopen and history restoration.

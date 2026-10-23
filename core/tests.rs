@@ -2338,3 +2338,6 @@ fn designed_fields_fill_move_resize_delete_and_reopen() {
     );
     assert_eq!(doc.bytes, before);
 }
+
+#[path = "form_flatten_tests.rs"]
+mod form_flatten_tests;

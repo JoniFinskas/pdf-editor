@@ -26,6 +26,7 @@ pub use features::NewText;
 mod fonts;
 mod forms;
 mod form_design;
+mod form_flatten;
 pub use form_design::{DesignFieldKind, NewFormField, DesignedField, FormDesignEdit};
 pub use forms::{FieldValue, FormField};
 mod images;

@@ -215,3 +215,14 @@ The opt-in corpus-runner binary exercises existing core APIs inside Docker only.
 - `Engine::design_form(document, FormDesignEdit)`: atomically add a field, update a current widget's rectangle/name/required flag, or delete it. A radio child's name/required flag belongs to its group. Empty ancestors are pruned. History supports undo/redo; stale references and invalid rectangles fail without changes.
 
 Date fields are ordinary text widgets with a YYYY-MM-DD tooltip, without JavaScript or validation actions. Dropdowns and radio buttons use native PDF fields. The Forms window's Design tab provides a draggable rectangle, resize corner and exact PDF-point coordinate controls; Apply commits the draft. Refresh retrieves current fields after edits.
+
+## Form flattening
+
+`Engine::flatten_forms(document) -> Result<usize>` paints each widget's selected
+normal appearance into page content, removes widget annotations and the AcroForm
+field tree, and returns the widget count. Other annotations remain editable.
+Appearance BBox/Matrix and widget Rect determine placement and clipping. Hidden
+widgets are removed without painting. Missing or malformed appearances fail
+atomically: fill those fields before flattening. The operation preserves vector
+text and images, supports undo/redo, and is a no-op when no widgets exist.
+The Forms window exposes Flatten forms alongside Fill and Design.

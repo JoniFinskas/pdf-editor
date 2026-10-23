@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Flatten filled forms into searchable page content while preserving other annotations and undo.
+
 - Add a form designer for text, date, checkbox, radio and dropdown fields with names, required flags, move/resize controls and deletion.
 
 ### Performance
