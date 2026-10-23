@@ -22,6 +22,9 @@ pub enum Request {
     OpenPassword(PathBuf, String),
     SavePassword(PathBuf, String),
     Print,
+    Merge(Vec<PathBuf>),
+    Extract(String, PathBuf),
+    Split(String, PathBuf),
     FormFields,
     FillField(pdf_editor_core::FormField, pdf_editor_core::FieldValue),
     PlacePicture(pdf_editor_core::Picture, pdf_editor_core::Placement),
@@ -79,6 +82,7 @@ impl PageTransform {
 
 pub enum Reply {
     Printed(bool),
+    Exported(String),
     PasswordRequired(PathBuf),
     ReplacementCount(String, usize),
     FormFields(Vec<pdf_editor_core::FormField>),
@@ -281,6 +285,33 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
+        Request::Merge(paths) => match engine.merge_pdfs(state.doc.as_mut()?, &paths) {
+            Ok(()) => {
+                state.generation += 1;
+                Some(changed(state, ChangeKind::Edit, None, 1))
+            }
+            Err(e) => failed(e),
+        },
+        Request::Extract(range, path) => {
+            let doc = state.doc.as_ref()?;
+            match engine
+                .pages(doc)
+                .and_then(|p| pdf_editor_core::page_ranges(&range, p.len()))
+                .and_then(|pages| engine.extract_pages(doc, &pages, &path))
+            {
+                Ok(()) => Some(Reply::Exported("Selected pages exported.".into())),
+                Err(e) => failed(e),
+            }
+        }
+        Request::Split(ranges, folder) => {
+            match engine.split_pdf(state.doc.as_ref()?, &ranges, &folder) {
+                Ok(paths) => Some(Reply::Exported(format!(
+                    "Created {} split PDFs.",
+                    paths.len()
+                ))),
+                Err(e) => failed(e),
+            }
+        }
         Request::Print => {
             let doc = state.doc.as_ref()?;
             let result = (|| -> pdf_editor_core::Result<bool> {

@@ -17,6 +17,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Merge multiple PDFs, split by page ranges and extract selected pages.
+
 - Open password-protected PDFs and optionally encrypt Save As with AES-256.
 
 - Find and replace one or all editable text matches with font preservation.

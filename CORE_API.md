@@ -110,3 +110,10 @@ Keyboard commands are UI dispatch only: Open/Save As use `Engine::open`/`Documen
 - `Engine::open_with_password(path, password) -> Result<Document>`: decrypt a bounded PDF into editable memory; incorrect passwords return `PASSWORD_REQUIRED`.
 - `Document::is_password_protected() -> bool`: identify encrypted sources for recovery policy.
 - `Document::save_as_with_password(path, password) -> Result<()>`: exclusive AES-256 encrypted export, or ordinary Save As for an empty password.
+
+## Merge and extraction
+
+- `page_ranges(input, page_count) -> Result<Vec<u16>>`: parse one-based page lists and ascending ranges into validated zero-based indices.
+- `Engine::merge_pdfs(document, paths) -> Result<()>`: append multiple PDFs in order as one atomic undoable operation.
+- `Engine::extract_pages(document, pages, destination) -> Result<()>`: export selected pages in the supplied order to a new PDF.
+- `Engine::split_pdf(document, ranges, folder) -> Result<Vec<PathBuf>>`: export semicolon-separated page groups as split-1.pdf, split-2.pdf, etc., refusing existing destinations.

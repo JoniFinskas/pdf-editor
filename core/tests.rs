@@ -1280,3 +1280,55 @@ fn password_open_and_aes256_save_roundtrip() {
     assert!(doc.save_as_with_password(&path, "other").is_err());
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn merge_extract_split_keep_order_and_source() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    let before = doc.bytes.clone();
+    let count = e.pages(&doc).unwrap().len();
+    assert!(
+        e.merge_pdfs(
+            &mut doc,
+            &[fixture("multi-page.pdf"), fixture("does-not-exist.pdf")]
+        )
+        .is_err()
+    );
+    assert_eq!(doc.bytes, before);
+    e.merge_pdfs(
+        &mut doc,
+        &[fixture("multi-page.pdf"), fixture("multi-page.pdf")],
+    )
+    .unwrap();
+    assert_eq!(e.pages(&doc).unwrap().len(), count * 3);
+    doc.undo();
+    assert_eq!(doc.bytes, before);
+    let path = temp("extracted.pdf");
+    let _ = fs::remove_file(&path);
+    e.extract_pages(&doc, &[1, 0], &path).unwrap();
+    let extracted = e.open(&path).unwrap();
+    assert!(e.render(&extracted, 0, 1.0).unwrap().rgba == e.render(&doc, 1, 1.0).unwrap().rgba);
+    assert!(e.render(&extracted, 1, 1.0).unwrap().rgba == e.render(&doc, 0, 1.0).unwrap().rgba);
+    assert!(e.extract_pages(&doc, &[0], &path).is_err());
+    let folder = temp("split-outputs");
+    fs::create_dir_all(&folder).unwrap();
+    for name in ["split-1.pdf", "split-2.pdf"] {
+        let _ = fs::remove_file(folder.join(name));
+    }
+    let outputs = e.split_pdf(&doc, "1;2", &folder).unwrap();
+    assert_eq!(outputs.len(), 2);
+    for (i, path) in outputs.iter().enumerate() {
+        assert_eq!(e.pages(&e.open(path).unwrap()).unwrap().len(), 1);
+        assert!(
+            e.render(&e.open(path).unwrap(), 0, 1.0).unwrap().rgba
+                == e.render(&doc, i as u16, 1.0).unwrap().rgba
+        );
+    }
+    assert!(e.split_pdf(&doc, "1;2", &folder).is_err());
+    assert_eq!(doc.bytes, before);
+    for path in outputs {
+        fs::remove_file(path).unwrap();
+    }
+    fs::remove_file(path).unwrap();
+}

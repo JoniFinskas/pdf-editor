@@ -57,6 +57,7 @@ pub struct EditorApp {
     forms: crate::forms::Forms,
     replace: crate::replace::Replace,
     password: crate::passwords::PasswordDialog,
+    organize: crate::organize::Organize,
     find: FindState,
     worker: Worker,
     engine_alive: bool,
@@ -332,6 +333,7 @@ impl EditorApp {
             forms: Default::default(),
             replace: Default::default(),
             password: Default::default(),
+            organize: Default::default(),
             find: FindState::default(),
             worker,
             engine_alive: true,
@@ -588,6 +590,10 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::Exported(message) => {
+                self.busy = self.busy.saturating_sub(1);
+                self.banner(BannerKind::Success, message);
+            }
             Reply::PasswordRequired(path) => {
                 self.busy = self.busy.saturating_sub(1);
                 self.opening = false;
@@ -1612,6 +1618,16 @@ impl EditorApp {
             let mut open = None;
             Popup::menu(&recent).show(|ui| {
                 ui.set_min_width(260.0);
+                if Btn::new("Merge, split and extract…")
+                    .enabled(idle)
+                    .min_width(260.0)
+                    .align_left()
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.organize.open = true;
+                    ui.close();
+                }
                 if Btn::new("Find and replace…")
                     .enabled(idle)
                     .min_width(260.0)
@@ -2916,6 +2932,11 @@ impl eframe::App for EditorApp {
             self.floating_tools(&ctx, central.response.rect, &p);
         }
 
+        if let Some(request) = self.organize.show(&ctx, &p, self.busy == 0) {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
         if let Some(request) = self.password.show(&ctx, &p, self.busy == 0) {
             self.opening = matches!(request, Request::OpenPassword(..));
             self.busy += 1;
@@ -3615,6 +3636,7 @@ mod tests {
                 forms: Default::default(),
                 replace: Default::default(),
                 password: Default::default(),
+                organize: Default::default(),
                 find: FindState::default(),
                 worker,
                 engine_alive: true,

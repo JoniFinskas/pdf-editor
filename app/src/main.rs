@@ -3,6 +3,7 @@
 mod app;
 mod forms;
 mod icons;
+mod organize;
 mod passwords;
 mod recovery;
 mod replace;

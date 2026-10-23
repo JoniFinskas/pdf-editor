@@ -330,3 +330,7 @@ Replacement searches editable text runs with Unicode-aware case folding and orig
 Decrypt authenticated inputs into in-memory editing snapshots. Preserve the encrypted-source flag through edits, undo and redo. Passwords are not stored in configuration, document history, diagnostics or recovery files. Disable recovery snapshots for encrypted sources. An empty user password can open automatically.
 
 Encrypted Save As uses PDF AES-256 revision 6, a fresh 32-byte Windows CNG random key, and the supplied password for both owner and user authentication. Password confirmation prevents accidental mismatches. Existing files and the original remain protected by exclusive creation. Encryption changes only the exported copy; the working document remains editable.
+
+## Part F: Merge, split and extract
+
+Use native PDFium page import into a fresh document for extraction, keeping selected-page rendering intact. Merge stages all imports before one undo step. Split validates every range and destination before creating output, and removes outputs created by that operation if a later group fails. Range order is explicit; duplicate pages within a group are rejected. Exports are unencrypted new files, clearly identified in the dialog, and never alter working state. Password-protected merge inputs currently require a separately decrypted export; failure leaves the destination unchanged.
