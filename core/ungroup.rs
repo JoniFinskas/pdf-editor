@@ -46,9 +46,14 @@ impl Expander<'_> {
                 "Cannot ungroup transparency groups, optional content or recursive forms",
             ));
         }
-        let local = match stream.dict.get_deref(b"Resources", self.pdf) {
-            Ok(value) => value.as_dict()?.clone(),
-            Err(_) => inherited.clone(),
+        let local = if stream.dict.has(b"Resources") {
+            stream
+                .dict
+                .get_deref(b"Resources", self.pdf)?
+                .as_dict()?
+                .clone()
+        } else {
+            inherited.clone()
         };
         self.serial += 1;
         let mut names = BTreeMap::new();
@@ -61,13 +66,16 @@ impl Expander<'_> {
             "Shading",
             "Properties",
         ] {
-            if let Ok(value) = local.get_deref(category.as_bytes(), self.pdf) {
-                let mut destination = self
-                    .resources
-                    .get_deref(category.as_bytes(), self.pdf)
-                    .and_then(Object::as_dict)
-                    .cloned()
-                    .unwrap_or_default();
+            if local.has(category.as_bytes()) {
+                let value = local.get_deref(category.as_bytes(), self.pdf)?;
+                let mut destination = if self.resources.has(category.as_bytes()) {
+                    self.resources
+                        .get_deref(category.as_bytes(), self.pdf)?
+                        .as_dict()?
+                        .clone()
+                } else {
+                    Dictionary::new()
+                };
                 for (old, value) in value.as_dict()?.iter() {
                     let mut fresh = format!("Ungroup{}_", self.serial).into_bytes();
                     fresh.extend(old);
@@ -261,5 +269,57 @@ impl Engine {
             doc.accept(candidate.bytes);
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lopdf::dictionary;
+
+    #[test]
+    fn malformed_form_resources_are_not_inherited_or_discarded() {
+        let pdf = lopdf::Document::with_version("1.7");
+        let inherited = Dictionary::new();
+        let base = Stream::new(
+            dictionary! {
+                "BBox" => vec![0.into(), 0.into(), 100.into(), 100.into()],
+            },
+            Vec::new(),
+        );
+        let expand = |stream: &Stream, resources: Dictionary| {
+            Expander {
+                pdf: &pdf,
+                resources,
+                serial: 0,
+                operations: 0,
+                expanded_bytes: 0,
+            }
+            .expand(stream, &inherited, 0)
+        };
+        assert!(expand(&base, Dictionary::new()).is_ok());
+        for invalid in [Object::Reference((999, 0)), Object::Integer(42)] {
+            let mut stream = base.clone();
+            stream.dict.set("Resources", invalid.clone());
+            assert!(expand(&stream, Dictionary::new()).is_err());
+            for category in [
+                "Font",
+                "XObject",
+                "ExtGState",
+                "ColorSpace",
+                "Pattern",
+                "Shading",
+                "Properties",
+            ] {
+                stream
+                    .dict
+                    .set("Resources", dictionary! { category => invalid.clone() });
+                assert!(expand(&stream, Dictionary::new()).is_err());
+                stream
+                    .dict
+                    .set("Resources", dictionary! { category => Dictionary::new() });
+                assert!(expand(&stream, dictionary! { category => invalid.clone() }).is_err());
+            }
+        }
     }
 }
