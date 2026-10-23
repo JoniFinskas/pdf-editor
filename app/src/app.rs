@@ -132,6 +132,8 @@ pub struct TabbedApp {
     next_id: u64,
     closing: Option<Option<u64>>,
     allow_exit: bool,
+    instance: Option<crate::instance::Instance>,
+    merge_tab: Option<u64>,
 }
 impl TabbedApp {
     pub fn new(ctx: &Context, initial: pdf_editor_core::Result<Option<PathBuf>>) -> Self {
@@ -141,7 +143,64 @@ impl TabbedApp {
             next_id: 1,
             closing: None,
             allow_exit: false,
+            instance: None,
+            merge_tab: None,
         }
+    }
+    pub fn with_instance(
+        mut self,
+        instance: Option<crate::instance::Instance>,
+        action: String,
+    ) -> Self {
+        self.instance = instance;
+        match action.as_str() {
+            "merge" => {
+                self.merge_tab = Some(0);
+                self.tabs[0].1.organize.collect_shell_selection();
+            }
+            "compress" => self.tabs[0].1.compression.open = true,
+            "export" => self.tabs[0].1.export.open = true,
+            _ => {}
+        }
+        self
+    }
+    fn receive(&mut self, ctx: &Context, request: crate::instance::Incoming) {
+        if request.action == "merge"
+            && let Some(index) = self.merge_tab.and_then(|id| {
+                self.tabs
+                    .iter()
+                    .position(|(key, tab)| *key == id && tab.organize.collecting_shell_selection())
+            })
+        {
+            self.active = index;
+            if !self.tabs[index].1.organize.add_path(request.path) {
+                self.tabs[index].1.banner(
+                    BannerKind::Error,
+                    "Merge selection exceeds 100 additional PDFs. Review the retained list.",
+                );
+            }
+            ctx.send_viewport_cmd(ViewportCommand::Focus);
+            return;
+        }
+        if self.tabs.len() >= 32 {
+            self.tabs[self.active].1.banner(
+                BannerKind::Error,
+                "Close a tab before opening more documents (32-tab limit).",
+            );
+            return;
+        }
+        self.add(ctx, Some(request.path));
+        let (id, tab) = &mut self.tabs[self.active];
+        match request.action.as_str() {
+            "merge" => {
+                self.merge_tab = Some(*id);
+                tab.organize.collect_shell_selection();
+            }
+            "compress" => tab.compression.open = true,
+            "export" => tab.export.open = true,
+            _ => {}
+        }
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
     }
     fn add(&mut self, ctx: &Context, path: Option<PathBuf>) {
         if self.tabs.len() >= 32 {
@@ -181,6 +240,13 @@ impl TabbedApp {
 impl eframe::App for TabbedApp {
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if let Some(instance) = &self.instance {
+            let requests = instance.poll();
+            for request in requests {
+                self.receive(&ctx, request);
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
         let p = theme::palette(ui);
         for (index, (_, tab)) in self.tabs.iter_mut().enumerate() {
             if index != self.active {
@@ -383,6 +449,7 @@ pub struct EditorApp {
     next_banner: u64,
     /// Shows the settings page instead of the document.
     settings_open: bool,
+    integration: crate::windows_integration::Integration,
     settings_tab: SettingsTab,
     /// Pages sidebar shown next to the document.
     pages_open: bool,
@@ -666,6 +733,7 @@ impl EditorApp {
             next_banner: banners.len() as u64,
             banners,
             settings_open: false,
+            integration: Default::default(),
             settings_tab: SettingsTab::default(),
             pages_open: true,
             home_recent: false,
@@ -3179,7 +3247,9 @@ impl EditorApp {
         }
     }
 
-    fn general_settings(&self, ui: &mut Ui, p: &Palette, autosave: &mut AutoSave) {
+    fn general_settings(&mut self, ui: &mut Ui, p: &Palette, autosave: &mut AutoSave) {
+        self.integration.show(ui);
+        ui.add_space(20.0);
         section_title(ui, "Auto-save");
         let label = |value: AutoSave| match value.0 {
             None => "Off".to_string(),
@@ -4249,6 +4319,7 @@ mod tests {
                 banners: vec![],
                 next_banner: 0,
                 settings_open: false,
+                integration: Default::default(),
                 settings_tab: SettingsTab::default(),
                 pages_open: true,
                 home_recent: false,
@@ -4696,6 +4767,8 @@ mod tests {
             next_id: 2,
             closing: None,
             allow_exit: false,
+            instance: None,
+            merge_tab: None,
         };
         assert!(TabbedApp::needs_warning(&tabs.tabs[0].1));
         assert!(!TabbedApp::needs_warning(&tabs.tabs[1].1));

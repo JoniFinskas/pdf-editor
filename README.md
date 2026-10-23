@@ -216,3 +216,23 @@ Copyright (c) 2026 JoniFinskas.
 
 Licensed under the [GNU General Public License, version 3](LICENSE)
 (GPL-3.0-only).
+
+### Windows integration
+
+The desktop app uses one instance per Windows user. Opening another local PDF forwards
+it to a new tab in the running window. The local mailbox has bounded requests and
+uses an operating-system lock; it opens no network port. Network/device paths are
+not accepted through this integration.
+
+Settings → General offers **Make default PDF app**. This registers this installation
+for the current user and opens Windows Default Apps, where the `.pdf` choice must
+be confirmed. **Remove** deletes only PDF Editor's per-user registration and menu;
+it does not modify Windows' protected default-app selection.
+
+Enable the Explorer PDF menu in the same pane after building/installing
+`pdf-editor-cli.exe` beside `pdf-editor.exe`. The menu offers Open in tab, Merge
+selected, Compress and Export as images. Windows 11 may put it under **Show more
+options**. Commands pass filenames directly to the CLI wrapper, then open the relevant
+editor tool so output paths and changes can be reviewed. Merge selections collect in one tab's ordered list until Merge is clicked or the
+organizer is closed (up to 100 additional PDFs); review the order before merging. No source file is overwritten. Removing or moving the portable folder
+requires removing/re-registering its shell entries from Settings.

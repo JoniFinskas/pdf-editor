@@ -421,3 +421,18 @@ The tools added in Parts F and G now use the Part E style, with visual changes o
 ## Part C refresh for the current application
 
 Decided to retain the existing size-optimized release profile and all current direct dependencies after checking their use and compiler diagnostics. The current build includes the tool-window restyle and Parts F/G. Updated the feature overview and manual checks to use the grouped Edit/Document menu and current tab/window controls. Kept version 0.1.0 and the Unreleased changelog because producing a local release-mode build does not complete the manual acceptance requirements for a versioned release.
+
+## Per-user Windows integration
+
+- Use an OS-held exclusive file lock and bounded file mailbox under LOCALAPPDATA.
+  This introduces no dependency or network listener. Requests contain a known action
+  and one absolute local PDF path, at most 64 KiB. Reject redirects/reparse points,
+  malformed/oversized input and stale requests from previous sessions. The existing
+  profile ACL is the boundary; processes already running as the same user remain trusted.
+- Register capabilities and a private ProgID only under HKCU, then open Windows
+  Default Apps for the protected user choice. Never edit UserChoice or HKLM.
+- Explorer commands invoke the adjacent console CLI with individually quoted paths,
+  without cmd.exe or PowerShell. The CLI routes actions into reviewable GUI tools.
+  Merge launches collect into one ordered list until Merge is clicked or the organizer closes, so slow Explorer launches retain their selection. The list is capped at 100 additional PDFs with a visible overflow error.
+- Do not automatically register or remove anything at startup. Only Settings actions
+  change registration. Generated registry records are tested without live mutation.

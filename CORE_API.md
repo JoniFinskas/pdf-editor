@@ -169,3 +169,9 @@ Each `Document` owns its byte snapshots, revision, undo/redo stacks and source i
 - `Engine::edit_bookmarks(document, revision, BookmarkEdit) -> Result<()>`: atomically add a root/child bookmark, rename, delete a subtree or move within siblings, rejecting stale revisions.
 - `BookmarkSet`: revision and flattened depth-annotated entries; `Bookmark`: object identifier, title, optional zero-based page, depth and sibling positions.
 - `BookmarkEdit`: Add(title, page, optional parent), Rename(id, title), Delete(id), or Move(id, final sibling position).
+
+### Windows shell boundary
+
+Single-instance IPC and per-user shell registration live in the desktop application.
+They introduce no core API: incoming paths use existing document open operations,
+while merge/compress/export use the existing public operations after UI confirmation.

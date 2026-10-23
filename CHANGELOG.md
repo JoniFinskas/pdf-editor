@@ -26,6 +26,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Single-instance document forwarding and explicit per-user Windows default-app and Explorer menu integration.
+
 - Bookmarks sidebar with nested navigation, add, rename, delete and sibling reordering.
 
 - Draw freehand, rectangles, ellipses, lines and arrows directly on pages as annotations.
