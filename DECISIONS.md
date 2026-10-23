@@ -240,3 +240,13 @@ Keep the existing close/open discard prompt. Its actions wait for outstanding ed
 ## Part D: Command-line opening
 
 Retain OS-native argument parsing for spaced and Unicode paths. Accept a single PDF path with optional --, show a usage error for extra arguments, and route the result through the normal worker open and recent-file flow. Missing or malformed PDFs use existing UI errors.
+
+## Part D: Integration verification
+
+Use a separate target/part-d build directory while the normal debug executable is
+locked by a running editor. Keep the toolbar responsive by wrapping its actions
+at narrow widths. Cache search transforms once per page, isolate background errors
+from document lifecycle state, and retain a visible outline for the selected run.
+New font resource names avoid collisions, and insertion verifies that existing
+text metadata and transforms are unchanged. UI pointer/keyboard tests supplement
+core round-trip tests without requiring desktop automation or new dependencies.

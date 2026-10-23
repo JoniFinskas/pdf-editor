@@ -792,7 +792,7 @@ fn browser_glyph_runs_edit_as_one_line() {
 
 #[test]
 fn search_matches_and_empty_query() {
-    let _lock = PDFIUM.lock().unwrap();
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();
     let doc = e.open(&fixture("unicode-cid.pdf")).unwrap();
     assert!(e.find_text(&doc, "").unwrap().is_empty());
@@ -805,7 +805,7 @@ fn search_matches_and_empty_query() {
 
 #[test]
 fn new_text_roundtrip_and_history() {
-    let _lock = PDFIUM.lock().unwrap();
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();
     let mut doc = e.open(&fixture("rotated.pdf")).unwrap();
     let before = e.text_objects(&doc, 0).unwrap();
@@ -843,7 +843,7 @@ fn new_text_roundtrip_and_history() {
 
 #[test]
 fn delete_object_preserves_neighbors_and_rejects_stale_selection() {
-    let _lock = PDFIUM.lock().unwrap();
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();
     let mut doc = e.open(&fixture("kerning.pdf")).unwrap();
     let before = e.text_objects(&doc, 0).unwrap();
@@ -863,7 +863,7 @@ fn delete_object_preserves_neighbors_and_rejects_stale_selection() {
 
 #[test]
 fn style_preserves_text_font_and_neighbors() {
-    let _lock = PDFIUM.lock().unwrap();
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();
     for name in [
         "kerning.pdf",
@@ -898,7 +898,7 @@ fn style_preserves_text_font_and_neighbors() {
 
 #[test]
 fn thumbnail_dimensions_and_limits() {
-    let _lock = PDFIUM.lock().unwrap();
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();
     for file in ["rotated.pdf", "unicode-cid.pdf"] {
         let doc = e.open(&fixture(file)).unwrap();
@@ -913,7 +913,7 @@ fn thumbnail_dimensions_and_limits() {
 
 #[test]
 fn page_operations_roundtrip_and_undo() {
-    let _lock = PDFIUM.lock().unwrap();
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();
     let mut doc = e.open(&fixture("unicode-cid.pdf")).unwrap();
     let original = doc.bytes.clone();
@@ -991,4 +991,59 @@ fn recent_files_migrate_deduplicate_and_preserve_policy() {
     fs::write(&path, b"line\nrecent=xyz\n").unwrap();
     assert!(Settings::load(&path).is_err());
     let _ = fs::remove_file(path);
+}
+
+#[test]
+fn basic_feature_workflow_saves_and_reopens() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let path = fixture("unicode-cid.pdf");
+    let original = fs::read(&path).unwrap();
+    let mut doc = e.open(&path).unwrap();
+    e.add_text(
+        &mut doc,
+        &NewText {
+            page: 0,
+            x: 80.0,
+            y: 150.0,
+            text: "Inserted".into(),
+            font: "Arial".into(),
+            size: 18.0,
+            color: [10, 20, 30],
+        },
+    )
+    .unwrap();
+    let selected = e.text_objects(&doc, 0).unwrap().pop().unwrap();
+    e.style_text(&mut doc, &selected, 26.0, [30, 60, 90])
+        .unwrap();
+    let selected = e.text_objects(&doc, 0).unwrap().pop().unwrap();
+    e.edit(&mut doc, &selected, "DistinctivePhrase").unwrap();
+    assert_eq!(e.find_text(&doc, "DistinctivePhrase").unwrap().len(), 1);
+    e.edit_pages(
+        &mut doc,
+        &PageEdit::Insert {
+            path: fixture("kerning.pdf"),
+            before: 0,
+        },
+    )
+    .unwrap();
+    e.edit_pages(&mut doc, &PageEdit::Move { from: 0, to: 1 })
+        .unwrap();
+    e.edit_pages(&mut doc, &PageEdit::Rotate { page: 1 })
+        .unwrap();
+    let output = temp("basic-workflow.pdf");
+    let _ = fs::remove_file(&output);
+    doc.save_as(&output).unwrap();
+    let reopened = e.open(&output).unwrap();
+    assert_eq!(e.pages(&reopened).unwrap().len(), 2);
+    assert_eq!(
+        e.find_text(&reopened, "DistinctivePhrase").unwrap().len(),
+        1
+    );
+    assert_eq!(
+        e.render(&doc, 0, 1.0).unwrap().rgba,
+        e.render(&reopened, 0, 1.0).unwrap().rgba
+    );
+    assert_eq!(fs::read(path).unwrap(), original);
+    let _ = fs::remove_file(output);
 }

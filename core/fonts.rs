@@ -343,13 +343,12 @@ pub(crate) fn system_names() -> Result<Vec<String>> {
                 1
             };
             for index in 0..count {
-                if let Ok(face) = FontRef::from_index(&bytes, index) {
-                    if let Some(name) = face
+                if let Ok(face) = FontRef::from_index(&bytes, index)
+                    && let Some(name) = face
                         .localized_strings(StringId::POSTSCRIPT_NAME)
                         .english_or_first()
-                    {
-                        names.push(name.to_string());
-                    }
+                {
+                    names.push(name.to_string());
                 }
             }
         }

@@ -114,7 +114,10 @@ impl Engine {
                 .and_then(|(_, o)| o.as_dict().ok())
                 .cloned()
                 .unwrap_or_default();
-            let key = format!("EditorFont{}", embedded.id.0);
+            let mut key = format!("EditorFont{}", embedded.id.0);
+            while font_dict.has(key.as_bytes()) {
+                key.push('X');
+            }
             font_dict.set(key.as_bytes(), embedded.id);
             resources.set("Font", font_dict);
             pdf.get_object_mut(page)?
@@ -166,6 +169,18 @@ impl Engine {
             let after = self.text_objects(&candidate, text.page)?;
             if after.len() != before.len() + 1 || after.last().is_none_or(|o| o.text != text.text) {
                 return Err(err("New text failed round-trip verification"));
+            }
+            for (old, new) in before.iter().zip(&after) {
+                if old.text != new.text
+                    || old.font != new.font
+                    || old.size != new.size
+                    || old.color != new.color
+                    || old.matrix != new.matrix
+                {
+                    return Err(err(
+                        "Existing text changed during insertion; document unchanged",
+                    ));
+                }
             }
             doc.accept(candidate.bytes);
             Ok(())

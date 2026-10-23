@@ -147,6 +147,7 @@ struct PageTexture {
 }
 
 struct PageObjects {
+    transform: PageTransform,
     generation: u64,
     /// Editable lines in paint order.
     lines: Vec<Line>,
@@ -518,18 +519,17 @@ impl EditorApp {
                     .doc
                     .as_ref()
                     .is_some_and(|d| d.generation == generation)
+                    && let Some(p) = self.page_mut(page)
                 {
-                    if let Some(p) = self.page_mut(page) {
-                        p.pending_thumbnail = false;
-                        p.thumbnail = Some(ctx.load_texture(
-                            format!("thumb-{generation}-{page}"),
-                            egui::ColorImage::from_rgba_unmultiplied(
-                                [image.width as usize, image.height as usize],
-                                &image.rgba,
-                            ),
-                            TextureOptions::LINEAR,
-                        ));
-                    }
+                    p.pending_thumbnail = false;
+                    p.thumbnail = Some(ctx.load_texture(
+                        format!("thumb-{generation}-{page}"),
+                        egui::ColorImage::from_rgba_unmultiplied(
+                            [image.width as usize, image.height as usize],
+                            &image.rgba,
+                        ),
+                        TextureOptions::LINEAR,
+                    ));
                 }
             }
             Reply::Fonts(fonts) => self.text_tool.fonts = fonts,
@@ -556,22 +556,22 @@ impl EditorApp {
                 pages,
                 suggested,
             } => {
-                if self.restoring.is_none() {
-                    if let Some(config) = &self.config_path {
-                        let result = (|| -> pdf_editor_core::Result<Vec<PathBuf>> {
-                            let mut settings = pdf_editor_core::Settings::load(config)?;
-                            let absolute = path.canonicalize().unwrap_or_else(|_| path.clone());
-                            settings.remember(&absolute);
-                            settings.save(config)?;
-                            Ok(settings.recent_files)
-                        })();
-                        match result {
-                            Ok(paths) => self.recent_files = paths,
-                            Err(e) => self.banner(
-                                BannerKind::Warning,
-                                format!("Recent files could not be saved: {e}"),
-                            ),
-                        }
+                if self.restoring.is_none()
+                    && let Some(config) = &self.config_path
+                {
+                    let result = (|| -> pdf_editor_core::Result<Vec<PathBuf>> {
+                        let mut settings = pdf_editor_core::Settings::load(config)?;
+                        let absolute = path.canonicalize().unwrap_or_else(|_| path.clone());
+                        settings.remember(&absolute);
+                        settings.save(config)?;
+                        Ok(settings.recent_files)
+                    })();
+                    match result {
+                        Ok(paths) => self.recent_files = paths,
+                        Err(e) => self.banner(
+                            BannerKind::Warning,
+                            format!("Recent files could not be saved: {e}"),
+                        ),
                     }
                 }
                 self.text_tool.selection.clear();
@@ -703,6 +703,7 @@ impl EditorApp {
                         })
                         .collect();
                     view.objects = Some(PageObjects {
+                        transform,
                         generation,
                         lines: group_lines(items),
                     });
@@ -854,9 +855,11 @@ impl EditorApp {
                     }
                     return;
                 }
-                if blocking {
-                    self.busy = self.busy.saturating_sub(1);
+                if !blocking {
+                    self.banner(BannerKind::Error, message);
+                    return;
                 }
+                self.busy = self.busy.saturating_sub(1);
                 self.restoring = None;
                 let message = if std::mem::take(&mut self.opening) {
                     format!(
@@ -895,13 +898,11 @@ impl EditorApp {
                     .button("Insert PDF…")
                     .on_hover_text("Insert all pages before the current page")
                     .clicked()
-                {
-                    if let Some(path) = rfd::FileDialog::new()
+                    && let Some(path) = rfd::FileDialog::new()
                         .add_filter("PDF", &["pdf"])
                         .pick_file()
-                    {
-                        action = Some(pdf_editor_core::PageEdit::Insert { path, before: page });
-                    }
+                {
+                    action = Some(pdf_editor_core::PageEdit::Insert { path, before: page });
                 }
             });
         }
@@ -912,6 +913,7 @@ impl EditorApp {
             for index in range.clone() {
                 let page = &mut doc.pages[index];
                 ui.vertical_centered(|ui| {
+                    ui.set_min_height(180.0);
                     let response = if let Some(texture) = &page.thumbnail {
                         ui.add(
                             egui::Image::new((texture.id(), texture.size_vec2()))
@@ -937,20 +939,20 @@ impl EditorApp {
                     if self.busy == 0 && response.drag_started() {
                         self.dragging_page = Some(index);
                     }
-                    if let Some(from) = self.dragging_page {
-                        if response.contains_pointer() {
-                            ui.painter().rect_stroke(
-                                response.rect,
-                                0.0,
-                                Stroke::new(2.0, ui.visuals().selection.stroke.color),
-                                StrokeKind::Outside,
-                            );
-                            if ui.input(|i| i.pointer.any_released()) && from != index {
-                                action = Some(pdf_editor_core::PageEdit::Move {
-                                    from: from as u16,
-                                    to: index as u16,
-                                });
-                            }
+                    if let Some(from) = self.dragging_page
+                        && response.contains_pointer()
+                    {
+                        ui.painter().rect_stroke(
+                            response.rect,
+                            0.0,
+                            Stroke::new(2.0, ui.visuals().selection.stroke.color),
+                            StrokeKind::Outside,
+                        );
+                        if ui.input(|i| i.pointer.any_released()) && from != index {
+                            action = Some(pdf_editor_core::PageEdit::Move {
+                                from: from as u16,
+                                to: index as u16,
+                            });
                         }
                     }
                     ui.selectable_label(doc.current_page == index, format!("Page {}", index + 1))
@@ -988,6 +990,12 @@ impl EditorApp {
     }
 
     fn object_tools(&mut self, ui: &mut Ui) {
+        let ready = self.busy == 0
+            && !self
+                .doc
+                .as_ref()
+                .and_then(|d| d.edit.as_ref())
+                .is_some_and(|e| e.text != e.line.text);
         ui.horizontal_wrapped(|ui| {
             ui.label("Text object");
             let previous = self.text_tool.selected;
@@ -1015,38 +1023,36 @@ impl EditorApp {
             );
             ui.color_edit_button_srgb(&mut self.text_tool.color);
             if ui
-                .add_enabled(self.busy == 0, Button::new("Apply style"))
+                .add_enabled(ready, Button::new("Apply style"))
+                .on_disabled_hover_text("Finish the text edit before changing its style")
                 .clicked()
-            {
-                if let Some(object) = self
+                && let Some(object) = self
                     .text_tool
                     .selection
                     .get(self.text_tool.selected)
                     .cloned()
-                {
-                    self.cancel_edit();
-                    self.busy += 1;
-                    self.send(Request::StyleText {
-                        object,
-                        size: self.text_tool.size,
-                        color: self.text_tool.color,
-                    });
-                }
+            {
+                self.cancel_edit();
+                self.busy += 1;
+                self.send(Request::StyleText {
+                    object,
+                    size: self.text_tool.size,
+                    color: self.text_tool.color,
+                });
             }
             if ui
-                .add_enabled(self.busy == 0, Button::new("Delete object"))
+                .add_enabled(ready, Button::new("Delete object"))
+                .on_disabled_hover_text("Finish the text edit before deleting the object")
                 .clicked()
-            {
-                if let Some(object) = self
+                && let Some(object) = self
                     .text_tool
                     .selection
                     .get(self.text_tool.selected)
                     .cloned()
-                {
-                    self.cancel_edit();
-                    self.busy += 1;
-                    self.send(Request::DeleteText(object));
-                }
+            {
+                self.cancel_edit();
+                self.busy += 1;
+                self.send(Request::DeleteText(object));
             }
             if ui.button("Deselect").clicked() {
                 self.commit_edit();
@@ -1078,23 +1084,22 @@ impl EditorApp {
                     Button::new("Place text"),
                 )
                 .clicked()
+                && let Some((page, at)) = self.text_tool.at
             {
-                if let Some((page, at)) = self.text_tool.at {
-                    self.busy += 1;
-                    self.send(Request::AddText {
-                        text: pdf_editor_core::NewText {
-                            page,
-                            x: 0.0,
-                            y: 0.0,
-                            text: self.text_tool.text.clone(),
-                            font: self.text_tool.font.clone(),
-                            size: self.text_tool.size,
-                            color: self.text_tool.color,
-                        },
-                        raster: (at.x, at.y),
-                    });
-                    self.text_tool.adding = false;
-                }
+                self.busy += 1;
+                self.send(Request::AddText {
+                    text: pdf_editor_core::NewText {
+                        page,
+                        x: 0.0,
+                        y: 0.0,
+                        text: self.text_tool.text.clone(),
+                        font: self.text_tool.font.clone(),
+                        size: self.text_tool.size,
+                        color: self.text_tool.color,
+                    },
+                    raster: (at.x, at.y),
+                });
+                self.text_tool.adding = false;
             }
             if ui.button("Cancel").clicked() {
                 self.text_tool.adding = false;
@@ -1103,18 +1108,18 @@ impl EditorApp {
     }
 
     fn go_match(&mut self) {
-        if let Some((page, boxes)) = self.find.matches.get(self.find.active) {
-            if let Some(doc) = &mut self.doc {
-                let y = CANVAS_PAD
-                    + doc
-                        .pages
-                        .iter()
-                        .take(*page as usize)
-                        .map(|p| p.info.height * doc.scale() + PAGE_GAP)
-                        .sum::<f32>()
-                    + boxes.first().map_or(0.0, |b| b[1] * doc.scale());
-                doc.scroll_to = Some(vec2(doc.offset.x, (y - 80.0).max(0.0)));
-            }
+        if let Some((page, boxes)) = self.find.matches.get(self.find.active)
+            && let Some(doc) = &mut self.doc
+        {
+            let y = CANVAS_PAD
+                + doc
+                    .pages
+                    .iter()
+                    .take(*page as usize)
+                    .map(|p| p.info.height * doc.scale() + PAGE_GAP)
+                    .sum::<f32>()
+                + boxes.first().map_or(0.0, |b| b[1] * doc.scale());
+            doc.scroll_to = Some(vec2(doc.offset.x, (y - 80.0).max(0.0)));
         }
     }
     fn find_bar(&mut self, ui: &mut Ui) {
@@ -1219,7 +1224,7 @@ impl EditorApp {
         let has_doc = self.doc.is_some();
         let idle = self.busy == 0 && self.engine_alive;
         let ready = self.setup_error.is_none() && self.engine_alive;
-        ui.horizontal_centered(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             if tool_button(ui, "Open", ready && idle, "Open a PDF (Ctrl+O)").clicked() {
                 self.request_open(None);
@@ -1526,6 +1531,18 @@ impl EditorApp {
                     continue;
                 }
                 paint_page(&painter, ui, rect, page, p);
+                if let Some(selected) = self.text_tool.selection.get(self.text_tool.selected)
+                    && selected.page == page_no
+                    && let Some(objects) = &page.objects
+                {
+                    let screen = to_screen(raster_rect(&objects.transform, selected), rect, scale);
+                    painter.rect_stroke(
+                        screen.expand(2.0),
+                        2.0,
+                        Stroke::new(1.5, p.accent),
+                        StrokeKind::Outside,
+                    );
+                }
                 if self.find.open {
                     for (n, (_, boxes)) in self
                         .find
@@ -1588,10 +1605,12 @@ impl EditorApp {
                         e.page == index && e.line.objects[0].index == line.objects[0].index
                     })
                 };
-                if self.text_tool.adding && response.clicked() && !busy {
-                    if let Some(pos) = response.interact_pointer_pos() {
-                        self.text_tool.at = Some((page_no, ((pos - rect.min) / scale).to_pos2()));
-                    }
+                if self.text_tool.adding
+                    && response.clicked()
+                    && !busy
+                    && let Some(pos) = response.interact_pointer_pos()
+                {
+                    self.text_tool.at = Some((page_no, ((pos - rect.min) / scale).to_pos2()));
                 }
                 if let Some((pg, at)) = self.text_tool.at
                     && pg == page_no
@@ -2100,7 +2119,7 @@ impl eframe::App for EditorApp {
                     .stroke(Stroke::new(1.0, p.border)),
             )
             .show_separator_line(false)
-            .exact_size(48.0)
+            .min_size(48.0)
             .show(ui, |ui| self.toolbar(ui, &p));
         let toolbar_bottom = toolbar.response.rect.bottom();
 
@@ -2618,5 +2637,337 @@ mod tests {
                 assert!(info.width.max(info.height) * scale <= MAX_TEXTURE_SIDE);
             }
         }
+    }
+    fn mock_app() -> (
+        EditorApp,
+        std::sync::mpsc::Receiver<Request>,
+        std::sync::mpsc::Sender<Reply>,
+    ) {
+        let (worker, inbox, outbox) = crate::worker::test_channel();
+        (
+            EditorApp {
+                recent_files: vec![],
+                dragging_page: None,
+                text_tool: TextTool::default(),
+                find: FindState::default(),
+                worker,
+                engine_alive: true,
+                setup_error: None,
+                policy: Substitution::Line,
+                config_path: None,
+                doc: None,
+                opening: false,
+                busy: 0,
+                banners: vec![],
+                next_banner: 0,
+                settings_open: false,
+                confirm: None,
+                allow_close: false,
+                title: String::new(),
+                autosave: AutoSave(None),
+                autosave_path: None,
+                session: None,
+                session_error: None,
+                orphans: vec![],
+                restoring: None,
+            },
+            inbox,
+            outbox,
+        )
+    }
+    fn opened(app: &mut EditorApp, ctx: &Context) {
+        app.handle(
+            ctx,
+            Reply::Opened {
+                generation: 1,
+                path: PathBuf::from("sample.pdf"),
+                name: "sample.pdf".into(),
+                pages: vec![
+                    PageInfo {
+                        width: 300.0,
+                        height: 400.0,
+                    },
+                    PageInfo {
+                        width: 400.0,
+                        height: 300.0,
+                    },
+                ],
+                suggested: PathBuf::from("sample_edited.pdf"),
+            },
+        );
+    }
+    #[test]
+    fn pending_edits_and_failed_opens_keep_unsaved_guards() {
+        let ctx = Context::default();
+        let (mut app, _inbox, _outbox) = mock_app();
+        opened(&mut app, &ctx);
+        app.doc.as_mut().unwrap().changes.edited();
+        app.request_open(Some(PathBuf::from("missing.pdf")));
+        assert!(matches!(app.confirm, Some(Pending::Open(_))));
+        assert!(app.doc.as_ref().unwrap().dirty());
+        app.confirm = None;
+        app.open_path(PathBuf::from("missing.pdf"));
+        app.handle(
+            &ctx,
+            Reply::Failed {
+                message: "missing".into(),
+                blocking: true,
+                page: None,
+            },
+        );
+        assert!(app.doc.as_ref().unwrap().dirty());
+        app.busy = 1;
+        app.opening = true;
+        app.handle(
+            &ctx,
+            Reply::Failed {
+                message: "search failed".into(),
+                blocking: false,
+                page: None,
+            },
+        );
+        assert_eq!(app.busy, 1);
+        assert!(app.opening);
+        app.doc.as_mut().unwrap().changes.mark_saved();
+        let mut input = egui::RawInput::default();
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .events
+            .push(egui::ViewportEvent::Close);
+        let mut output = ctx.run_ui(input, |ui| app.close_guard(ui.ctx()));
+        output.textures_delta.clear();
+        assert!(matches!(app.confirm, Some(Pending::Close)));
+        assert!(!app.allow_close);
+    }
+    #[test]
+    fn feature_panels_render_and_page_changes_refresh_dimensions() {
+        let ctx = Context::default();
+        theme::install(&ctx);
+        let (mut app, _inbox, _outbox) = mock_app();
+        opened(&mut app, &ctx);
+        app.find.open = true;
+        app.find.query = "sample".into();
+        app.find.matches = vec![(1, vec![[10.0, 20.0, 30.0, 40.0]])];
+        app.go_match();
+        assert!(app.doc.as_ref().unwrap().scroll_to.unwrap().y > 400.0);
+        app.text_tool.selection = vec![glyph("sample", 10.0, 50.0).0];
+        for dark in [false, true] {
+            ctx.set_visuals(if dark {
+                egui::Visuals::dark()
+            } else {
+                egui::Visuals::light()
+            });
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 820.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let p = theme::palette(ui);
+                    egui::Panel::top("test-toolbar").show(ui, |ui| app.toolbar(ui, &p));
+                    egui::Panel::top("test-find").show(ui, |ui| app.find_bar(ui));
+                    egui::Panel::top("test-object").show(ui, |ui| app.object_tools(ui));
+                    egui::Panel::left("test-thumbnails")
+                        .exact_size(180.0)
+                        .show(ui, |ui| app.thumbnails(ui));
+                    egui::CentralPanel::default().show(ui, |ui| app.canvas(ui, &p));
+                },
+            );
+            assert!(!output.shapes.is_empty());
+            output.textures_delta.clear();
+        }
+        app.handle(
+            &ctx,
+            Reply::Changed {
+                pages: vec![PageInfo {
+                    width: 400.0,
+                    height: 300.0,
+                }],
+                generation: 2,
+                kind: ChangeKind::Edit,
+                can_undo: true,
+                can_redo: false,
+                warning: None,
+                objects_changed: 1,
+            },
+        );
+        let doc = app.doc.as_ref().unwrap();
+        assert_eq!(doc.pages.len(), 1);
+        assert_eq!(doc.pages[0].info.width, 400.0);
+        assert!(doc.dirty());
+        assert!(app.text_tool.selection.is_empty());
+    }
+    fn tool_frame(
+        app: &mut EditorApp,
+        ctx: &Context,
+        events: Vec<egui::Event>,
+        tool: u8,
+    ) -> Vec<egui::epaint::ClippedShape> {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events,
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 820.0))),
+                ..Default::default()
+            },
+            |ui| match tool {
+                0 => app.text_tools(ui),
+                1 => app.object_tools(ui),
+                2 => app.find_bar(ui),
+                _ => app.thumbnails(ui),
+            },
+        );
+        output.textures_delta.clear();
+        output.shapes
+    }
+    fn button_center(shapes: &[egui::epaint::ClippedShape], label: &str) -> Pos2 {
+        for clipped in shapes {
+            if let egui::epaint::Shape::Text(text) = &clipped.shape
+                && text.galley.text() == label
+            {
+                return text.pos + text.galley.size() * 0.5;
+            }
+        }
+        panic!("Missing button: {label}");
+    }
+    fn click_at(pos: Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+    #[test]
+    fn text_and_find_buttons_dispatch_real_worker_requests() {
+        let ctx = Context::default();
+        theme::install(&ctx);
+        let (mut app, inbox, _outbox) = mock_app();
+        opened(&mut app, &ctx);
+        app.text_tool.adding = true;
+        app.text_tool.at = Some((1, pos2(40.0, 60.0)));
+        app.text_tool.text = "Placed".into();
+        app.text_tool.size = 24.0;
+        app.text_tool.color = [20, 40, 80];
+        let shapes = tool_frame(&mut app, &ctx, vec![], 0);
+        let at = button_center(&shapes, "Place text");
+        tool_frame(&mut app, &ctx, click_at(at), 0);
+        let Request::AddText { text, raster } = inbox.try_recv().unwrap() else {
+            panic!("Expected AddText")
+        };
+        assert_eq!(text.text, "Placed");
+        assert_eq!(text.page, 1);
+        assert_eq!(text.size, 24.0);
+        assert_eq!(text.color, [20, 40, 80]);
+        assert_eq!(raster, (40.0, 60.0));
+        app.busy = 0;
+        app.text_tool.selection = vec![glyph("chosen", 10.0, 50.0).0];
+        let shapes = tool_frame(&mut app, &ctx, vec![], 1);
+        let at = button_center(&shapes, "Apply style");
+        tool_frame(&mut app, &ctx, click_at(at), 1);
+        assert!(matches!(
+            inbox.try_recv().unwrap(),
+            Request::StyleText { size: 24.0, .. }
+        ));
+        app.busy = 0;
+        let shapes = tool_frame(&mut app, &ctx, vec![], 1);
+        let at = button_center(&shapes, "Delete object");
+        tool_frame(&mut app, &ctx, click_at(at), 1);
+        assert!(matches!(inbox.try_recv().unwrap(), Request::DeleteText(_)));
+        app.find.matches = vec![
+            (0, vec![[0.0, 0.0, 10.0, 10.0]]),
+            (1, vec![[0.0, 0.0, 10.0, 10.0]]),
+        ];
+        let shapes = tool_frame(&mut app, &ctx, vec![], 2);
+        let at = button_center(&shapes, "Next");
+        tool_frame(&mut app, &ctx, click_at(at), 2);
+        assert_eq!(app.find.active, 1);
+        let shapes = tool_frame(&mut app, &ctx, vec![], 2);
+        let at = button_center(&shapes, "Next");
+        tool_frame(&mut app, &ctx, click_at(at), 2);
+        assert_eq!(app.find.active, 0);
+    }
+    #[test]
+    fn thumbnail_drag_dispatches_page_move() {
+        let ctx = Context::default();
+        theme::install(&ctx);
+        let (mut app, inbox, _outbox) = mock_app();
+        opened(&mut app, &ctx);
+        for (index, page) in app.doc.as_mut().unwrap().pages.iter_mut().enumerate() {
+            page.thumbnail = Some(ctx.load_texture(
+                format!("test-{index}"),
+                egui::ColorImage::filled([80, 120], Color32::WHITE),
+                TextureOptions::LINEAR,
+            ));
+        }
+        let shapes = tool_frame(&mut app, &ctx, vec![], 3);
+        let from = button_center(&shapes, "Page 1") - vec2(0.0, 50.0);
+        let to = button_center(&shapes, "Page 2") - vec2(0.0, 50.0);
+        tool_frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(from),
+                egui::Event::PointerButton {
+                    pos: from,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            3,
+        );
+        tool_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(to)], 3);
+        tool_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: to,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            3,
+        );
+        assert!(matches!(
+            inbox.try_recv().unwrap(),
+            Request::Pages(pdf_editor_core::PageEdit::Move { from: 0, to: 1 })
+        ));
+    }
+    #[test]
+    fn toolbar_actions_fit_minimum_window_width() {
+        let ctx = Context::default();
+        theme::install(&ctx);
+        let (mut app, _inbox, _outbox) = mock_app();
+        opened(&mut app, &ctx);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(640.0, 420.0))),
+                ..Default::default()
+            },
+            |ui| {
+                let p = theme::palette(ui);
+                egui::Panel::top("toolbar")
+                    .min_size(48.0)
+                    .show(ui, |ui| app.toolbar(ui, &p));
+            },
+        );
+        for label in [
+            "Open", "Recent", "Save As", "Undo", "Redo", "Add text", "Find", "Settings",
+        ] {
+            let at = button_center(&output.shapes, label);
+            assert!(at.x >= 0.0 && at.x < 640.0, "{label}: {at:?}");
+        }
+        output.textures_delta.clear();
     }
 }

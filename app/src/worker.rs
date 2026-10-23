@@ -254,10 +254,11 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
         });
     };
     let page = page_of(&request);
+    let blocking = page.is_none() && !matches!(request, Request::Find(_) | Request::Fonts);
     let failed = |e: pdf_editor_core::Error| {
         Some(Reply::Failed {
             message: e.to_string(),
-            blocking: page.is_none(),
+            blocking,
             page,
         })
     };
@@ -343,8 +344,14 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             let doc = state.doc.as_ref()?;
             let result = (|| -> pdf_editor_core::Result<_> {
                 let mut out = Vec::new();
+                let mut transforms = std::collections::BTreeMap::new();
                 for found in engine.find_text(doc, &query)? {
-                    let t = page_transform(engine, doc, found.page)?;
+                    let t = match transforms.entry(found.page) {
+                        std::collections::btree_map::Entry::Occupied(entry) => *entry.get(),
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            *entry.insert(page_transform(engine, doc, found.page)?)
+                        }
+                    };
                     let rects = found
                         .bounds
                         .iter()
@@ -540,4 +547,11 @@ fn page_transform(
         e,
         f,
     ]))
+}
+
+#[cfg(test)]
+pub(crate) fn test_channel() -> (Worker, Receiver<Request>, Sender<Reply>) {
+    let (requests, inbox) = channel();
+    let (outbox, replies) = channel();
+    (Worker { requests, replies }, inbox, outbox)
 }

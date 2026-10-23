@@ -42,6 +42,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Fixed
 
+- Keep all toolbar actions accessible in narrow windows and isolate background search failures from document operations.
+
 - Keep unsaved-change warnings after a replacement open fails or is canceled; wait for pending edits before discard.
 
 - PDFs printed from Chrome and other browsers could not be edited: text using

@@ -37,6 +37,21 @@ object to `Engine::edit`. Rendering returns tightly packed RGBA pixels. Undo/red
 includes whole-document font substitutions. Save As requires a new `.pdf` filename;
 existing files and the original path are never overwritten.
 
+## Basic editing controls
+
+- Ctrl+F opens Find; all matches are highlighted and Previous/Next wrap through them.
+- Add text: choose a font, size and color, click a baseline on a page, then Place text.
+- Click existing text to edit it. The text-object toolbar selects individual runs for
+  size/color changes or deletion; those operations are undoable.
+- The Pages sidebar navigates by thumbnail. Rotate and Delete act on the current
+  page. Drag a thumbnail onto another to reorder; Insert PDF adds all source pages
+  before the current page. The last page cannot be deleted.
+- Ctrl+O opens, Ctrl+S saves a new copy, Ctrl+Z/Ctrl+Y undo/redo, and Ctrl+Plus/Minus zoom.
+  Text fields keep their own undo history while focused.
+- Recent lists the last ten opened PDFs in the existing local settings file.
+  Opening another file or closing warns about unsaved changes.
+- `pdf-editor.exe "C:\Documents\My report.pdf"` opens a PDF at startup.
+
 ## Editing behavior
 
 Each edit replaces one text run without paragraph reflow. Existing embedded
