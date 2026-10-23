@@ -1,3 +1,9 @@
 [workspace]
 members = ["core", "app"]
 resolver = "3"
+
+# Single source of the project version; see VERSIONING.md.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"

@@ -26,6 +26,9 @@ allow = ["GPL-3.0-only"]
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# The private app crate uses an unversioned path dependency on core so the
+# workspace version is set in one place.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
