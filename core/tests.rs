@@ -1988,3 +1988,46 @@ fn bookmarks_resolve_named_destinations_and_reject_cycles() {
     let invalid = e.candidate(&doc, pdf).unwrap();
     assert!(e.bookmarks(&invalid).is_err());
 }
+
+#[test]
+fn compare_generated_pages_is_read_only_and_detects_edits() {
+    let _lock = PDFIUM.lock().unwrap();
+    let e = engine();
+    let left_path = temp("compare-left.pdf");
+    let right_path = temp("compare-right.pdf");
+    fs::write(&left_path, generated("First", false, 0, 0., false, false)).unwrap();
+    fs::write(&right_path, generated("Second", false, 0, 0., false, false)).unwrap();
+    let left = e.open(&left_path).unwrap();
+    let right = e.open(&right_path).unwrap();
+    let bytes = left.bytes.clone();
+    let same = e.compare_page(&left, &left, 0, false).unwrap();
+    assert!(same.changes.is_empty());
+    assert_eq!(same.changed_pixels, 0);
+    let changed = e.compare_page(&left, &right, 0, true).unwrap();
+    assert!(!changed.changes.is_empty());
+    assert!(changed.changed_pixels > 0);
+    assert!(!changed.left_marks.is_empty());
+    assert!(!changed.right_marks.is_empty());
+    assert_eq!(left.bytes, bytes);
+    assert!(!left.can_undo());
+    assert!(e.compare_page(&left, &right, 1, false).is_err());
+    let mut extra = e.open(&right_path).unwrap();
+    e.edit_pages(
+        &mut extra,
+        &PageEdit::Insert {
+            path: right_path.clone(),
+            before: 1,
+        },
+    )
+    .unwrap();
+    let added = e.compare_page(&left, &extra, 1, false).unwrap();
+    assert!(added.left.is_none());
+    assert!(added.right.is_some());
+    assert!(added.changed_pixels > 0);
+    assert!(
+        added
+            .changes
+            .iter()
+            .all(|change| change.kind == ChangeKind::Added)
+    );
+}

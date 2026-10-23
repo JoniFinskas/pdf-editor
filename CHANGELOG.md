@@ -12,6 +12,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 - Headless merge, split, extract, compress, rotate, image export, Windows OCR, and
   font-preserving find/replace commands with folder dry-run counts and exit codes.
 
+- Compare two saved PDFs side by side with shared scrolling and zoom, text highlights, visual difference overlays and a page-change sidebar.
+
 ### Changed
 
 - Refresh release-build verification, the feature overview and manual checks for

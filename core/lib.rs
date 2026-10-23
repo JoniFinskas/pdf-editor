@@ -1,4 +1,6 @@
 //! Headless PDF editing. Page indices are zero based; geometry is in PDF points.
+mod compare;
+pub use compare::{ChangeKind, ComparePage, TextChange, compare_pixels, compare_text};
 mod bookmarks;
 pub use bookmarks::{Bookmark, BookmarkEdit, BookmarkSet};
 

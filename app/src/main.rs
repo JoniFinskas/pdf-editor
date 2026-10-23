@@ -3,6 +3,8 @@
 mod app;
 mod bookmarks;
 mod cli;
+
+mod compare;
 mod compression;
 mod crop;
 mod drawing;
