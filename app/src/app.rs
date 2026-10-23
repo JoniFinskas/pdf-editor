@@ -69,6 +69,7 @@ enum Tool {
     Stamps,
     Export,
     Tables,
+    Word,
     Compress,
     Compare,
     Print,
@@ -100,6 +101,7 @@ impl Tool {
                 (Tool::Stamps, "Page numbers and watermark…", Icon::Hash),
                 (Tool::Export, "Export pages as images…", Icon::Export),
                 (Tool::Tables, "Tables to Excel or CSV...", Icon::Export),
+                (Tool::Word, "Export to Word...", Icon::Export),
                 (Tool::Compress, "Compress images…", Icon::Compress),
                 (Tool::Compare, "Compare PDFs…", Icon::Layers),
                 (Tool::Print, "Print…", Icon::Print),
@@ -124,6 +126,7 @@ impl Tool {
             Tool::Stamps => "tool-stamps",
             Tool::Export => "tool-export",
             Tool::Tables => "tool-tables",
+            Tool::Word => "tool-word",
             Tool::Compress => "tool-compress",
             Tool::Compare => "tool-compare",
             Tool::Print => "print-document",
@@ -441,6 +444,7 @@ pub struct EditorApp {
     stamps: crate::stamps::Stamps,
     export: crate::export::Export,
     tables: crate::table_export::Tables,
+    word: crate::word_export::WordExport,
     crop: crate::crop::Crop,
     bookmarks: crate::bookmarks::Bookmarks,
     drawing: crate::drawing::DrawingTool,
@@ -773,6 +777,7 @@ impl EditorApp {
             stamps: Default::default(),
             export: Default::default(),
             tables: Default::default(),
+            word: Default::default(),
             crop: Default::default(),
             drawing: Default::default(),
             bookmarks: Default::default(),
@@ -2086,6 +2091,7 @@ impl EditorApp {
             Tool::Crop => self.crop.open = true,
             Tool::Export => self.export.open = true,
             Tool::Tables => self.tables.open = true,
+            Tool::Word => self.word.open = true,
             Tool::Stamps => self.stamps.open = true,
             Tool::Compress => self.compression.open = true,
             Tool::Compare => self.compare.open = true,
@@ -3815,6 +3821,11 @@ impl eframe::App for EditorApp {
             self.busy += 1;
             self.send(request);
         }
+        if let Some(request) = self.word.show(&ctx, &p, self.busy == 0) {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
         let selecting_table = self.tables.selecting;
         if let Some(request) = self.tables.show(&ctx, &p, self.busy == 0) {
             self.commit_edit();
@@ -4736,6 +4747,7 @@ mod tests {
                 stamps: Default::default(),
                 export: Default::default(),
                 tables: Default::default(),
+                word: Default::default(),
                 crop: Default::default(),
                 drawing: Default::default(),
                 bookmarks: Default::default(),

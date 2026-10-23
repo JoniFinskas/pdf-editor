@@ -211,3 +211,11 @@ The opt-in corpus-runner binary exercises existing core APIs inside Docker only.
 
 - `Engine::detect_table(document, page, area) -> Result<TableGrid>`: infer a bounded grid from PDF text positions and transformed horizontal/vertical ruling lines inside a PDF-point selection.
 - `TableGrid::export(path, TableFormat::{Xlsx,Csv}) -> Result<()>`: export edited cell values to a new local file; XLSX uses explicit string cells, CSV neutralizes formula prefixes.
+
+## Word export
+
+- `Engine::export_word(document, path) -> Result<()>`: create a new local `.docx`
+  containing paragraph flow, font names and sizes, bold/italic runs, inline images
+  and simple ruled tables. Ordinary Form XObjects are expanded in a temporary
+  document. Unsupported transparency groups return an error before output is
+  written. The source bytes and undo history are unchanged.

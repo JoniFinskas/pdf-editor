@@ -5,7 +5,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 folder = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "target/test-output")
-files = list(folder.glob("*-table.xlsx")) + list(folder.glob("*-word.docx"))
+files = list(folder.glob("*-table.xlsx")) + list(folder.glob("*-word.docx")) + list(folder.glob("*-word-group.docx"))
 assert files, "Run generated Office export tests first"
 for path in files:
     with zipfile.ZipFile(path) as archive:
@@ -30,4 +30,12 @@ for path in files:
             root = ET.fromstring(archive.read("word/document.xml"))
             ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
             assert root.findall(".//w:p", ns)
+            if path.name.removesuffix("-word.docx").isdigit():
+                assert root.findall(".//w:tbl", ns)
+                assert root.findall(".//w:b", ns) and root.findall(".//w:i", ns)
+                assert root.findall(".//w:drawing", ns)
+                values = [node.text for node in root.findall(".//w:t", ns)]
+                assert all(value in values for value in ("Title", "A1", "B1", "A2", "B2"))
+            if "unicode-cid" in path.name or "rotated" in path.name:
+                assert any("äöå€ AB" in (node.text or "") for node in root.findall(".//w:t", ns))
     print(path.name, "ZIP checksums, XML and relationships passed")

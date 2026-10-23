@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Export PDFs to editable Word documents with paragraph styles, images and simple tables.
+
 - Select a table area, review and edit detected cells, and export Excel or CSV.
 
 ### Performance
