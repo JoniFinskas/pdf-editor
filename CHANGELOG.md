@@ -8,6 +8,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Added photo-page cleanup with detected edges, draggable corners, perspective correction, deskew, grayscale/black-and-white and optional Windows OCR.
+
 - Added ordered JPG/PNG/HEIC image import to new PDFs, with reorder/remove controls and A4, Letter or image-sized pages.
 
 ### Added

@@ -581,3 +581,6 @@ annotations. Reject missing appearances atomically rather than dropping values.
 Remove the AcroForm tree after all widgets are flattened; normal candidate
 pruning removes detached field objects. Generated fixture checks cover PDFium
 extraction, rendered appearance, save/reopen and history restoration.
+
+### Photo page cleanup
+Scan cleanup works on image-only pages without annotations, preventing removal of existing text or displacement of markup. Preview and application use the same bounded 180 DPI raster (2500-pixel maximum side). A bright connected region estimates paper edges; four draggable corners allow correction on difficult backgrounds. A projective transform rectifies the quadrilateral, with a separate ±20-degree deskew adjustment and grayscale or thresholded black-and-white output. Page dimensions retain the source raster's physical scale. Windows OCR is optional; cleanup and OCR succeed or fail together in one undo step. Corrected photos use the image creation encoder, JPEG quality 95. Source files remain unchanged.

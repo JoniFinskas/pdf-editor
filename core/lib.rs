@@ -26,6 +26,7 @@ mod features;
 mod objects;
 mod ungroup;
 
+
 pub use export::PageImageFormat;
 pub use features::NewText;
 pub use objects::{ObjectAction, ObjectClipboard, PageItem};
@@ -37,7 +38,9 @@ pub use form_design::{DesignFieldKind, NewFormField, DesignedField, FormDesignEd
 pub use forms::{FieldValue, FormField};
 mod images;
 mod images_to_pdf;
+mod scan_cleanup;
 pub use images_to_pdf::{ImagePageSize, import_picture};
+pub use scan_cleanup::{ScanColor, ScanOptions, clean_scan, detect_scan_corners};
 mod pictures;
 pub use pictures::PlacedPicture;
 mod ocr;
