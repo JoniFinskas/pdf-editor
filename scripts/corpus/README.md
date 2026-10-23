@@ -13,3 +13,5 @@ The harness exercises opening, rendering all pages, enumerating text, finding, a
 No full corpus run or download is implied by the presence of these scripts. Execution evidence belongs in TEST_REPORT.md.
 
 Upstream feature verification: https://github.com/bblanchon/pdfium-binaries/blob/master/steps/05-configure.sh sets both pdf_enable_v8 and pdf_enable_xfa to ENABLE_V8 (default false). build.yml names enabled archives pdfium-v8-*. Standard archive SHA256: bdc60126399f39fe768566a18d4be055a7b3681bc9e248e8a6656b4f6cae0aa2. FPDF_LoadXFA is exported even without XFA and is not a valid presence test. V8 initialization exports are checked additionally.
+
+Recoverable per-page failures are accumulated as unique stage/numeric-hash signatures; later pages and save/reopen still run. The supervisor emits separate ok/failed document totals and signature occurrence totals (which may overlap). Search queries are limited to 256 non-NUL characters. To classify only prior failures set CORPUS_FAILURES_ONLY=1; results go to failures.jsonl. Neither protocol contains source error messages.
