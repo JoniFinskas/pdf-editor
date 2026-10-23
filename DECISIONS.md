@@ -304,3 +304,7 @@ PDFium setup now copies the archive's third-party notices and verifies a reused
 cached archive. Identical installed DLLs are left untouched to allow setup while
 a matching editor is running. The manual checklist remains unchecked until a
 human run; a release-mode build alone does not justify a version bump or tag.
+
+## Part F: Windows printing
+
+Use the native Windows Forms print dialog and Windows print spooler through the installed Windows PowerShell runtime; no new package or PDF file association is required. The worker prepares private BMP pages at up to 300 DPI (16-megapixel page and 512-MiB spool bounds), fits them within printer margins, and removes temporary files on cancel, success or failure. Printing uses the edited document and does not alter its saved state. Physical printer checks remain separate from automated raster/spool tests.

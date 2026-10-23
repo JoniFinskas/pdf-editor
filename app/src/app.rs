@@ -580,6 +580,13 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::Printed(printed) => {
+                self.busy = self.busy.saturating_sub(1);
+                if printed {
+                    self.banner(BannerKind::Success, "Document sent to the printer");
+                }
+            }
+
             Reply::Thumbnail {
                 generation,
                 page,
@@ -1574,6 +1581,19 @@ impl EditorApp {
             let mut open = None;
             Popup::menu(&recent).show(|ui| {
                 ui.set_min_width(260.0);
+                if Btn::new("Print…")
+                    .enabled(idle)
+                    .min_width(260.0)
+                    .align_left()
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.commit_edit();
+                    self.busy += 1;
+                    self.send(Request::Print);
+                    ui.close();
+                }
+                ui.separator();
                 if self.recent_files.is_empty() {
                     ui.label(RichText::new("No recent files").color(p.muted));
                 }

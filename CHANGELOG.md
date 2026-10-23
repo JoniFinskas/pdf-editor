@@ -17,6 +17,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Windows print dialog with page range and printer options for the edited document.
+
 - Validated command-line PDF opening, preserving spaced and Unicode paths.
 
 - Recent menu with the last ten successfully opened PDFs, persisted in settings.txt.

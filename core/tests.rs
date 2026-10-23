@@ -1047,3 +1047,17 @@ fn basic_feature_workflow_saves_and_reopens() {
     assert_eq!(fs::read(path).unwrap(), original);
     let _ = fs::remove_file(output);
 }
+
+#[test]
+fn print_spool_matches_page_count_and_cleans_up() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let engine = engine();
+    let doc = engine.open(&fixture("multi-page.pdf")).unwrap();
+    let job = engine.prepare_print(&doc).unwrap();
+    let path = job.directory().to_path_buf();
+    assert_eq!(job.page_count(), engine.pages(&doc).unwrap().len());
+    assert_eq!(fs::read_dir(&path).unwrap().count(), job.page_count());
+    assert_eq!(&fs::read(path.join("00000.bmp")).unwrap()[..2], b"BM");
+    drop(job);
+    assert!(!path.exists());
+}

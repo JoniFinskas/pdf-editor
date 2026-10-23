@@ -19,6 +19,7 @@ const SAMPLE_SPAN: f32 = 1000.0;
 
 pub enum Request {
     Open(PathBuf),
+    Print,
     Find(String),
     Fonts,
     Thumbnail(u16),
@@ -66,6 +67,7 @@ impl PageTransform {
 }
 
 pub enum Reply {
+    Printed(bool),
     Thumbnail {
         generation: u64,
         page: u16,
@@ -264,6 +266,42 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
+        Request::Print => {
+            let doc = state.doc.as_ref()?;
+            let result = (|| -> pdf_editor_core::Result<bool> {
+                let job = engine.prepare_print(doc)?;
+                let windows = std::env::var_os("SystemRoot").ok_or_else(|| {
+                    pdf_editor_core::Error("Windows directory unavailable".into())
+                })?;
+                let program =
+                    PathBuf::from(windows).join("System32/WindowsPowerShell/v1.0/powershell.exe");
+                let mut command = std::process::Command::new(program);
+                command.args([
+                    "-NoProfile",
+                    "-STA",
+                    "-Command",
+                    include_str!("printing.ps1"),
+                ]);
+                command.env("PDF_EDITOR_PRINT_DIRECTORY", job.directory());
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    command.creation_flags(0x08000000);
+                }
+                let status = command.status()?;
+                match status.code() {
+                    Some(0) => Ok(true),
+                    Some(2) => Ok(false),
+                    _ => Err(pdf_editor_core::Error(
+                        "Printing failed; check the selected printer".into(),
+                    )),
+                }
+            })();
+            match result {
+                Ok(printed) => Some(Reply::Printed(printed)),
+                Err(e) => failed(e),
+            }
+        }
         Request::Pages(edit) => {
             let doc = state.doc.as_mut()?;
             match engine.edit_pages(doc, &edit) {

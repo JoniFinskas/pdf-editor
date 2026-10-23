@@ -83,3 +83,6 @@ Keyboard commands are UI dispatch only: Open/Save As use `Engine::open`/`Documen
 - `ChangeState::is_dirty()` -> whether the current position differs from the reachable saved position.
 
 - `startup_path(arguments)` -> optional OS-native PDF path from arguments after the executable, accepting an optional `--`; errors on empty paths or extra arguments. Opening still uses `Engine::open`.
+
+- `Engine::prepare_print(document)` -> temporary raster `PrintJob`, at up to 300 DPI within render/spool limits; dropping it removes the job.
+- `PrintJob::directory()` / `page_count()` -> private spool path and number of pages for native print integration.
