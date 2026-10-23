@@ -62,3 +62,5 @@ limits. The core has no UI, dialog, network or telemetry dependencies.
 
 - `Engine::system_fonts()` -> sorted installed TrueType face names for the picker.
 - `Engine::add_text(document, NewText)` -> atomically append a single run at a PDF-point baseline with selected system font, size and RGB color; undoable, rejects unavailable glyphs/embedding restrictions.
+
+- `Engine::delete_text(document, selected)` -> removes exactly one current text object, preserves neighboring positions and returns `EditResult`; undoable.

@@ -17,6 +17,10 @@ pub struct NewText {
 }
 
 impl Engine {
+    pub fn delete_text(&self, doc: &mut Document, selected: &TextObject) -> Result<EditResult> {
+        self.edit(doc, selected, "")
+    }
+
     pub fn system_fonts(&self) -> Result<Vec<String>> {
         guarded(fonts::system_names)
     }

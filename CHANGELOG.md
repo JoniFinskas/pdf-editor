@@ -6,6 +6,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Delete individual PDF text objects from the selected-line toolbar.
+
 - Place new text with a system font picker, point size and color.
 
 - Find text with Ctrl+F, match highlights and wrapping next/previous navigation.

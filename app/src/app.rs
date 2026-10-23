@@ -62,6 +62,8 @@ pub struct EditorApp {
 }
 
 struct TextTool {
+    selection: Vec<TextObject>,
+    selected: usize,
     adding: bool,
     text: String,
     font: String,
@@ -73,6 +75,8 @@ struct TextTool {
 impl Default for TextTool {
     fn default() -> Self {
         Self {
+            selection: vec![],
+            selected: 0,
             adding: false,
             text: "New text".into(),
             font: "ArialMT".into(),
@@ -517,6 +521,7 @@ impl EditorApp {
                 pages,
                 suggested,
             } => {
+                self.text_tool.selection.clear();
                 self.text_tool.adding = false;
                 self.text_tool.at = None;
                 self.find.matches.clear();
@@ -679,6 +684,7 @@ impl EditorApp {
                     }
                 }
                 if doc.generation != generation {
+                    self.text_tool.selection.clear();
                     doc.generation = generation;
                     self.find.matches.clear();
                     if !self.find.query.is_empty() {
@@ -794,6 +800,42 @@ impl EditorApp {
                 self.banner(BannerKind::Error, message);
             }
         }
+    }
+
+    fn object_tools(&mut self, ui: &mut Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Text object");
+            egui::ComboBox::from_id_salt("selected-run")
+                .selected_text(format!("Run {}", self.text_tool.selected + 1))
+                .show_ui(ui, |ui| {
+                    for (index, object) in self.text_tool.selection.iter().enumerate() {
+                        ui.selectable_value(
+                            &mut self.text_tool.selected,
+                            index,
+                            format!("{}: {}", index + 1, object.text),
+                        );
+                    }
+                });
+            if ui
+                .add_enabled(self.busy == 0, Button::new("Delete object"))
+                .clicked()
+            {
+                if let Some(object) = self
+                    .text_tool
+                    .selection
+                    .get(self.text_tool.selected)
+                    .cloned()
+                {
+                    self.cancel_edit();
+                    self.busy += 1;
+                    self.send(Request::DeleteText(object));
+                }
+            }
+            if ui.button("Deselect").clicked() {
+                self.commit_edit();
+                self.text_tool.selection.clear();
+            }
+        });
     }
 
     fn text_tools(&mut self, ui: &mut Ui) {
@@ -1383,6 +1425,8 @@ impl EditorApp {
             // edit first, then opens the clicked line from refreshed objects.
             let mut outcome = None;
             if let Some(edit) = start_edit.take() {
+                self.text_tool.selection = edit.line.objects.clone();
+                self.text_tool.selected = 0;
                 let changed = doc.edit.as_ref().is_some_and(|e| e.text != e.line.text);
                 if changed {
                     outcome = Some(true);
@@ -1844,6 +1888,9 @@ impl eframe::App for EditorApp {
             .exact_size(28.0)
             .show(ui, |ui| self.status_bar(ui, &p));
 
+        if !self.text_tool.selection.is_empty() && !self.text_tool.adding && !self.settings_open {
+            egui::Panel::top("selected-object").show(ui, |ui| self.object_tools(ui));
+        }
         if self.text_tool.adding && !self.settings_open {
             egui::Panel::top("text-tools").show(ui, |ui| self.text_tools(ui));
         }

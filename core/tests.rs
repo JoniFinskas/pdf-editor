@@ -840,3 +840,23 @@ fn new_text_roundtrip_and_history() {
     invalid.font = "NonexistentSelectedFontXYZ".into();
     assert!(e.add_text(&mut doc, &invalid).is_err());
 }
+
+#[test]
+fn delete_object_preserves_neighbors_and_rejects_stale_selection() {
+    let _lock = PDFIUM.lock().unwrap();
+    let e = engine();
+    let mut doc = e.open(&fixture("kerning.pdf")).unwrap();
+    let before = e.text_objects(&doc, 0).unwrap();
+    let old = doc.bytes.clone();
+    e.delete_text(&mut doc, &before[0]).unwrap();
+    let after = e.text_objects(&doc, 0).unwrap();
+    assert_eq!(after.len() + 1, before.len());
+    for (a, b) in before[1..].iter().zip(&after) {
+        assert_eq!(a.text, b.text);
+        assert_eq!(a.matrix, b.matrix);
+    }
+    assert!(e.delete_text(&mut doc, &before[0]).is_err());
+    assert!(doc.undo());
+    assert_eq!(doc.bytes, old);
+    assert!(doc.redo());
+}

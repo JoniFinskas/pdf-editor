@@ -21,6 +21,7 @@ pub enum Request {
     Open(PathBuf),
     Find(String),
     Fonts,
+    DeleteText(TextObject),
     AddText {
         text: pdf_editor_core::NewText,
         raster: (f32, f32),
@@ -249,6 +250,21 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
+        Request::DeleteText(object) => {
+            let doc = state.doc.as_mut()?;
+            match engine.delete_text(doc, &object) {
+                Ok(result) => {
+                    state.generation += 1;
+                    Some(changed(
+                        state,
+                        ChangeKind::Edit,
+                        result.warning,
+                        result.objects_changed,
+                    ))
+                }
+                Err(e) => failed(e),
+            }
+        }
         Request::Fonts => match engine.system_fonts() {
             Ok(fonts) => Some(Reply::Fonts(fonts)),
             Err(e) => failed(e),

@@ -208,3 +208,7 @@ Use PDFium Unicode search across adjacent runs, case-insensitive, with bounded q
 ## Part D: New text
 
 New text uses a clicked baseline and a single-line input, with installed TrueType faces, point size and RGB picker. Font scanning runs on the worker. Unsupported glyphs or embedding permissions fail explicitly instead of silently replacing the chosen face. Content is appended in isolated graphics state; existing streams are preserved.
+
+## Part D: Delete text
+
+The selected-line toolbar exposes its individual PDF runs so deletion targets exactly one object, including glyph-by-glyph browser PDFs. Deletion reuses the verified empty-text edit transaction and cursor correction; stale selections are rejected.
