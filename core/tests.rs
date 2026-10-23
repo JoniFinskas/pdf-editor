@@ -2833,3 +2833,124 @@ fn table_export_generated_ruled_grid_and_office_files() {
     );
     assert!(!too_long.exists());
 }
+
+#[test]
+fn designed_fields_fill_move_resize_delete_and_reopen() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let path = temp("design-fields.pdf");
+    fs::write(&path, generated("Form", false, 0, 0., false, false)).unwrap();
+    let mut doc = e.open(&path).unwrap();
+    for (i, kind) in [
+        DesignFieldKind::Text,
+        DesignFieldKind::Checkbox,
+        DesignFieldKind::Radio {
+            options: vec!["One".into(), "Two".into()],
+        },
+        DesignFieldKind::Dropdown {
+            options: vec!["Finland".into(), "UK".into()],
+        },
+        DesignFieldKind::Date,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        e.design_form(
+            &mut doc,
+            FormDesignEdit::Add(NewFormField {
+                page: 0,
+                name: format!("Field{i}"),
+                required: true,
+                bounds: Bounds {
+                    left: 30.,
+                    bottom: 30. + i as f32 * 45.,
+                    right: 200.,
+                    top: 65. + i as f32 * 45.,
+                },
+                kind,
+            }),
+        )
+        .unwrap();
+    }
+    assert_eq!(e.designed_fields(&doc).unwrap().len(), 6);
+    let fields = e.designed_fields(&doc).unwrap();
+    assert!(fields.iter().all(|f| f.required));
+    let mut moved = fields[0].bounds;
+    moved.left += 12.;
+    moved.right += 35.;
+    moved.top += 8.;
+    e.design_form(
+        &mut doc,
+        FormDesignEdit::Update {
+            field: fields[0].clone(),
+            name: "Renamed".into(),
+            required: false,
+            bounds: moved,
+        },
+    )
+    .unwrap();
+    assert!(
+        e.design_form(&mut doc, FormDesignEdit::Delete(fields[0].clone()))
+            .is_err()
+    );
+    let current = e.designed_fields(&doc).unwrap();
+    assert_eq!(current[0].bounds, moved);
+    assert!(!current[0].required);
+    for (index, value) in [
+        (0, FieldValue::Text("Example".into())),
+        (1, FieldValue::Check(true)),
+        (2, FieldValue::Radio(true)),
+        (3, FieldValue::Radio(true)),
+        (
+            4,
+            FieldValue::Choice {
+                options: vec![],
+                selected: Some(1),
+            },
+        ),
+        (5, FieldValue::Text("2026-10-23".into())),
+    ] {
+        let fields = e.form_fields(&doc).unwrap();
+        let before = e.render(&doc, 0, 1.).unwrap().rgba;
+        e.fill_field(&mut doc, &fields[index], &value).unwrap();
+        assert_ne!(before, e.render(&doc, 0, 1.).unwrap().rgba, "field {index}");
+    }
+    let fields = e.form_fields(&doc).unwrap();
+    assert_eq!(fields[2].value, FieldValue::Radio(false));
+    assert_eq!(fields[3].value, FieldValue::Radio(true));
+    let output = temp("designed-filled.pdf");
+    let _ = fs::remove_file(&output);
+    doc.save_as(&output).unwrap();
+    let reopened = e.open(&output).unwrap();
+    assert_eq!(
+        e.render(&doc, 0, 1.).unwrap().rgba,
+        e.render(&reopened, 0, 1.).unwrap().rgba
+    );
+    let field = e.designed_fields(&doc).unwrap()[0].clone();
+    let before = doc.bytes.clone();
+    e.design_form(&mut doc, FormDesignEdit::Delete(field))
+        .unwrap();
+    assert_eq!(e.designed_fields(&doc).unwrap().len(), 5);
+    assert!(doc.undo());
+    assert_eq!(doc.bytes, before);
+    let before = doc.bytes.clone();
+    assert!(
+        e.design_form(
+            &mut doc,
+            FormDesignEdit::Add(NewFormField {
+                page: 0,
+                name: "Invalid".into(),
+                required: false,
+                bounds: Bounds {
+                    left: f32::NAN,
+                    bottom: 0.,
+                    right: 100.,
+                    top: 40.
+                },
+                kind: DesignFieldKind::Text
+            })
+        )
+        .is_err()
+    );
+    assert_eq!(doc.bytes, before);
+}

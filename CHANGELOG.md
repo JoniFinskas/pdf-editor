@@ -25,6 +25,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 - Select a table area, review and edit detected cells, and export Excel or CSV.
 
+- Add a form designer for text, date, checkbox, radio and dropdown fields with names, required flags, move/resize controls and deletion.
+
 ### Performance
 
 - Load page-size metadata without parsing every page, cap page texture storage, and bound background-render replies. Add a generated 1,000-page startup benchmark.

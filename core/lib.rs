@@ -31,6 +31,8 @@ pub use features::NewText;
 pub use objects::{ObjectAction, ObjectClipboard, PageItem};
 mod fonts;
 mod forms;
+mod form_design;
+pub use form_design::{DesignFieldKind, NewFormField, DesignedField, FormDesignEdit};
 pub use forms::{FieldValue, FormField};
 mod images;
 mod images_to_pdf;

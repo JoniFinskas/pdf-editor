@@ -11,6 +11,7 @@ mod crop;
 mod drawing;
 mod export;
 mod forms;
+mod form_design;
 mod icons;
 mod instance;
 mod markup;

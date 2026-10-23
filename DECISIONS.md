@@ -562,3 +562,12 @@ effort. Images are rasterized to at most 2048 pixels per side and retained as
 inline PNGs. Font names are retained without embedding font programs. Ordinary
 groups are expanded only in a temporary document; unsupported groups fail
 without creating partial output. ZIP output remains bounded to 64 MiB.
+
+## Form designer
+
+Create standard AcroForm widgets with bounded names/options and explicit appearances.
+Use real parent/Kids radio groups so PDFium enforces exclusive selection. Preserve
+existing field values and appearances while moving or resizing widget rectangles.
+Date fields remain script-free text with a date-format tooltip. The designer uses
+a separate draft canvas and coordinate controls; an explicit Apply commits one
+undoable change. Refresh replaces stale selections after document mutations.
