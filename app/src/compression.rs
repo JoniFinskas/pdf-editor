@@ -1,4 +1,9 @@
-use crate::{theme::Palette, widgets::Btn, worker::Request};
+use crate::{
+    icons::Icon,
+    theme::Palette,
+    widgets::{self, Btn, Look, ToolWindow},
+    worker::Request,
+};
 use eframe::egui;
 pub struct Compression {
     pub open: bool,
@@ -16,17 +21,44 @@ impl Default for Compression {
 }
 impl Compression {
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, idle: bool) -> Option<Request> {
-        if !self.open {
-            return None;
-        }
         let mut request = None;
-        egui::Window::new("Compress images").open(&mut self.open).show(ctx,|ui| {
-            ui.label("Downscale and JPEG-compress supported RGB images. Text stays editable.");
-            ui.add(egui::Slider::new(&mut self.edge,128..=8192).text("Maximum image edge (pixels)"));
-            ui.add(egui::Slider::new(&mut self.quality,10..=95).text("JPEG quality"));
-            ui.label("The result banner shows size before and after. If no space is saved, the document stays unchanged. Undo restores image quality.");
-            if Btn::new("Compress").enabled(idle).show(ui,p).clicked() {request=Some(Request::Compress(self.edge,self.quality));}
-        });
+        ToolWindow::new("Compress images", Icon::Compress)
+            .width(380.0)
+            .show(ctx, p, &mut self.open, |ui| {
+                widgets::hint(
+                    ui,
+                    p,
+                    "Downscale and JPEG-compress supported RGB images. Text stays editable.",
+                );
+                widgets::slider(
+                    ui,
+                    p,
+                    "Maximum image edge (pixels)",
+                    egui::Slider::new(&mut self.edge, 128..=8192),
+                );
+                widgets::slider(
+                    ui,
+                    p,
+                    "JPEG quality",
+                    egui::Slider::new(&mut self.quality, 10..=95),
+                );
+                widgets::hint(
+                    ui,
+                    p,
+                    "The result banner shows size before and after. If no space is saved, the document stays unchanged. Undo restores image quality.",
+                );
+                widgets::actions(ui, |ui| {
+                    if Btn::new("Compress")
+                        .look(Look::Primary)
+                        .min_width(96.0)
+                        .enabled(idle)
+                        .show(ui, p)
+                        .clicked()
+                    {
+                        request = Some(Request::Compress(self.edge, self.quality));
+                    }
+                });
+            });
         request
     }
 }

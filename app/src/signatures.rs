@@ -1,4 +1,9 @@
-use crate::{theme::Palette, widgets::Btn, worker::Request};
+use crate::{
+    icons::Icon,
+    theme::{self, Palette},
+    widgets::{self, Btn, Look, Tone, ToolWindow},
+    worker::Request,
+};
 use eframe::egui::{self, Color32, Sense, Stroke, Vec2};
 use pdf_editor_core::{Picture, Placement};
 use std::path::Path;
@@ -9,7 +14,7 @@ pub struct Signatures {
     picture: Option<Picture>,
     preview: Option<egui::TextureHandle>,
     at: Placement,
-    error: String,
+    note: Option<(Tone, String)>,
 }
 impl Default for Signatures {
     fn default() -> Self {
@@ -25,7 +30,7 @@ impl Default for Signatures {
                 width: 180.0,
                 height: 60.0,
             },
-            error: String::new(),
+            note: None,
         }
     }
 }
@@ -41,7 +46,10 @@ impl Signatures {
             egui::TextureOptions::LINEAR,
         ));
         self.picture = Some(picture);
-        self.error.clear();
+        self.note = None;
+    }
+    fn failed(&mut self, error: impl ToString) {
+        self.note = Some((Tone::Error, error.to_string()));
     }
     pub fn paint_placement(
         &self,
@@ -67,12 +75,8 @@ impl Signatures {
                 egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
                 Color32::WHITE,
             );
-            painter.rect_stroke(
-                rect,
-                0,
-                Stroke::new(1.0, Color32::from_rgb(60, 120, 230)),
-                egui::StrokeKind::Outside,
-            );
+            let accent = theme::palette_of(painter.ctx()).accent;
+            widgets::dashed_rect_on(painter, rect.expand(2.0), Stroke::new(1.5, accent));
         }
     }
     pub fn show(
@@ -83,26 +87,45 @@ impl Signatures {
         pages: usize,
         idle: bool,
     ) -> Option<Request> {
-        if !self.open {
-            return None;
-        }
-        let mut open = true;
         let mut request = None;
-        egui::Window::new("Signatures")
-            .open(&mut open)
-            .default_width(460.0)
-            .show(ctx, |ui| {
-                ui.label("Draw a signature, or import a PNG or JPG.");
-                let (response, painter) =
-                    ui.allocate_painter(Vec2::new(420.0, 140.0), Sense::drag());
-                painter.rect_filled(response.rect, 6, Color32::WHITE);
+        let mut open = self.open;
+        ToolWindow::new("Signatures", Icon::Signature)
+            .width(440.0)
+            .show(ctx, p, &mut open, |ui| {
+                widgets::hint(ui, p, "Draw a signature, or import a PNG or JPG.");
+                let size = Vec2::new(ui.available_width(), 140.0);
+                let (response, painter) = ui.allocate_painter(size, Sense::drag());
+                let pad = response.rect;
+                // The pad stays white in both themes, like paper.
+                painter.rect(
+                    pad,
+                    theme::RADIUS,
+                    Color32::WHITE,
+                    Stroke::new(1.0, p.border_strong),
+                    egui::StrokeKind::Inside,
+                );
+                let base = pad.bottom() - 32.0;
+                painter.hline(
+                    pad.x_range().shrink(24.0),
+                    base,
+                    Stroke::new(1.0, Color32::from_gray(200)),
+                );
+                if self.strokes.is_empty() {
+                    painter.text(
+                        egui::pos2(pad.left() + 24.0, base + 6.0),
+                        egui::Align2::LEFT_TOP,
+                        "Sign above the line",
+                        egui::FontId::proportional(12.0),
+                        Color32::from_gray(150),
+                    );
+                }
                 if response.drag_started() {
                     self.strokes.push(vec![]);
                 }
                 if response.dragged()
                     && let Some(pos) = response.interact_pointer_pos()
                 {
-                    let local = (pos - response.rect.min) / response.rect.size();
+                    let local = (pos - pad.min) / pad.size();
                     if let Some(stroke) = self.strokes.last_mut() {
                         stroke.push([local.x.clamp(0.0, 1.0), local.y.clamp(0.0, 1.0)]);
                     }
@@ -110,49 +133,47 @@ impl Signatures {
                 for stroke in &self.strokes {
                     for points in stroke.windows(2) {
                         painter.line_segment(
-                            [points[0], points[1]].map(|p| {
-                                response.rect.min + Vec2::new(p[0], p[1]) * response.rect.size()
-                            }),
+                            [points[0], points[1]]
+                                .map(|p| pad.min + Vec2::new(p[0], p[1]) * pad.size()),
                             Stroke::new(2.0, Color32::BLACK),
                         );
                     }
                 }
                 ui.horizontal(|ui| {
-                    if Btn::new("Use drawing").show(ui, p).clicked() {
+                    if Btn::new("Use drawing")
+                        .look(Look::OutlineAccent)
+                        .show(ui, p)
+                        .clicked()
+                    {
                         match pdf_editor_core::signature_image(&self.strokes) {
                             Ok(picture) => self.set_picture(ctx, picture),
-                            Err(e) => self.error = e.to_string(),
+                            Err(e) => self.failed(e),
                         }
                     }
-                    if Btn::new("Clear").show(ui, p).clicked() {
+                    if Btn::new("Clear").look(Look::Outline).show(ui, p).clicked() {
                         self.strokes.clear();
                     }
-                    if Btn::new("Import…").show(ui, p).clicked()
+                    if Btn::new("Import…")
+                        .with_icon(Icon::Image)
+                        .look(Look::Outline)
+                        .show(ui, p)
+                        .clicked()
                         && let Some(path) = rfd::FileDialog::new()
                             .add_filter("Images", &["png", "jpg", "jpeg"])
                             .pick_file()
                     {
                         match Picture::open(&path) {
                             Ok(pic) => self.set_picture(ctx, pic),
-                            Err(e) => self.error = e.to_string(),
+                            Err(e) => self.failed(e),
                         }
                     }
                 });
+                widgets::subheading(ui, p, "Saved signatures");
                 if let Some(folder) = folder {
                     ui.horizontal(|ui| {
-                        if Btn::new("Save reusable signature")
-                            .enabled(self.picture.is_some())
-                            .show(ui, p)
-                            .clicked()
-                            && let Some(picture) = &self.picture
-                        {
-                            match pdf_editor_core::store_signature(folder, picture) {
-                                Ok(_) => self.error = "Signature saved to the library.".into(),
-                                Err(e) => self.error = e.to_string(),
-                            }
-                        }
                         egui::ComboBox::from_id_salt("signature-library")
-                            .selected_text("Saved signatures")
+                            .selected_text("Choose a saved signature")
+                            .width(220.0)
                             .show_ui(ui, |ui| match pdf_editor_core::signature_files(folder) {
                                 Ok(paths) => {
                                     for path in paths {
@@ -167,50 +188,99 @@ impl Signatures {
                                         {
                                             match Picture::open(&path) {
                                                 Ok(pic) => self.set_picture(ctx, pic),
-                                                Err(e) => self.error = e.to_string(),
+                                                Err(e) => self.failed(e),
                                             }
                                         }
                                     }
                                 }
-                                Err(e) => self.error = e.to_string(),
+                                Err(e) => self.failed(e),
                             });
+                        if Btn::new("Save for reuse")
+                            .with_icon(Icon::Save)
+                            .look(Look::Outline)
+                            .enabled(self.picture.is_some())
+                            .show(ui, p)
+                            .clicked()
+                            && let Some(picture) = &self.picture
+                        {
+                            self.note =
+                                Some(match pdf_editor_core::store_signature(folder, picture) {
+                                    Ok(_) => (Tone::Ok, "Signature saved to the library.".into()),
+                                    Err(e) => (Tone::Error, e.to_string()),
+                                });
+                        }
                     });
                 } else {
-                    ui.label("A config folder is required to save reusable signatures.");
+                    widgets::hint(
+                        ui,
+                        p,
+                        "A config folder is required to save reusable signatures.",
+                    );
                 }
                 if let Some(texture) = &self.preview {
-                    ui.image((texture.id(), Vec2::new(300.0, 100.0)));
+                    widgets::subheading(ui, p, "Preview");
+                    egui::Frame::new()
+                        .fill(Color32::WHITE)
+                        .stroke(Stroke::new(1.0, p.border))
+                        .corner_radius(theme::RADIUS)
+                        .inner_margin(8)
+                        .show(ui, |ui| {
+                            ui.image((texture.id(), Vec2::new(240.0, 80.0)));
+                        });
                 }
-                ui.separator();
-                ui.label("Placement in PDF points, measured from the bottom-left corner.");
+                widgets::subheading(ui, p, "Placement");
+                widgets::hint(
+                    ui,
+                    p,
+                    "PDF points, measured from the bottom-left corner of the page.",
+                );
                 let mut page = usize::from(self.at.page) + 1;
-                ui.horizontal(|ui| {
-                    ui.label("Page");
-                    ui.add(egui::DragValue::new(&mut page).range(1..=pages.max(1)));
-                    self.at.page = (page - 1) as u16;
-                    ui.label("Left");
-                    ui.add(egui::DragValue::new(&mut self.at.left));
-                    ui.label("Bottom");
-                    ui.add(egui::DragValue::new(&mut self.at.bottom));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Width");
-                    ui.add(egui::DragValue::new(&mut self.at.width).range(1.0..=10000.0));
-                    ui.label("Height");
-                    ui.add(egui::DragValue::new(&mut self.at.height).range(1.0..=10000.0));
-                });
-                if Btn::new("Place signature")
-                    .enabled(idle && pages > 0 && self.picture.is_some())
-                    .show(ui, p)
-                    .clicked()
-                    && let Some(picture) = &self.picture
-                {
-                    request = Some(Request::PlacePicture(picture.clone(), self.at));
+                widgets::numbers(
+                    ui,
+                    p,
+                    vec![
+                        (
+                            "Page",
+                            egui::DragValue::new(&mut page).range(1..=pages.max(1)),
+                        ),
+                        ("Left", egui::DragValue::new(&mut self.at.left)),
+                        ("Bottom", egui::DragValue::new(&mut self.at.bottom)),
+                    ],
+                );
+                self.at.page = (page - 1) as u16;
+                widgets::numbers(
+                    ui,
+                    p,
+                    vec![
+                        (
+                            "Width",
+                            egui::DragValue::new(&mut self.at.width).range(1.0..=10000.0),
+                        ),
+                        (
+                            "Height",
+                            egui::DragValue::new(&mut self.at.height).range(1.0..=10000.0),
+                        ),
+                    ],
+                );
+                if let Some((tone, text)) = &self.note {
+                    widgets::notice(ui, p, *tone, text);
                 }
-                ui.label("Signatures become page content. Undo removes the last placement.");
-                if !self.error.is_empty() {
-                    ui.label(&self.error);
-                }
+                widgets::hint(
+                    ui,
+                    p,
+                    "Signatures become page content. Undo removes the last placement.",
+                );
+                widgets::actions(ui, |ui| {
+                    if Btn::new("Place signature")
+                        .look(Look::Primary)
+                        .enabled(idle && pages > 0 && self.picture.is_some())
+                        .show(ui, p)
+                        .clicked()
+                        && let Some(picture) = &self.picture
+                    {
+                        request = Some(Request::PlacePicture(picture.clone(), self.at));
+                    }
+                });
             });
         self.open = open;
         request

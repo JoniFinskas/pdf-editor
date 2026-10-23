@@ -14,6 +14,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
   painted icons, a home page with an open card and recent files, a settings
   page with General, Editing, Shortcuts and About sections, floating find and
   text toolbars, and a pages sidebar that can be hidden.
+- New tool windows, document tabs, the document menu and the bookmarks
+  sidebar now match the rest of the interface.
 
 ### Fixed
 

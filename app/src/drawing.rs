@@ -1,6 +1,7 @@
 use crate::{
+    icons::Icon,
     theme::Palette,
-    widgets::Btn,
+    widgets::{self, Btn, Look, ToolWindow},
     worker::{PageTransform, Request},
 };
 use eframe::egui::{self, Color32, Stroke, Vec2};
@@ -36,15 +37,78 @@ impl DrawingTool {
             self.points.clear();
             return;
         }
-        egui::Window::new("Draw and shapes").open(&mut self.open).show(ctx,|ui| {
-            egui::ComboBox::from_id_salt("draw-kind").selected_text(format!("{:?}",self.kind)).show_ui(ui,|ui| {
-                for kind in [DrawingKind::Freehand,DrawingKind::Rectangle,DrawingKind::Ellipse,DrawingKind::Line,DrawingKind::Arrow] {ui.selectable_value(&mut self.kind,kind,format!("{kind:?}"));}
+        ToolWindow::new("Draw and shapes", Icon::Pen)
+            .width(340.0)
+            .show(ctx, p, &mut self.open, |ui| {
+                widgets::field(ui, p, "Shape", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for (kind, icon, tip) in [
+                            (DrawingKind::Freehand, Icon::Pen, "Freehand"),
+                            (DrawingKind::Rectangle, Icon::Square, "Rectangle"),
+                            (DrawingKind::Ellipse, Icon::Circle, "Ellipse"),
+                            (DrawingKind::Line, Icon::Line, "Line"),
+                            (DrawingKind::Arrow, Icon::ArrowDiagonal, "Arrow"),
+                        ] {
+                            if Btn::icon(icon)
+                                .look(if self.kind == kind {
+                                    Look::Active
+                                } else {
+                                    Look::Outline
+                                })
+                                .height(36.0)
+                                .tip(tip)
+                                .show(ui, p)
+                                .clicked()
+                            {
+                                self.kind = kind;
+                            }
+                        }
+                    });
+                });
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    widgets::field(ui, p, "Color", |ui| {
+                        ui.color_edit_button_srgb(&mut self.color)
+                    });
+                    widgets::number(
+                        ui,
+                        p,
+                        "Width",
+                        true,
+                        egui::DragValue::new(&mut self.width).range(0.1..=100.0),
+                    );
+                });
+                widgets::slider(
+                    ui,
+                    p,
+                    "Opacity",
+                    egui::Slider::new(&mut self.opacity, 0.0..=1.0),
+                );
+                widgets::hint(
+                    ui,
+                    p,
+                    "Drag on a page to draw. Each stroke or shape becomes a PDF annotation and one undo step.",
+                );
+                widgets::actions(ui, |ui| {
+                    if Btn::new(if self.active {
+                        "Finish drawing"
+                    } else {
+                        "Draw on page"
+                    })
+                    .look(if self.active {
+                        Look::OutlineAccent
+                    } else {
+                        Look::Primary
+                    })
+                    .show(ui, p)
+                    .clicked()
+                    {
+                        self.active = !self.active;
+                        self.points.clear();
+                    }
+                });
             });
-            ui.horizontal(|ui| {ui.color_edit_button_srgb(&mut self.color);ui.label("Width");ui.add(egui::DragValue::new(&mut self.width).range(0.1..=100.0));});
-            ui.add(egui::Slider::new(&mut self.opacity,0.0..=1.0).text("Opacity"));
-            if Btn::new(if self.active {"Finish drawing"}else{"Draw on page"}).show(ui,p).clicked() {self.active = !self.active;self.points.clear();}
-            ui.label("Drag on a page to draw. Each stroke or shape becomes a PDF annotation and one undo step.");
-        });
     }
     pub fn on_page(
         &mut self,

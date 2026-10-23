@@ -1,11 +1,15 @@
 //! Small painted controls shared by the toolbars, the home page and the
-//! settings page: icon buttons, keycaps, dividers and settings rows.
+//! settings page and the tool windows: icon buttons, keycaps, dividers,
+//! settings rows and form fields.
 
 use crate::icons::{self, Icon};
 use crate::theme::{self, Palette};
 use eframe::egui::{
-    Align2, Color32, CornerRadius, CursorIcon, FontId, Id, Rect, Response, Sense, Shape, Stroke,
-    StrokeKind, Ui, WidgetInfo, WidgetType, pos2, vec2,
+    Align, Align2, Color32, Context, CornerRadius, CursorIcon, DragValue, FontId, Frame, Id, Label,
+    Layout, Margin, Painter, Rect, Response, Sense, Shadow, Shape, Slider, Stroke, StrokeKind,
+    TextEdit, TextFormat, Ui, WidgetInfo, WidgetType, Window, pos2,
+    text::{LayoutJob, TextWrapping},
+    vec2,
 };
 
 /// Visual weight of a [`Btn`].
@@ -191,6 +195,13 @@ impl<'a> Btn<'a> {
             } else {
                 p.muted.gamma_multiply(0.6)
             };
+            // Filled buttons fade to a neutral fill while disabled, so the
+            // label stays readable.
+            let fill = if !enabled && matches!(self.look, Look::Primary | Look::Danger) {
+                p.hover
+            } else {
+                fill
+            };
             let radius = CornerRadius::same(theme::RADIUS);
             let painter = ui.painter();
             painter.rect(
@@ -332,6 +343,11 @@ const KEY_GAP: f32 = 6.0;
 
 /// Paints a dashed outline along `rect`.
 pub fn dashed_rect(ui: &Ui, rect: Rect, stroke: Stroke) {
+    dashed_rect_on(ui.painter(), rect, stroke);
+}
+
+/// [`dashed_rect`] on a given painter.
+pub fn dashed_rect_on(painter: &Painter, rect: Rect, stroke: Stroke) {
     let corners = [
         rect.left_top(),
         rect.right_top(),
@@ -339,8 +355,7 @@ pub fn dashed_rect(ui: &Ui, rect: Rect, stroke: Stroke) {
         rect.left_bottom(),
         rect.left_top(),
     ];
-    ui.painter()
-        .extend(Shape::dashed_line(&corners, stroke, 5.0, 4.0));
+    painter.extend(Shape::dashed_line(&corners, stroke, 5.0, 4.0));
 }
 
 /// Small filled dot, as in the "Edited" marker.
@@ -467,4 +482,283 @@ pub fn segmented<T: PartialEq + Copy>(
 
 fn egui_text(text: &str, font: FontId, color: Color32) -> eframe::egui::RichText {
     eframe::egui::RichText::new(text).font(font).color(color)
+}
+
+/// Floating, movable tool window in the menu style: a title row with an
+/// icon and a close button above the tool's own content.
+pub struct ToolWindow<'a> {
+    title: &'a str,
+    icon: Icon,
+    width: f32,
+    centered: bool,
+}
+
+impl<'a> ToolWindow<'a> {
+    pub fn new(title: &'a str, icon: Icon) -> Self {
+        Self {
+            title,
+            icon,
+            width: 400.0,
+            centered: false,
+        }
+    }
+
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width;
+        self
+    }
+
+    /// Opens in the middle of the window instead of beside the page.
+    pub fn centered(mut self) -> Self {
+        self.centered = true;
+        self
+    }
+
+    /// Shows the window while `open` is set; the close button clears it.
+    pub fn show(self, ctx: &Context, p: &Palette, open: &mut bool, add: impl FnOnce(&mut Ui)) {
+        if !*open {
+            return;
+        }
+        let screen = ctx.content_rect();
+        let (pivot, at) = if self.centered {
+            (Align2::CENTER_CENTER, screen.center())
+        } else {
+            // Below the top bars and the find bar, beside the page.
+            (
+                Align2::RIGHT_TOP,
+                pos2(screen.right() - 24.0, screen.top() + 172.0),
+            )
+        };
+        let frame = Frame::new()
+            .fill(p.surface)
+            .stroke(Stroke::new(1.0, p.border_strong))
+            .corner_radius(CornerRadius::same(12))
+            .inner_margin(Margin::same(18))
+            .shadow(Shadow {
+                offset: [0, 10],
+                blur: 32,
+                spread: 0,
+                color: p.page_shadow,
+            });
+        let mut close = false;
+        Window::new(self.title)
+            .id(Id::new(("tool-window", self.title)))
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .pivot(pivot)
+            .default_pos(at)
+            .frame(frame)
+            .show(ctx, |ui| {
+                ui.set_width(self.width);
+                ui.spacing_mut().item_spacing.y = 6.0;
+                ui.horizontal(|ui| {
+                    icon(ui, self.icon, 20.0, p.accent_strong);
+                    ui.add_space(2.0);
+                    ui.label(egui_text(self.title, theme::semibold(16.0), p.text));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if Btn::icon(Icon::Close)
+                            .height(28.0)
+                            .tip("Close")
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            close = true;
+                        }
+                    });
+                });
+                ui.add_space(6.0);
+                rule(ui, p);
+                ui.add_space(8.0);
+                add(ui);
+            });
+        if close {
+            *open = false;
+        }
+    }
+}
+
+/// Small muted label above a field.
+pub fn caption(ui: &mut Ui, p: &Palette, text: &str) {
+    ui.label(egui_text(text, FontId::proportional(12.5), p.muted));
+}
+
+/// Muted explanatory text that wraps to the available width.
+pub fn hint(ui: &mut Ui, p: &Palette, text: &str) {
+    ui.add(Label::new(egui_text(text, FontId::proportional(12.5), p.muted)).wrap());
+}
+
+/// Group title inside a tool window.
+pub fn subheading(ui: &mut Ui, p: &Palette, text: &str) {
+    ui.add_space(4.0);
+    ui.label(egui_text(text, theme::semibold(14.0), p.text));
+}
+
+/// Caption above a control.
+pub fn field<R>(ui: &mut Ui, p: &Palette, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        caption(ui, p, label);
+        add(ui)
+    })
+    .inner
+}
+
+/// Width of one column when a row is split into four, so number fields
+/// line up across rows.
+pub fn column_width(ui: &Ui) -> f32 {
+    ((ui.available_width() - 3.0 * COLUMN_GAP) / 4.0).floor()
+}
+
+const COLUMN_GAP: f32 = 10.0;
+
+/// Number field with a caption, one column wide.
+pub fn number(ui: &mut Ui, p: &Palette, label: &str, enabled: bool, value: DragValue<'_>) {
+    let width = column_width(ui);
+    field(ui, p, label, |ui| {
+        ui.add_enabled(enabled, |ui: &mut Ui| ui.add_sized([width, 32.0], value))
+    });
+}
+
+/// Row of captioned number fields, such as page bounds in points.
+pub fn numbers(ui: &mut Ui, p: &Palette, fields: Vec<(&str, DragValue<'_>)>) {
+    let width = column_width(ui);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = COLUMN_GAP;
+        for (label, value) in fields {
+            field(ui, p, label, |ui| ui.add_sized([width, 32.0], value));
+        }
+    });
+}
+
+/// Captioned slider that fills the row.
+pub fn slider(ui: &mut Ui, p: &Palette, label: &str, slider: Slider<'_>) {
+    field(ui, p, label, |ui| {
+        ui.spacing_mut().slider_width = (ui.available_width() - 82.0).max(80.0);
+        // The rail uses the field fill, which matches the window in light mode.
+        ui.visuals_mut().widgets.inactive.bg_fill = p.border;
+        ui.add(slider.trailing_fill(true))
+    });
+}
+
+/// Single-line text field with the same height as the number fields.
+pub fn text_field(text: &mut String, width: f32) -> TextEdit<'_> {
+    TextEdit::singleline(text)
+        .desired_width(width)
+        .margin(Margin::symmetric(10, 7))
+}
+
+/// Checkbox with a square box; the shared widget radius would make it round.
+pub fn checkbox(ui: &mut Ui, checked: &mut bool, text: &str) -> Response {
+    ui.scope(|ui| {
+        let w = &mut ui.visuals_mut().widgets;
+        for state in [&mut w.inactive, &mut w.hovered, &mut w.active] {
+            state.corner_radius = CornerRadius::same(4);
+        }
+        ui.checkbox(checked, text)
+    })
+    .inner
+}
+
+/// Tone of a [`notice`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    Warn,
+    Error,
+    Ok,
+}
+
+/// Tinted message box inside a tool window.
+pub fn notice(ui: &mut Ui, p: &Palette, tone: Tone, text: &str) {
+    let (bg, fg) = match tone {
+        Tone::Warn => (p.warn_bg, p.warn_fg),
+        Tone::Error => (p.error_bg, p.error_fg),
+        Tone::Ok => (p.ok_bg, p.ok_fg),
+    };
+    Frame::new()
+        .fill(bg)
+        .corner_radius(CornerRadius::same(theme::RADIUS))
+        .inner_margin(Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_top(|ui| {
+                icon(ui, Icon::Info, 16.0, fg);
+                ui.add(Label::new(egui_text(text, FontId::proportional(13.0), fg)).wrap());
+            });
+        });
+}
+
+/// Row of buttons aligned to the right edge; add the main action first.
+pub fn actions(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    ui.add_space(4.0);
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), 34.0),
+        Layout::right_to_left(Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            add(ui);
+        },
+    );
+}
+
+/// Selectable list row with an icon, a title and muted detail on the right.
+pub fn list_row(
+    ui: &mut Ui,
+    p: &Palette,
+    selected: bool,
+    indent: f32,
+    kind: Icon,
+    title: &str,
+    detail: &str,
+) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click());
+    response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, selected, title));
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        let radius = CornerRadius::same(theme::RADIUS - 2);
+        if selected {
+            painter.rect_filled(rect, radius, p.accent_soft);
+        } else if response.hovered() || response.has_focus() {
+            painter.rect_filled(rect, radius, p.hover);
+        }
+        if response.has_focus() {
+            painter.rect_stroke(
+                rect,
+                radius,
+                Stroke::new(1.5, p.accent_strong),
+                StrokeKind::Inside,
+            );
+        }
+        let fg = if selected { p.accent_strong } else { p.text };
+        let left = rect.left() + 8.0 + indent;
+        icons::paint(
+            painter,
+            Rect::from_center_size(pos2(left + 8.0, rect.center().y), vec2(16.0, 16.0)),
+            kind,
+            if selected { p.accent_strong } else { p.muted },
+        );
+        let detail =
+            painter.layout_no_wrap(detail.to_string(), FontId::proportional(12.5), p.muted);
+        let room = (rect.right() - 18.0 - detail.size().x - (left + 24.0)).max(20.0);
+        let mut job = LayoutJob::single_section(
+            title.to_string(),
+            TextFormat::simple(FontId::proportional(14.0), fg),
+        );
+        job.wrap = TextWrapping::truncate_at_width(room);
+        let title = painter.layout_job(job);
+        painter.galley(
+            pos2(left + 24.0, rect.center().y - title.size().y / 2.0),
+            title,
+            fg,
+        );
+        painter.galley(
+            pos2(
+                rect.right() - 10.0 - detail.size().x,
+                rect.center().y - detail.size().y / 2.0,
+            ),
+            detail,
+            p.muted,
+        );
+    }
+    response.on_hover_cursor(CursorIcon::PointingHand)
 }

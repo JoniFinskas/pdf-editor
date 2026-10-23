@@ -386,3 +386,34 @@ Decided to preserve nested outline trees and destination dictionaries while rewr
 ### Final interface review
 
 Decided to make the expanded document-tools menu scroll within the viewport so Print and recent files remain reachable at the minimum window height. A pointer-and-wheel interaction regression test covers reaching and dispatching Print at 640×420. Updated the usage guide and manual checklist for all daily and extra tools, including encrypted-source recovery restrictions and whole-document redaction flattening.
+
+## Restyle of the Part F and G screens
+
+The tools added in Parts F and G now use the Part E style, with visual changes only:
+
+- Tool windows share one frame (app/src/widgets.rs `ToolWindow`): the menu
+  surface and border, a title row with a painted icon and a close button, and
+  no egui title bar. They open beside the page, below the find bar, and stay
+  movable and non-modal, because drawing and signature placement need the page
+  while the window is open. The password prompt opens centered.
+- Inside the windows, fields have a caption above them, number fields line up
+  on a four-column grid, explanations are muted text, warnings and errors use
+  tinted notices, and the main action is a filled button at the bottom right.
+  Redaction uses the destructive button style.
+- Filled buttons switch to a neutral fill while disabled, so their labels stay
+  readable.
+- Checkboxes in the new windows get a 4 point radius; the shared 8 point widget
+  radius would draw them as circles.
+- Sliders draw their rail in the border color, which stays visible on the
+  white light-theme window.
+- The document menu under the Open button groups the tools under Edit and
+  Document, with an icon for each entry, ahead of the recent files. It keeps
+  its place, so the toolbar still fits the minimum window width.
+- Document tabs are drawn as tabs: the active one joins the toolbar with an
+  accent line on top, and an edited document shows a dot in place of the close
+  button until the pointer is over the tab.
+- The bookmarks sidebar uses the Pages sidebar header and selectable list rows.
+- Shape choice in Draw and shapes is a row of icon toggles, and the markup kind
+  and export format use the segmented control.
+- Twenty more line icons were added for the tools, still painted with egui
+  shapes.

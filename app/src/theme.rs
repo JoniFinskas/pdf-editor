@@ -105,6 +105,15 @@ pub fn palette(ui: &egui::Ui) -> Palette {
     if ui.visuals().dark_mode { DARK } else { LIGHT }
 }
 
+/// Palette for code that paints without a `Ui`.
+pub fn palette_of(ctx: &Context) -> Palette {
+    if ctx.global_style().visuals.dark_mode {
+        DARK
+    } else {
+        LIGHT
+    }
+}
+
 pub fn install(ctx: &Context) {
     install_fonts(ctx);
     ctx.set_visuals_of(Theme::Light, visuals(&LIGHT, Visuals::light()));

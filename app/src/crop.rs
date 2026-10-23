@@ -1,4 +1,9 @@
-use crate::{theme::Palette, widgets::Btn, worker::Request};
+use crate::{
+    icons::Icon,
+    theme::Palette,
+    widgets::{self, Btn, Look, ToolWindow},
+    worker::Request,
+};
 use eframe::egui;
 use pdf_editor_core::Bounds;
 pub struct Crop {
@@ -28,19 +33,46 @@ impl Crop {
         idle: bool,
         pages: usize,
     ) -> Option<Request> {
-        if !self.open {
-            return None;
-        }
         let mut request = None;
-        egui::Window::new("Crop page").open(&mut self.open).show(ctx,|ui| {
-            let mut page=usize::from(self.page)+1;
-            ui.horizontal(|ui| {ui.label("Page");ui.add(egui::DragValue::new(&mut page).range(1..=pages.max(1)));self.page=(page-1) as u16;});
-            ui.label("Visible bounds in PDF points from the bottom-left");
-            ui.horizontal(|ui| {ui.label("Left");ui.add(egui::DragValue::new(&mut self.bounds.left));ui.label("Right");ui.add(egui::DragValue::new(&mut self.bounds.right));});
-            ui.horizontal(|ui| {ui.label("Bottom");ui.add(egui::DragValue::new(&mut self.bounds.bottom));ui.label("Top");ui.add(egui::DragValue::new(&mut self.bounds.top));});
-            ui.label("Cropping hides content outside the visible box. Use Redact when content must be removed.");
-            if Btn::new("Apply crop").enabled(idle && pages>0).show(ui,p).clicked() {request=Some(Request::Crop(self.page,self.bounds));}
-        });
+        ToolWindow::new("Crop page", Icon::Crop)
+            .width(380.0)
+            .show(ctx, p, &mut self.open, |ui| {
+                let mut page = usize::from(self.page) + 1;
+                widgets::number(
+                    ui,
+                    p,
+                    "Page",
+                    true,
+                    egui::DragValue::new(&mut page).range(1..=pages.max(1)),
+                );
+                self.page = (page - 1) as u16;
+                widgets::caption(ui, p, "Visible box in PDF points, from the bottom-left");
+                widgets::numbers(
+                    ui,
+                    p,
+                    vec![
+                        ("Left", egui::DragValue::new(&mut self.bounds.left)),
+                        ("Bottom", egui::DragValue::new(&mut self.bounds.bottom)),
+                        ("Right", egui::DragValue::new(&mut self.bounds.right)),
+                        ("Top", egui::DragValue::new(&mut self.bounds.top)),
+                    ],
+                );
+                widgets::hint(
+                    ui,
+                    p,
+                    "Cropping hides content outside the visible box. Use Redact when content must be removed.",
+                );
+                widgets::actions(ui, |ui| {
+                    if Btn::new("Apply crop")
+                        .look(Look::Primary)
+                        .enabled(idle && pages > 0)
+                        .show(ui, p)
+                        .clicked()
+                    {
+                        request = Some(Request::Crop(self.page, self.bounds));
+                    }
+                });
+            });
         request
     }
 }

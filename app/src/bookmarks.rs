@@ -1,5 +1,10 @@
-use crate::{theme::Palette, widgets::Btn, worker::Request};
-use eframe::egui;
+use crate::{
+    icons::Icon,
+    theme::{self, Palette},
+    widgets::{self, Btn, Look},
+    worker::Request,
+};
+use eframe::egui::{self, Frame, Margin, RichText};
 use pdf_editor_core::{BookmarkEdit, BookmarkSet};
 #[derive(Default)]
 pub struct Bookmarks {
@@ -28,112 +33,178 @@ impl Bookmarks {
         ready: bool,
     ) -> Option<Action> {
         let mut action = None;
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            ui.heading("Bookmarks");
-            if Btn::new("Close").show(ui, p).clicked() {
-                self.open = false;
-            }
-        });
+        // Header in the same layout as the Pages sidebar.
+        Frame::new()
+            .inner_margin(Margin {
+                left: 16,
+                right: 8,
+                top: 8,
+                bottom: 8,
+            })
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Bookmarks").font(theme::semibold(15.0)));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        if Btn::icon(Icon::RotateRight)
+                            .height(30.0)
+                            .tip("Refresh bookmarks")
+                            .enabled(ready)
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            action = Some(Action::Request(Request::Bookmarks));
+                        }
+                        if Btn::icon(Icon::ChevronLeft)
+                            .height(30.0)
+                            .tip("Hide bookmarks")
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.open = false;
+                        }
+                    });
+                });
+            });
+        widgets::rule(ui, p);
         ui.add_enabled_ui(ready, |ui| {
-            if Btn::new("Refresh").show(ui, p).clicked() {
-                action = Some(Action::Request(Request::Bookmarks));
-            }
-            egui::ScrollArea::vertical()
-                .max_height((ui.available_height() - 230.0).max(80.0))
-                .show(ui, |ui| {
-                    if self.items.items.is_empty() {
-                        ui.label("No bookmarks yet.");
-                    }
-                    for bookmark in &self.items.items {
-                        ui.horizontal(|ui| {
-                            ui.add_space((bookmark.depth.min(8) * 12) as f32);
-                            let label = match bookmark.page {
-                                Some(page) => format!("{} · {}", bookmark.title, page + 1),
-                                None => bookmark.title.clone(),
-                            };
-                            if ui
-                                .selectable_label(self.selected == Some(bookmark.id), label)
+            let editor_height = if self.selected.is_some() {
+                250.0
+            } else {
+                190.0
+            };
+            Frame::new().inner_margin(Margin::same(8)).show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height((ui.available_height() - editor_height).max(80.0))
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        if self.items.items.is_empty() {
+                            ui.add_space(8.0);
+                            ui.vertical_centered(|ui| {
+                                widgets::icon(ui, Icon::Bookmark, 24.0, p.muted);
+                                widgets::hint(ui, p, "No bookmarks yet.");
+                            });
+                        }
+                        for bookmark in &self.items.items {
+                            ui.push_id(bookmark.id, |ui| {
+                                let detail =
+                                    bookmark.page.map_or(String::new(), |p| (p + 1).to_string());
+                                if widgets::list_row(
+                                    ui,
+                                    p,
+                                    self.selected == Some(bookmark.id),
+                                    (bookmark.depth.min(8) * 14) as f32,
+                                    Icon::Bookmark,
+                                    &bookmark.title,
+                                    &detail,
+                                )
+                                .clicked()
+                                {
+                                    self.selected = Some(bookmark.id);
+                                    self.title = bookmark.title.clone();
+                                    if let Some(page) = bookmark.page {
+                                        action = Some(Action::Navigate(page));
+                                    }
+                                }
+                            });
+                        }
+                    });
+            });
+            widgets::rule(ui, p);
+            Frame::new().inner_margin(Margin::same(14)).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                let width = ui.available_width();
+                widgets::field(ui, p, "Title", |ui| {
+                    ui.add(widgets::text_field(&mut self.title, width));
+                });
+                let selected = self
+                    .items
+                    .items
+                    .iter()
+                    .find(|b| Some(b.id) == self.selected);
+                ui.add_enabled_ui(selected.is_some(), |ui| {
+                    widgets::checkbox(ui, &mut self.child, "Add inside selected bookmark");
+                });
+                let mut edit = None;
+                if Btn::new("Add current page")
+                    .with_icon(Icon::Plus)
+                    .look(Look::Primary)
+                    .min_width(width)
+                    .enabled(!self.title.trim().is_empty())
+                    .show(ui, p)
+                    .clicked()
+                {
+                    edit = Some(BookmarkEdit::Add {
+                        title: self.title.clone(),
+                        page,
+                        parent: if self.child { self.selected } else { None },
+                    });
+                }
+                if let Some(selected) = selected {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        if Btn::new("Rename")
+                            .with_icon(Icon::Edit)
+                            .look(Look::Outline)
+                            .enabled(!self.title.trim().is_empty())
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            edit = Some(BookmarkEdit::Rename {
+                                id: selected.id,
+                                title: self.title.clone(),
+                            });
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            if Btn::icon(Icon::Trash)
+                                .look(Look::Outline)
+                                .tip("Delete bookmark")
+                                .show(ui, p)
                                 .clicked()
                             {
-                                self.selected = Some(bookmark.id);
-                                self.title = bookmark.title.clone();
-                                if let Some(page) = bookmark.page {
-                                    action = Some(Action::Navigate(page));
-                                }
+                                edit = Some(BookmarkEdit::Delete { id: selected.id });
+                            }
+                            if Btn::icon(Icon::ArrowDown)
+                                .look(Look::Outline)
+                                .tip("Move down")
+                                .enabled(selected.sibling + 1 < selected.siblings)
+                                .show(ui, p)
+                                .clicked()
+                            {
+                                edit = Some(BookmarkEdit::Move {
+                                    id: selected.id,
+                                    position: selected.sibling + 1,
+                                });
+                            }
+                            if Btn::icon(Icon::ArrowUp)
+                                .look(Look::Outline)
+                                .tip("Move up")
+                                .enabled(selected.sibling > 0)
+                                .show(ui, p)
+                                .clicked()
+                            {
+                                edit = Some(BookmarkEdit::Move {
+                                    id: selected.id,
+                                    position: selected.sibling - 1,
+                                });
                             }
                         });
-                    }
-                });
-            ui.separator();
-            ui.label("Title");
-            ui.text_edit_singleline(&mut self.title);
-            let selected = self
-                .items
-                .items
-                .iter()
-                .find(|b| Some(b.id) == self.selected);
-            ui.add_enabled_ui(selected.is_some(), |ui| {
-                ui.checkbox(&mut self.child, "Add inside selected bookmark");
+                    });
+                    widgets::hint(
+                        ui,
+                        p,
+                        "Delete includes child bookmarks. Undo restores them.",
+                    );
+                }
+                if let Some(edit) = edit {
+                    action = Some(Action::Request(Request::EditBookmarks(
+                        self.items.revision,
+                        edit,
+                    )));
+                }
             });
-            let mut edit = None;
-            if Btn::new("Add current page")
-                .enabled(!self.title.trim().is_empty())
-                .show(ui, p)
-                .clicked()
-            {
-                edit = Some(BookmarkEdit::Add {
-                    title: self.title.clone(),
-                    page,
-                    parent: if self.child { self.selected } else { None },
-                });
-            }
-            if let Some(selected) = selected {
-                ui.horizontal(|ui| {
-                    if Btn::new("Rename")
-                        .enabled(!self.title.trim().is_empty())
-                        .show(ui, p)
-                        .clicked()
-                    {
-                        edit = Some(BookmarkEdit::Rename {
-                            id: selected.id,
-                            title: self.title.clone(),
-                        });
-                    }
-                    if Btn::new("Delete").show(ui, p).clicked() {
-                        edit = Some(BookmarkEdit::Delete { id: selected.id });
-                    }
-                });
-                ui.horizontal(|ui| {
-                    if Btn::new("Move up")
-                        .enabled(selected.sibling > 0)
-                        .show(ui, p)
-                        .clicked()
-                    {
-                        edit = Some(BookmarkEdit::Move {
-                            id: selected.id,
-                            position: selected.sibling - 1,
-                        });
-                    }
-                    if Btn::new("Move down")
-                        .enabled(selected.sibling + 1 < selected.siblings)
-                        .show(ui, p)
-                        .clicked()
-                    {
-                        edit = Some(BookmarkEdit::Move {
-                            id: selected.id,
-                            position: selected.sibling + 1,
-                        });
-                    }
-                });
-                ui.small("Delete includes child bookmarks. Undo restores them.");
-            }
-            if let Some(edit) = edit {
-                action = Some(Action::Request(Request::EditBookmarks(
-                    self.items.revision,
-                    edit,
-                )));
-            }
         });
         action
     }
@@ -162,6 +233,7 @@ mod tests {
         });
         assert_eq!(sidebar.selected, Some((3, 0)));
         let ctx = egui::Context::default();
+        theme::install(&ctx);
         for visuals in [egui::Visuals::light(), egui::Visuals::dark()] {
             ctx.set_visuals(visuals);
             let mut output = ctx.run_ui(

@@ -33,6 +33,26 @@ pub enum Icon {
     Info,
     Edit,
     Sidebar,
+    Bookmark,
+    Crop,
+    Image,
+    Print,
+    Pen,
+    Signature,
+    Form,
+    Redact,
+    Compress,
+    Layers,
+    Scan,
+    Hash,
+    Highlighter,
+    Export,
+    Square,
+    Circle,
+    Line,
+    ArrowDiagonal,
+    Lock,
+    Replace,
 }
 
 /// Paints `icon` centered in `rect` with the given color.
@@ -74,6 +94,12 @@ impl Pen<'_> {
     fn circle(&self, x: f32, y: f32, r: f32) {
         self.painter
             .circle_stroke(self.p(x, y), r * self.scale, self.stroke);
+    }
+
+    fn fill(&self, points: &[(f32, f32)]) {
+        let points: Vec<Pos2> = points.iter().map(|&(x, y)| self.p(x, y)).collect();
+        self.painter
+            .add(Shape::convex_polygon(points, self.color, Stroke::NONE));
     }
 
     fn dot(&self, x: f32, y: f32, r: f32) {
@@ -250,6 +276,131 @@ impl Pen<'_> {
                 self.closed(&[(3.0, 4.0), (21.0, 4.0), (21.0, 20.0), (3.0, 20.0)]);
                 self.line(&[(12.0, 4.0), (12.0, 20.0)]);
             }
+            Icon::Bookmark => {
+                self.closed(&[
+                    (6.0, 3.0),
+                    (18.0, 3.0),
+                    (18.0, 21.0),
+                    (12.0, 16.5),
+                    (6.0, 21.0),
+                ]);
+            }
+            Icon::Crop => {
+                self.line(&[(6.0, 2.5), (6.0, 18.0), (21.5, 18.0)]);
+                self.line(&[(2.5, 6.0), (18.0, 6.0), (18.0, 21.5)]);
+            }
+            Icon::Image => {
+                self.closed(&[(3.0, 4.0), (21.0, 4.0), (21.0, 20.0), (3.0, 20.0)]);
+                self.circle(8.5, 9.5, 1.8);
+                self.line(&[
+                    (3.0, 17.0),
+                    (9.0, 12.0),
+                    (13.0, 15.5),
+                    (16.0, 13.0),
+                    (21.0, 17.0),
+                ]);
+            }
+            Icon::Print => {
+                self.line(&[(6.0, 9.0), (6.0, 3.0), (18.0, 3.0), (18.0, 9.0)]);
+                self.line(&[
+                    (6.0, 17.0),
+                    (3.0, 17.0),
+                    (3.0, 9.0),
+                    (21.0, 9.0),
+                    (21.0, 17.0),
+                    (18.0, 17.0),
+                ]);
+                self.closed(&[(6.0, 14.0), (18.0, 14.0), (18.0, 21.0), (6.0, 21.0)]);
+            }
+            Icon::Pen => {
+                self.closed(&[
+                    (16.0, 3.5),
+                    (20.5, 8.0),
+                    (8.0, 20.5),
+                    (3.5, 20.5),
+                    (3.5, 16.0),
+                ]);
+                self.line(&[(13.5, 6.0), (18.0, 10.5)]);
+            }
+            Icon::Signature => {
+                self.line(&[
+                    (3.0, 15.0),
+                    (6.0, 7.0),
+                    (8.0, 15.0),
+                    (10.5, 9.5),
+                    (12.5, 14.0),
+                    (14.5, 11.5),
+                    (16.5, 14.0),
+                    (21.0, 12.0),
+                ]);
+                self.line(&[(3.0, 20.0), (21.0, 20.0)]);
+            }
+            Icon::Form => {
+                self.closed(&[(3.5, 4.5), (9.5, 4.5), (9.5, 10.5), (3.5, 10.5)]);
+                self.line(&[(5.0, 7.5), (6.5, 9.0), (8.5, 6.0)]);
+                self.line(&[(13.0, 7.5), (21.0, 7.5)]);
+                self.closed(&[(3.5, 13.5), (9.5, 13.5), (9.5, 19.5), (3.5, 19.5)]);
+                self.line(&[(13.0, 16.5), (21.0, 16.5)]);
+            }
+            Icon::Redact => {
+                self.closed(&[(3.0, 5.0), (21.0, 5.0), (21.0, 19.0), (3.0, 19.0)]);
+                self.fill(&[(6.5, 10.0), (17.5, 10.0), (17.5, 14.0), (6.5, 14.0)]);
+            }
+            Icon::Compress => {
+                self.line(&[(3.5, 3.5), (10.0, 10.0)]);
+                self.line(&[(10.0, 4.5), (10.0, 10.0), (4.5, 10.0)]);
+                self.line(&[(20.5, 20.5), (14.0, 14.0)]);
+                self.line(&[(14.0, 19.5), (14.0, 14.0), (19.5, 14.0)]);
+            }
+            Icon::Layers => {
+                self.closed(&[(12.0, 3.0), (21.0, 7.5), (12.0, 12.0), (3.0, 7.5)]);
+                self.line(&[(3.0, 12.0), (12.0, 16.5), (21.0, 12.0)]);
+                self.line(&[(3.0, 16.5), (12.0, 21.0), (21.0, 16.5)]);
+            }
+            Icon::Scan => {
+                self.line(&[(3.0, 8.0), (3.0, 3.0), (8.0, 3.0)]);
+                self.line(&[(16.0, 3.0), (21.0, 3.0), (21.0, 8.0)]);
+                self.line(&[(21.0, 16.0), (21.0, 21.0), (16.0, 21.0)]);
+                self.line(&[(8.0, 21.0), (3.0, 21.0), (3.0, 16.0)]);
+                self.line(&[(7.5, 10.0), (16.5, 10.0)]);
+                self.line(&[(7.5, 14.0), (13.5, 14.0)]);
+            }
+            Icon::Hash => {
+                self.line(&[(10.0, 3.5), (8.0, 20.5)]);
+                self.line(&[(16.0, 3.5), (14.0, 20.5)]);
+                self.line(&[(4.5, 9.0), (20.0, 9.0)]);
+                self.line(&[(4.0, 15.0), (19.5, 15.0)]);
+            }
+            Icon::Highlighter => {
+                self.closed(&[(15.0, 3.0), (21.0, 9.0), (12.0, 18.0), (6.0, 12.0)]);
+                self.line(&[(6.0, 12.0), (4.0, 17.0), (7.0, 20.0), (12.0, 18.0)]);
+                self.line(&[(14.0, 21.0), (21.0, 21.0)]);
+            }
+            Icon::Export => {
+                self.line(&[(12.0, 15.0), (12.0, 3.0)]);
+                self.line(&[(7.0, 8.0), (12.0, 3.0), (17.0, 8.0)]);
+                self.line(&[(4.0, 13.0), (4.0, 21.0), (20.0, 21.0), (20.0, 13.0)]);
+            }
+            Icon::Square => self.closed(&[(4.0, 4.0), (20.0, 4.0), (20.0, 20.0), (4.0, 20.0)]),
+            Icon::Circle => self.circle(12.0, 12.0, 8.5),
+            Icon::Line => self.line(&[(5.0, 19.0), (19.0, 5.0)]),
+            Icon::ArrowDiagonal => {
+                self.line(&[(5.0, 19.0), (19.0, 5.0)]);
+                self.line(&[(10.0, 5.0), (19.0, 5.0), (19.0, 14.0)]);
+            }
+            Icon::Lock => {
+                self.closed(&[(5.0, 11.0), (19.0, 11.0), (19.0, 21.0), (5.0, 21.0)]);
+                let mut shackle = vec![(8.0, 11.0)];
+                shackle.extend(self.arc(12.0, 7.5, 4.0, 0.5, 1.0));
+                shackle.push((16.0, 11.0));
+                self.line(&shackle);
+            }
+            Icon::Replace => {
+                self.line(&[(4.0, 8.0), (19.0, 8.0)]);
+                self.line(&[(15.0, 4.0), (19.0, 8.0), (15.0, 12.0)]);
+                self.line(&[(20.0, 16.0), (5.0, 16.0)]);
+                self.line(&[(9.0, 12.0), (5.0, 16.0), (9.0, 20.0)]);
+            }
         }
     }
 }
@@ -259,7 +410,7 @@ mod tests {
     use super::*;
     use eframe::egui::{Context, LayerId, pos2, vec2};
 
-    const ALL: [Icon; 27] = [
+    const ALL: [Icon; 47] = [
         Icon::File,
         Icon::FilePlus,
         Icon::Folder,
@@ -287,6 +438,26 @@ mod tests {
         Icon::Info,
         Icon::Edit,
         Icon::Sidebar,
+        Icon::Bookmark,
+        Icon::Crop,
+        Icon::Image,
+        Icon::Print,
+        Icon::Pen,
+        Icon::Signature,
+        Icon::Form,
+        Icon::Redact,
+        Icon::Compress,
+        Icon::Layers,
+        Icon::Scan,
+        Icon::Hash,
+        Icon::Highlighter,
+        Icon::Export,
+        Icon::Square,
+        Icon::Circle,
+        Icon::Line,
+        Icon::ArrowDiagonal,
+        Icon::Lock,
+        Icon::Replace,
     ];
 
     #[test]

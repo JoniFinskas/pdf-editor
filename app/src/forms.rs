@@ -1,5 +1,10 @@
-use crate::{theme::Palette, widgets::Btn, worker::Request};
-use eframe::egui;
+use crate::{
+    icons::Icon,
+    theme::{self, Palette},
+    widgets::{self, Btn, Look, ToolWindow},
+    worker::Request,
+};
+use eframe::egui::{self, RichText};
 use pdf_editor_core::{FieldValue, FormField};
 #[derive(Default)]
 pub struct Forms {
@@ -8,76 +13,114 @@ pub struct Forms {
 }
 impl Forms {
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, idle: bool) -> Option<Request> {
-        if !self.open {
-            return None;
-        }
         let mut request = None;
-        egui::Window::new("Fill form")
-            .open(&mut self.open)
-            .default_width(430.0)
-            .show(ctx, |ui| {
-                if Btn::new("Refresh fields")
-                    .enabled(idle)
-                    .show(ui, p)
-                    .clicked()
-                {
-                    request = Some(Request::FormFields);
-                }
+        ToolWindow::new("Fill form", Icon::Form)
+            .width(420.0)
+            .show(ctx, p, &mut self.open, |ui| {
+                ui.horizontal(|ui| {
+                    widgets::hint(ui, p, "Refresh after applying to load updated values.");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if Btn::icon(Icon::RotateRight)
+                            .height(30.0)
+                            .tip("Refresh fields")
+                            .enabled(idle)
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            request = Some(Request::FormFields);
+                        }
+                    });
+                });
                 if self.fields.is_empty() {
-                    ui.label("No supported form fields in this document.");
+                    widgets::hint(ui, p, "No supported form fields in this document.");
                 }
                 egui::ScrollArea::vertical()
-                    .max_height(500.0)
+                    .max_height(460.0)
+                    .auto_shrink([false, true])
                     .show(ui, |ui| {
                         for field in &mut self.fields {
                             ui.push_id((field.page, field.index), |ui| {
-                                ui.label(format!("{} · Page {}", field.name, field.page + 1));
-                                ui.add_enabled_ui(idle && !field.read_only, |ui| {
-                                    match &mut field.value {
-                                        FieldValue::Text(value) => {
-                                            ui.text_edit_singleline(value);
-                                        }
-                                        FieldValue::Check(value) => {
-                                            ui.checkbox(value, "Checked");
-                                        }
-                                        FieldValue::Radio(value) => {
-                                            if ui.radio(*value, "Selected").clicked() {
-                                                *value = true;
-                                            }
-                                        }
-                                        FieldValue::Choice { options, selected } => {
-                                            egui::ComboBox::from_id_salt("choice")
-                                                .selected_text(
-                                                    selected
-                                                        .and_then(|i| options.get(i))
-                                                        .map_or("Select…", String::as_str),
-                                                )
-                                                .show_ui(ui, |ui| {
-                                                    for (i, option) in options.iter().enumerate() {
-                                                        ui.selectable_value(
-                                                            selected,
-                                                            Some(i),
-                                                            option,
-                                                        );
-                                                    }
-                                                });
-                                        }
-                                    }
-                                    if Btn::new("Apply field").show(ui, p).clicked() {
-                                        request = Some(Request::FillField(
-                                            field.clone(),
-                                            field.value.clone(),
-                                        ));
+                                widgets::rule(ui, p);
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(&field.name)
+                                            .font(theme::semibold(13.5))
+                                            .color(p.text),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!("Page {}", field.page + 1))
+                                            .size(12.5)
+                                            .color(p.muted),
+                                    );
+                                    if field.read_only {
+                                        ui.label(
+                                            RichText::new("Read-only").size(12.5).color(p.muted),
+                                        );
                                     }
                                 });
-                                if field.read_only {
-                                    ui.label("Read-only field");
-                                }
-                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    ui.add_enabled_ui(idle && !field.read_only, |ui| {
+                                        match &mut field.value {
+                                            FieldValue::Text(value) => {
+                                                ui.add(
+                                                    egui::TextEdit::singleline(value)
+                                                        .margin(egui::Margin::symmetric(10, 7))
+                                                        .desired_width(260.0),
+                                                );
+                                            }
+                                            FieldValue::Check(value) => {
+                                                widgets::checkbox(ui, value, "Checked");
+                                            }
+                                            FieldValue::Radio(value) => {
+                                                if ui.radio(*value, "Selected").clicked() {
+                                                    *value = true;
+                                                }
+                                            }
+                                            FieldValue::Choice { options, selected } => {
+                                                egui::ComboBox::from_id_salt("choice")
+                                                    .width(244.0)
+                                                    .selected_text(
+                                                        selected
+                                                            .and_then(|i| options.get(i))
+                                                            .map_or("Select…", String::as_str),
+                                                    )
+                                                    .show_ui(ui, |ui| {
+                                                        for (i, option) in
+                                                            options.iter().enumerate()
+                                                        {
+                                                            ui.selectable_value(
+                                                                selected,
+                                                                Some(i),
+                                                                option,
+                                                            );
+                                                        }
+                                                    });
+                                            }
+                                        }
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if Btn::new("Apply")
+                                                    .look(Look::OutlineAccent)
+                                                    .height(30.0)
+                                                    .tip("Apply field")
+                                                    .show(ui, p)
+                                                    .clicked()
+                                                {
+                                                    request = Some(Request::FillField(
+                                                        field.clone(),
+                                                        field.value.clone(),
+                                                    ));
+                                                }
+                                            },
+                                        );
+                                    });
+                                });
+                                ui.add_space(4.0);
                             });
                         }
                     });
-                ui.label("Refresh after applying to load updated field values.");
             });
         request
     }
