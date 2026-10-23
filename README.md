@@ -9,6 +9,8 @@ Implementation requirements and scope are documented in [SPEC.md](SPEC.md).
 ## Features
 
 - Edit existing text with font preservation; add, delete and restyle text objects.
+- Edit compatible paragraphs as a block with alignment-preserving reflow; ambiguous
+  layouts keep line editing.
 - Find all matches, navigate results, and replace one or all editable matches.
 - Work in document tabs with separate undo/redo, unsaved-change warnings, recent
   files and optional recovery copies.
@@ -26,6 +28,8 @@ Implementation requirements and scope are documented in [SPEC.md](SPEC.md).
 - Compare two saved PDFs with shared scrolling/zoom, text highlights, a visual
   pixel overlay and a page-change sidebar (Document → Compare PDFs). Comparison
   aligns page numbers and bounds raster previews to one megapixel per side.
+- Use headless commands for batch PDF operations, optional per-user Windows shell
+  integration, and single-instance document handoff.
 - Use light/dark themes, a grouped document menu and movable tool windows.
 
 See the controls and limitations below, especially redaction, encrypted-source
@@ -280,3 +284,22 @@ options**. Commands pass filenames directly to the CLI wrapper, then open the re
 editor tool so output paths and changes can be reviewed. Merge selections collect in one tab's ordered list until Merge is clicked or the
 organizer is closed (up to 100 additional PDFs); review the order before merging. No source file is overwritten. Removing or moving the portable folder
 requires removing/re-registering its shell entries from Settings.
+
+## Paragraph editing
+
+Click a compatible multiline paragraph to edit the block. Enter adds a line break;
+**Ctrl+Enter** applies and **Escape** cancels. **Alt+click** selects one line instead.
+The editor preserves the detected width, line spacing, alignment and supported
+font metrics. Longer text extends downward with an overlap warning; it never
+moves neighboring content. Unsupported metrics, overwide words and page overflow
+fail without modifying the document. Mixed styles, rotated text and unclear
+columns retain line editing with a short explanation. Font substitution is scoped
+to the paragraph to preserve its neighbors.
+
+## Isolated corpus checks
+
+The on-demand [corpus harness](scripts/corpus/README.md) runs downloaded PDFs only
+in restricted Linux containers. Scan downloaded inputs with
+`scripts/scan-corpus.ps1` before each changed corpus is processed. Corpus bytes,
+provenance and per-file results remain ignored local data. See [BLOCKED.md](BLOCKED.md)
+and [TEST_REPORT.md](TEST_REPORT.md) for actual coverage and outstanding requirements.

@@ -8,12 +8,6 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 - Load page-size metadata without parsing every page, cap page texture storage, and bound background-render replies. Add a generated 1,000-page startup benchmark.
 
-### Added
-- Headless merge, split, extract, compress, rotate, image export, Windows OCR, and
-  font-preserving find/replace commands with folder dry-run counts and exit codes.
-
-- Compare two saved PDFs side by side with shared scrolling and zoom, text highlights, visual difference overlays and a page-change sidebar.
-
 ### Changed
 
 - Refresh release-build verification, the feature overview and manual checks for
@@ -35,6 +29,11 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 - Keep the expanded document-tools menu scrollable on smaller windows.
 
 ### Added
+
+- Headless merge, split, extract, compress, rotate, image export, Windows OCR, and
+  font-preserving find/replace commands with folder dry-run counts and exit codes.
+
+- Compare two saved PDFs side by side with shared scrolling and zoom, text highlights, visual difference overlays and a page-change sidebar.
 
 - Single-instance document forwarding and explicit per-user Windows default-app and Explorer menu integration.
 
