@@ -9,7 +9,9 @@ mod pages;
 pub use pages::PageEdit;
 mod search;
 mod settings;
+mod startup;
 pub use search::SearchMatch;
+pub use startup::startup_path;
 #[cfg(test)]
 mod tests;
 

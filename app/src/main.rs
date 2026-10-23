@@ -7,10 +7,9 @@ mod theme;
 mod worker;
 
 use eframe::egui;
-use std::path::PathBuf;
 
 fn main() -> eframe::Result {
-    let initial = std::env::args_os().nth(1).map(PathBuf::from);
+    let initial = pdf_editor_core::startup_path(std::env::args_os().skip(1));
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("PDF Editor")

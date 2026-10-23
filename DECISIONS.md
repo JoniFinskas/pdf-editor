@@ -236,3 +236,7 @@ Extend the existing settings.txt with ten hex-encoded UTF-8 paths after its orig
 ## Part D: Unsaved changes
 
 Keep the existing close/open discard prompt. Its actions wait for outstanding edits, and failed or canceled replacement opens preserve dirty state and recovery copies. Save-point tracking is now a headless tested core type, including redo-branch abandonment and recovered documents. Only successful Save As marks a document saved.
+
+## Part D: Command-line opening
+
+Retain OS-native argument parsing for spaced and Unicode paths. Accept a single PDF path with optional --, show a usage error for extra arguments, and route the result through the normal worker open and recent-file flow. Missing or malformed PDFs use existing UI errors.

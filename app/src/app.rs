@@ -198,7 +198,10 @@ impl DocView {
 }
 
 impl EditorApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, initial: Option<PathBuf>) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        initial: pdf_editor_core::Result<Option<PathBuf>>,
+    ) -> Self {
         theme::install(&cc.egui_ctx);
         let mut banners = Vec::new();
         let config_path = Substitution::config_path().ok();
@@ -275,8 +278,10 @@ impl EditorApp {
             orphans,
             restoring: None,
         };
-        if let Some(path) = initial {
-            app.open_path(path);
+        match initial {
+            Ok(Some(path)) => app.open_path(path),
+            Ok(None) => {}
+            Err(error) => app.banner(BannerKind::Error, error.to_string()),
         }
         app
     }

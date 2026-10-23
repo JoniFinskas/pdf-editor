@@ -81,3 +81,5 @@ Keyboard commands are UI dispatch only: Open/Save As use `Engine::open`/`Documen
 - `ChangeState::edited()` / `undone()` / `redone()` -> track a successful history transition, invalidating an abandoned save point.
 - `ChangeState::mark_saved()` -> mark the current position saved after successful Save As.
 - `ChangeState::is_dirty()` -> whether the current position differs from the reachable saved position.
+
+- `startup_path(arguments)` -> optional OS-native PDF path from arguments after the executable, accepting an optional `--`; errors on empty paths or extra arguments. Opening still uses `Engine::open`.

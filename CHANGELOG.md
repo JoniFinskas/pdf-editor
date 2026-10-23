@@ -6,6 +6,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Validated command-line PDF opening, preserving spaced and Unicode paths.
+
 - Recent menu with the last ten successfully opened PDFs, persisted in settings.txt.
 
 - Find toolbar action and tested keyboard commands, including shifted plus layouts.
