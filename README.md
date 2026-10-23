@@ -76,6 +76,7 @@ exported by LibreOffice; exported inputs are never modified. Inter is obtained o
 from its official rsms release, with its OFL license. Normal tests need no Python
 or fixture-generation downloads. See [TEST_REPORT.md](TEST_REPORT.md),
 [DECISIONS.md](DECISIONS.md), and [the threat model](repo-starter-threat-model.md).
+Open work and known limitations are tracked in [BACKLOG.md](BACKLOG.md).
 
 To regenerate synthetic PDFs, first regenerate the renamed subset with
 `python scripts/subset-fixture.py` if needed (fontTools 4.60.1), then run
