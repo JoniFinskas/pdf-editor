@@ -1,6 +1,8 @@
 //! Container-only harness. Never emit document strings or parser diagnostics.
 use pdf_editor_core::Engine;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+static PANICKED: AtomicBool = AtomicBool::new(false);
 
 fn check(input: &Path, output: &Path) -> Result<(), &'static str> {
     let engine = Engine::new(Path::new("/opt/pdfium/lib/libpdfium.so")).map_err(|_| "runtime")?;
@@ -21,6 +23,15 @@ fn check(input: &Path, output: &Path) -> Result<(), &'static str> {
             if before.width != after.width || before.height != after.height {
                 return Err("dimensions");
             }
+            let origin = engine
+                .pixel_to_page(&doc, page, 1.0, 0, 0)
+                .map_err(|_| "coordinates")?;
+            let horizontal = engine
+                .pixel_to_page(&doc, page, 1.0, before.width as i32, 0)
+                .map_err(|_| "coordinates")?;
+            let vertical = engine
+                .pixel_to_page(&doc, page, 1.0, 0, before.height as i32)
+                .map_err(|_| "coordinates")?;
             for (i, (a, b)) in before
                 .rgba
                 .as_chunks::<4>()
@@ -30,15 +41,10 @@ fn check(input: &Path, output: &Path) -> Result<(), &'static str> {
                 .enumerate()
             {
                 if a != b {
-                    let (x, y) = engine
-                        .pixel_to_page(
-                            &doc,
-                            page,
-                            1.0,
-                            (i as u32 % before.width) as i32,
-                            (i as u32 / before.width) as i32,
-                        )
-                        .map_err(|_| "coordinates")?;
+                    let u = (i as u32 % before.width) as f32 / before.width as f32;
+                    let v = (i as u32 / before.width) as f32 / before.height as f32;
+                    let x = origin.0 + u * (horizontal.0 - origin.0) + v * (vertical.0 - origin.0);
+                    let y = origin.1 + u * (horizontal.1 - origin.1) + v * (vertical.1 - origin.1);
                     let b = object.bounds;
                     if x < b.left - 4.0
                         || x > b.right + 4.0
@@ -72,7 +78,9 @@ fn check(input: &Path, output: &Path) -> Result<(), &'static str> {
     Ok(())
 }
 fn main() {
-    std::panic::set_hook(Box::new(|_| {}));
+    std::panic::set_hook(Box::new(|_| {
+        PANICKED.store(true, Ordering::Relaxed);
+    }));
     if std::env::var("PDF_EDITOR_CONTAINER").as_deref() != Ok("1") {
         std::process::exit(2);
     }
@@ -85,6 +93,11 @@ fn main() {
         Ok(Ok(())) => "ok",
         Ok(Err(kind)) => kind,
         Err(_) => "panic",
+    };
+    let status = if PANICKED.load(Ordering::Relaxed) {
+        "panic"
+    } else {
+        status
     };
     println!("{status}");
 }

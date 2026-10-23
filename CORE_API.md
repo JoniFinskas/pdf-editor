@@ -172,4 +172,3 @@ Each `Document` owns its byte snapshots, revision, undo/redo stacks and source i
 
 ## Corpus validation executable
 The opt-in corpus-runner binary exercises existing core APIs inside Docker only. It adds no public library functions and suppresses parser diagnostics and panic text.
-

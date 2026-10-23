@@ -424,4 +424,3 @@ Decided to retain the existing size-optimized release profile and all current di
 
 ## Corpus isolation
 Added an on-demand process-isolated corpus harness and allowlisted Govdocs archive downloader. Only fixed error categories and timing cross the parser boundary. Linux PDFium chromium/8111 SHA256 is pinned from release metadata; corpus and output remain ignored. Defender scan is mandatory between download and execution. No new public core API is introduced.
-
