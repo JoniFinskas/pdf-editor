@@ -3180,3 +3180,329 @@ fn scan_cleanup_resets_inherited_rotation_and_crop() {
         assert_eq!(pdf.get_dictionary(page).unwrap().get(b"Rotate").unwrap().as_i64().unwrap(), 0);
     }
 }
+
+#[test]
+fn sanitize_removes_active_payloads_hidden_text_and_restores_undo() {
+    let _lock = PDFIUM.lock().unwrap();
+    let engine = engine();
+    let mut pdf = parse(&generated("secret", false, 0, 0.0, false, false)).unwrap();
+    let page = pdf.get_pages()[&1];
+    let root = pdf.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let mut content = Content::decode(&pdf.get_page_content(page)).unwrap();
+    content
+        .operations
+        .insert(3, Operation::new("Tr", vec![3.into()]));
+    let stream = pdf.add_object(Stream::new(
+        lopdf::Dictionary::new(),
+        content.encode().unwrap(),
+    ));
+    pdf.get_object_mut(page)
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set("Contents", stream);
+    let metadata = pdf.add_object(Stream::new(
+        dictionary! {"Type"=>"Metadata", "Subtype"=>"XML"},
+        b"PRIVATE_METADATA".to_vec(),
+    ));
+    let info = pdf.add_object(dictionary! {"Author"=>Object::string_literal("PRIVATE_AUTHOR")});
+    pdf.trailer.set("Info", info);
+    let payload = pdf.add_object(Stream::new(dictionary! {}, b"PRIVATE_ATTACHMENT".to_vec()));
+    let attachment = pdf.add_object(dictionary!{"Type"=>"Filespec", "F"=>Object::string_literal("private.txt"), "EF"=>dictionary!{"F"=>payload}});
+    let action = pdf.add_object(dictionary!{"S"=>"JavaScript", "JS"=>Object::string_literal("PRIVATE_SCRIPT"), "Next"=>dictionary!{"S"=>"Launch", "F"=>Object::string_literal("never.exe")}});
+    let catalog = pdf.get_object_mut(root).unwrap().as_dict_mut().unwrap();
+    catalog.set("Metadata", metadata);
+    catalog.set("OpenAction", action);
+    catalog.set("Names", dictionary!{"EmbeddedFiles"=>dictionary!{"Names"=>vec![Object::string_literal("private"),attachment.into()]}, "JavaScript"=>dictionary!{"Names"=>vec![Object::string_literal("script"),action.into()]}});
+    catalog.set("AF", vec![Object::Reference(attachment)]);
+    catalog.set("CustomAction", action);
+    let link = pdf.add_object(dictionary!{"Type"=>"Annot", "Subtype"=>"Link", "Rect"=>vec![0.into(),0.into(),10.into(),10.into()], "A"=>dictionary!{"S"=>"URI","URI"=>Object::string_literal("https://invalid.example")}});
+    let comment = pdf.add_object(dictionary!{"Type"=>"Annot", "Subtype"=>"Text", "Rect"=>vec![0.into(),0.into(),10.into(),10.into()], "Contents"=>Object::string_literal("PRIVATE_COMMENT")});
+    let file = pdf.add_object(dictionary!{"Type"=>"Annot", "Subtype"=>"FileAttachment", "Rect"=>vec![0.into(),0.into(),10.into(),10.into()], "FS"=>attachment});
+    pdf.get_object_mut(page)
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set("Annots", vec![link.into(), comment.into(), file.into()]);
+    let mut bytes = vec![];
+    pdf.save_to(&mut bytes).unwrap();
+    let path = temp("sanitize-input.pdf");
+    fs::write(&path, &bytes).unwrap();
+    let mut doc = engine.open(&path).unwrap();
+    let before = engine.render(&doc, 0, 1.0).unwrap();
+    let report = engine
+        .sanitize(
+            &mut doc,
+            SanitizeOptions {
+                remove_comments: true,
+                remove_links: true,
+            },
+        )
+        .unwrap();
+    assert!(report.metadata >= 2 && report.attachments >= 2 && report.actions >= 2);
+    assert_eq!(report.hidden_text_blocks, 1);
+    assert_eq!((report.comments, report.links), (1, 1));
+    assert!(
+        !engine
+            .text_objects(&doc, 0)
+            .unwrap()
+            .iter()
+            .any(|o| o.text.contains("secret"))
+    );
+    let after = engine.render(&doc, 0, 1.0).unwrap();
+    // Annotation appearances may change, so compare the text region only.
+    for y in 50..250 {
+        for x in 30..450 {
+            let at = (y * before.width as usize + x) * 4;
+            assert_eq!(&before.rgba[at..at + 4], &after.rgba[at..at + 4]);
+        }
+    }
+    for marker in [
+        b"PRIVATE_METADATA".as_slice(),
+        b"PRIVATE_AUTHOR",
+        b"PRIVATE_ATTACHMENT",
+        b"PRIVATE_SCRIPT",
+        b"PRIVATE_COMMENT",
+        b"never.exe",
+    ] {
+        assert!(!doc.bytes.windows(marker.len()).any(|s| s == marker));
+    }
+    let output = temp("sanitize-output.pdf");
+    fs::write(&output, &doc.bytes).unwrap();
+    let reopened = engine.open(&output).unwrap();
+    assert!(
+        !engine
+            .text_objects(&reopened, 0)
+            .unwrap()
+            .iter()
+            .any(|o| o.text.contains("secret"))
+    );
+    let cleaned = doc.bytes.clone();
+    assert!(doc.undo());
+    assert_eq!(doc.bytes, bytes);
+    assert!(doc.redo());
+    assert_eq!(doc.bytes, cleaned);
+    assert!(doc.undo());
+    let report = engine
+        .sanitize(&mut doc, SanitizeOptions::default())
+        .unwrap();
+    assert_eq!((report.comments, report.links), (0, 0));
+    let saved = parse(&doc.bytes).unwrap();
+    let page = saved.get_pages()[&1];
+    let annotations = saved
+        .get_object(page)
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .get(b"Annots")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert_eq!(annotations.len(), 2);
+    let link = saved
+        .dereference(&annotations[0])
+        .unwrap()
+        .1
+        .as_dict()
+        .unwrap();
+    let action = link.get(b"A").unwrap().as_dict().unwrap();
+    assert_eq!(action.get(b"S").unwrap().as_name().unwrap(), b"URI");
+    assert_eq!(
+        action.get(b"URI").unwrap().as_str().unwrap(),
+        b"https://invalid.example"
+    );
+}
+
+#[test]
+fn sanitize_rejects_ambiguous_visibility_without_changes() {
+    let _lock = PDFIUM.lock().unwrap();
+    let engine = engine();
+    let mut pdf = parse(&generated("secret", false, 0, 0.0, false, false)).unwrap();
+    let page = pdf.get_pages()[&1];
+    let mut content = Content::decode(&pdf.get_page_content(page)).unwrap();
+    let first = content
+        .operations
+        .iter()
+        .position(|op| op.operator == "Tj")
+        .unwrap();
+    content
+        .operations
+        .insert(first + 1, Operation::new("Tr", vec![3.into()]));
+    let stream = pdf.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+    pdf.get_object_mut(page)
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set("Contents", stream);
+    let mut bytes = vec![];
+    pdf.save_to(&mut bytes).unwrap();
+    let path = temp("sanitize-rejected.pdf");
+    fs::write(&path, &bytes).unwrap();
+    let mut doc = engine.open(&path).unwrap();
+    assert!(
+        engine
+            .sanitize(&mut doc, SanitizeOptions::default())
+            .is_err()
+    );
+    assert_eq!(doc.bytes, bytes);
+    assert!(!doc.undo());
+}
+
+#[test]
+fn sanitize_rejects_shared_resources_appearances_unused_forms_and_payload_aliases() {
+    let _lock = PDFIUM.lock().unwrap();
+    let engine = engine();
+    for case in [
+        "shared",
+        "appearance",
+        "unused",
+        "attachment",
+        "script",
+        "chain",
+        "ef-alias",
+        "xfa",
+        "info-alias",
+        "metadata-alias",
+    ] {
+        let mut pdf = parse(&generated("secret", false, 0, 0.0, false, false)).unwrap();
+        let page = pdf.get_pages()[&1];
+        let root = pdf.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let resources = pdf
+            .get_object(page)
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"Resources")
+            .unwrap()
+            .clone();
+        if matches!(case, "info-alias" | "metadata-alias") {
+            let payload = if case == "info-alias" {
+                pdf.add_object(dictionary! {"Author"=>Object::string_literal("PRIVATE_AUTHOR")})
+            } else {
+                pdf.add_object(Stream::new(dictionary! {}, b"PRIVATE_METADATA".to_vec()))
+            };
+            if case == "info-alias" {
+                pdf.trailer.set("Info", payload);
+            } else {
+                pdf.get_object_mut(root)
+                    .unwrap()
+                    .as_dict_mut()
+                    .unwrap()
+                    .set("Metadata", payload);
+            }
+            pdf.get_object_mut(root)
+                .unwrap()
+                .as_dict_mut()
+                .unwrap()
+                .set("CustomPayload", payload);
+        } else if case == "xfa" {
+            let packet = pdf.add_object(Stream::new(
+                dictionary! {},
+                b"<script contentType='application/x-javascript'>PRIVATE_SCRIPT</script>".to_vec(),
+            ));
+            pdf.get_object_mut(root)
+                .unwrap()
+                .as_dict_mut()
+                .unwrap()
+                .set("AcroForm", dictionary! {"XFA"=>packet});
+        } else if matches!(case, "shared" | "appearance" | "unused") {
+            let mut dict = dictionary! {"Type"=>"XObject", "Subtype"=>"Form", "BBox"=>vec![0.into(),0.into(),500.into(),300.into()]};
+            let mut content = Content::decode(&pdf.get_page_content(page)).unwrap();
+            if case == "shared" {
+                content.operations.insert(
+                    0,
+                    Operation::new("gs", vec![Object::Name(b"Alpha".to_vec())]),
+                );
+            } else {
+                dict.set("Resources", resources.clone());
+                content
+                    .operations
+                    .insert(0, Operation::new("Tr", vec![3.into()]));
+            }
+            let form = pdf.add_object(Stream::new(dict, content.encode().unwrap()));
+            if case == "appearance" {
+                let annotation = pdf.add_object(dictionary! {"Type"=>"Annot", "Subtype"=>"Text", "Rect"=>vec![0.into(),0.into(),500.into(),300.into()], "AP"=>dictionary!{"N"=>form}});
+                pdf.get_object_mut(page)
+                    .unwrap()
+                    .as_dict_mut()
+                    .unwrap()
+                    .set("Annots", vec![Object::Reference(annotation)]);
+            } else {
+                let mut resources = resources.as_dict().unwrap().clone();
+                resources.set("XObject", dictionary! {"Shared"=>form});
+                resources.set("ExtGState", dictionary! {"Alpha"=>dictionary!{"ca"=>0}});
+                pdf.get_object_mut(page)
+                    .unwrap()
+                    .as_dict_mut()
+                    .unwrap()
+                    .set("Resources", resources.clone());
+                if case == "shared" {
+                    let invocation =
+                        pdf.add_object(Stream::new(dictionary! {}, b"/Shared Do".to_vec()));
+                    pdf.get_object_mut(page)
+                        .unwrap()
+                        .as_dict_mut()
+                        .unwrap()
+                        .set("Contents", invocation);
+                    let mut second = pdf.get_object(page).unwrap().as_dict().unwrap().clone();
+                    resources.set("ExtGState", dictionary! {"Alpha"=>dictionary!{"ca"=>1}});
+                    second.set("Resources", resources);
+                    let parent = second.get(b"Parent").unwrap().as_reference().unwrap();
+                    let second = pdf.add_object(second);
+                    let pages = pdf.get_object_mut(parent).unwrap().as_dict_mut().unwrap();
+                    pages.set(
+                        "Kids",
+                        vec![Object::Reference(page), Object::Reference(second)],
+                    );
+                    pages.set("Count", 2);
+                }
+            }
+        } else {
+            let payload = pdf.add_object(Stream::new(dictionary! {}, b"PRIVATE_PAYLOAD".to_vec()));
+            let chain = if case == "chain" {
+                pdf.add_object(Object::Reference(payload))
+            } else {
+                payload
+            };
+            let ef = pdf.add_object(dictionary! {"F"=>chain});
+            let owner = if matches!(case, "attachment" | "chain" | "ef-alias") {
+                pdf.add_object(dictionary! {"Type"=>"Filespec", "EF"=>ef})
+            } else {
+                pdf.add_object(dictionary! {"S"=>"JavaScript", "JS"=>payload})
+            };
+            let catalog = pdf.get_object_mut(root).unwrap().as_dict_mut().unwrap();
+            catalog.set(
+                "CustomPayload",
+                if case == "ef-alias" { ef } else { payload },
+            );
+            if matches!(case, "attachment" | "chain" | "ef-alias") {
+                catalog.set("AF", vec![Object::Reference(owner)]);
+            } else {
+                catalog.set("OpenAction", owner);
+            }
+        }
+        let mut bytes = vec![];
+        pdf.save_to(&mut bytes).unwrap();
+        let path = temp(&format!("sanitize-{case}.pdf"));
+        fs::write(&path, &bytes).unwrap();
+        let mut doc = engine.open(&path).unwrap();
+        if case == "shared" {
+            // A resource-dependent shared Form must be rejected even when an extractor
+            // cannot enumerate its nested text as top-level editable objects.
+            assert_eq!(engine.pages(&doc).unwrap().len(), 2);
+        }
+        let error = engine
+            .sanitize(&mut doc, SanitizeOptions::default())
+            .unwrap_err();
+        let expected = match case {
+            "shared" => "inherited resources",
+            "appearance" => "annotation appearances",
+            "unused" => "unused retained",
+            "xfa" => "XFA forms",
+            _ => "aliased",
+        };
+        assert!(error.to_string().contains(expected), "{case}: {error}");
+        assert_eq!(doc.bytes, bytes, "{case}");
+        assert!(!doc.undo(), "{case}");
+    }
+}

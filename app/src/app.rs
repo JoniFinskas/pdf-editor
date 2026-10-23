@@ -73,6 +73,7 @@ enum Tool {
     Tables,
     Word,
     Compress,
+    Sanitize,
     Compare,
     Print,
 }
@@ -107,6 +108,7 @@ impl Tool {
                 (Tool::Tables, "Tables to Excel or CSV...", Icon::Export),
                 (Tool::Word, "Export to Word...", Icon::Export),
                 (Tool::Compress, "Compress images…", Icon::Compress),
+                (Tool::Sanitize, "Sanitize document…", Icon::Redact),
                 (Tool::Compare, "Compare PDFs…", Icon::Layers),
                 (Tool::Print, "Print…", Icon::Print),
             ],
@@ -134,6 +136,7 @@ impl Tool {
             Tool::Tables => "tool-tables",
             Tool::Word => "tool-word",
             Tool::Compress => "tool-compress",
+            Tool::Sanitize => "tool-sanitize",
             Tool::Compare => "tool-compare",
             Tool::Print => "print-document",
         }
@@ -451,6 +454,7 @@ pub struct EditorApp {
     pictures: crate::pictures::Pictures,
     redaction: crate::redaction::Redaction,
     compression: crate::compression::Compression,
+    sanitize: crate::sanitize::Sanitize,
     compare: crate::compare::Compare,
     stamps: crate::stamps::Stamps,
     export: crate::export::Export,
@@ -791,6 +795,7 @@ impl EditorApp {
             pictures: Default::default(),
             redaction: Default::default(),
             compression: Default::default(),
+            sanitize: Default::default(),
             compare: Default::default(),
             stamps: Default::default(),
             export: Default::default(),
@@ -2152,6 +2157,7 @@ impl EditorApp {
             Tool::Word => self.word.open = true,
             Tool::Stamps => self.stamps.open = true,
             Tool::Compress => self.compression.open = true,
+            Tool::Sanitize => self.sanitize.open = true,
             Tool::Compare => self.compare.open = true,
             Tool::Redact => {
                 self.redaction.open = true;
@@ -4018,6 +4024,11 @@ impl eframe::App for EditorApp {
             self.send(request);
         }
         self.compare.show(&ctx, &p);
+        if let Some(request) = self.sanitize.show(&ctx, &p, self.busy == 0) {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
         if let Some(request) = self.compression.show(&ctx, &p, self.busy == 0) {
             self.commit_edit();
             self.busy += 1;
@@ -4972,6 +4983,7 @@ mod tests {
                 pictures: Default::default(),
                 redaction: Default::default(),
                 compression: Default::default(),
+                sanitize: Default::default(),
                 compare: Default::default(),
                 stamps: Default::default(),
                 export: Default::default(),
@@ -5010,6 +5022,17 @@ mod tests {
             inbox,
             outbox,
         )
+    }
+    #[test]
+    fn sanitize_menu_opens_the_dialog() {
+        assert!(
+            Tool::MENU
+                .iter()
+                .any(|(_, tools)| tools.iter().any(|(tool, _, _)| *tool == Tool::Sanitize))
+        );
+        let (mut app, _, _) = mock_app();
+        app.open_tool(Tool::Sanitize);
+        assert!(app.sanitize.open);
     }
     fn opened(app: &mut EditorApp, ctx: &Context) {
         app.handle(

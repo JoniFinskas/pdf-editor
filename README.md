@@ -340,3 +340,17 @@ full Part H acceptance: the 3,000-file Govdocs minimum and fuzz testing remain
 incomplete. The native desktop itself is not container-sandboxed.
 
 Headers and footers are available in the page-number/watermark tool. Select Header or Footer, enter page ranges such as `1-3,5` (blank means all), and use `{date}`, `{page}` and `{pages}` tokens. The date defaults to UTC and is editable.
+
+### Sanitize document
+
+Document → Sanitize document removes metadata, embedded files, executable actions
+and text using invisible rendering or zero opacity. Options also remove comments
+and link annotations. A report lists removed entries; Save As writes a fresh copy,
+and Undo restores the original. Recovery snapshots can still contain original data.
+Layers, soft masks, clipping and mixed hidden/visible text blocks are rejected
+without changes. Same-color, occluded and off-page text are not detected; this tool
+is not a complete visual-concealment audit.
+
+Sanitization also rejects XFA forms, retained annotation appearances, unused retained Form
+streams, Forms without their own resources, and aliased attachment/script/metadata payloads.
+These cases leave the original document unchanged.

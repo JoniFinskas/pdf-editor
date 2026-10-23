@@ -584,3 +584,16 @@ extraction, rendered appearance, save/reopen and history restoration.
 
 ### Photo page cleanup
 Scan cleanup works on image-only pages without annotations, preventing removal of existing text or displacement of markup. Preview and application use the same bounded 180 DPI raster (2500-pixel maximum side). A bright connected region estimates paper edges; four draggable corners allow correction on difficult backgrounds. A projective transform rectifies the quadrilateral, with a separate ±20-degree deskew adjustment and grayscale or thresholded black-and-white output. Page dimensions retain the source raster's physical scale. Windows OCR is optional; cleanup and OCR succeed or fail together in one undo step. Corrected photos use the image creation encoder, JPEG quality 95. Source files remain unchanged.
+
+## Sanitize document
+
+Sanitization uses a fresh, pruned object graph so removed payloads do not survive
+as unused objects or incremental revisions. Existing snapshot undo remains available.
+Safe ordinary link actions are reconstructed from their destination only; chained
+or executable actions are discarded. Optional annotation removal preserves form
+widgets. Unsupported visibility constructs fail atomically rather than reporting
+successful hidden-text removal. Removal counts describe entries, not unique files.
+
+Reject shared inherited-resource Forms, unprocessed retained Forms/appearances and
+aliased attachment/script/metadata payloads to prevent visible-content loss or residual data.
+Generated regressions cover each rejection and require unchanged bytes/history.

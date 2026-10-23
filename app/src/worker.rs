@@ -44,6 +44,7 @@ pub enum Request {
     ExportImages(String, u16, pdf_editor_core::PageImageFormat, PathBuf),
     Stamp(pdf_editor_core::RangeStamp),
     Compress(u32, u8),
+    Sanitize(pdf_editor_core::SanitizeOptions),
     Redact(u16, pdf_editor_core::Bounds),
     Ocr(u16),
     Pictures,
@@ -561,6 +562,18 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             Ok(()) => {
                 state.generation += 1;
                 Some(changed(state,ChangeKind::Edit,Some("Redaction applied. The document is flattened; Save As writes a sanitized copy.".into()),1))
+            }
+            Err(e) => failed(e),
+        },
+        Request::Sanitize(options) => match engine.sanitize(state.doc.as_mut()?, options) {
+            Ok(report) => {
+                state.generation += 1;
+                Some(changed(
+                    state,
+                    ChangeKind::Edit,
+                    Some(report.to_string()),
+                    1,
+                ))
             }
             Err(e) => failed(e),
         },
