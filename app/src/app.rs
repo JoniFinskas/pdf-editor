@@ -248,6 +248,7 @@ pub struct EditorApp {
     stamps: crate::stamps::Stamps,
     export: crate::export::Export,
     crop: crate::crop::Crop,
+    drawing: crate::drawing::DrawingTool,
     find: FindState,
     worker: Worker,
     engine_alive: bool,
@@ -530,6 +531,7 @@ impl EditorApp {
             stamps: Default::default(),
             export: Default::default(),
             crop: Default::default(),
+            drawing: Default::default(),
             find: FindState::default(),
             worker,
             engine_alive: true,
@@ -1833,6 +1835,16 @@ impl EditorApp {
             let mut open = None;
             Popup::menu(&recent).show(|ui| {
                 ui.set_min_width(260.0);
+                if Btn::new("Draw and shapes…")
+                    .enabled(idle)
+                    .min_width(260.0)
+                    .align_left()
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.drawing.open = true;
+                    ui.close();
+                }
                 if Btn::new("Crop page…")
                     .enabled(idle)
                     .min_width(260.0)
@@ -2566,7 +2578,29 @@ impl EditorApp {
                     );
                 }
                 // Hover and click hit testing against cached object extents.
-                let response = ui.interact(rect, Id::new(("pdf-page", index)), Sense::click());
+                let response = ui.interact(
+                    rect,
+                    Id::new(("pdf-page", index)),
+                    if self.drawing.active {
+                        Sense::click_and_drag()
+                    } else {
+                        Sense::click()
+                    },
+                );
+                if !busy
+                    && let Some(objects) = &page.objects
+                    && let Some(request) = self.drawing.on_page(
+                        &response,
+                        &painter,
+                        page_no,
+                        rect,
+                        scale,
+                        objects.transform,
+                    )
+                {
+                    self.busy += 1;
+                    requests.push(request);
+                }
                 // A line clicked while the previous edit was applied opens
                 // once this page's objects reflect that edit.
                 if let Some((reopen_page, at)) = doc.reopen
@@ -2614,7 +2648,7 @@ impl EditorApp {
                     painter.circle_stroke(at, 5.0, Stroke::new(1.5, p.accent));
                     self.tool_anchor = Some(Rect::from_center_size(at, vec2(10.0, 10.0)));
                 }
-                if let Some(line) = hit.filter(|_| !self.text_tool.adding) {
+                if let Some(line) = hit.filter(|_| !self.text_tool.adding && !self.drawing.active) {
                     if !editing_this(line) && !busy {
                         let screen = to_screen(line.rect, rect, scale);
                         painter.rect_stroke(
@@ -3244,6 +3278,11 @@ impl eframe::App for EditorApp {
             self.floating_tools(&ctx, central.response.rect, &p);
         }
 
+        let drawing_was_active = self.drawing.active;
+        self.drawing.show(&ctx, &p);
+        if !drawing_was_active && self.drawing.active {
+            self.commit_edit();
+        }
         if let Some(request) = self.crop.show(
             &ctx,
             &p,
@@ -4013,6 +4052,7 @@ mod tests {
                 stamps: Default::default(),
                 export: Default::default(),
                 crop: Default::default(),
+                drawing: Default::default(),
                 find: FindState::default(),
                 worker,
                 engine_alive: true,

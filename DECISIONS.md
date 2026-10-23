@@ -374,3 +374,7 @@ Render page content, forms and annotations at the requested DPI with the existin
 ## Part G: Cropping
 
 Use the standard PDF CropBox and validate finite, positive dimensions within the inherited MediaBox. Native rendering and page geometry refresh after the edit. The UI explains that cropping hides rather than removes content, and directs removal needs to redaction.
+
+## Part G: Freehand drawing and shapes
+
+Capture page drags through the inverse native page transform so drawing respects zoom, rotation and crop offsets. Store freehand strokes as Ink annotations, rectangles as Square, ellipses as Circle and lines/arrows as Line with standard endpoint styles. Explicit appearance streams preserve visuals across readers. Each completed drag is one history operation; drawing mode suppresses text-selection clicks until finished.

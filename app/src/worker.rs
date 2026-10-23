@@ -22,6 +22,7 @@ pub enum Request {
     OpenPassword(PathBuf, String),
     SavePassword(PathBuf, String),
     Print,
+    Draw(pdf_editor_core::Drawing),
     Crop(u16, pdf_editor_core::Bounds),
     ExportImages(String, u16, pdf_editor_core::PageImageFormat, PathBuf),
     Stamp(pdf_editor_core::TextStamp),
@@ -86,6 +87,21 @@ pub enum Request {
 pub struct PageTransform([f32; 6]);
 
 impl PageTransform {
+    #[cfg(test)]
+    pub fn identity() -> Self {
+        Self([1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+    }
+    pub fn inverse(&self, x: f32, y: f32) -> Option<(f32, f32)> {
+        let [a, b, c, d, e, f] = self.0;
+        let determinant = a * d - b * c;
+        if determinant.abs() < 0.000001 {
+            return None;
+        }
+        Some((
+            (d * (x - e) - c * (y - f)) / determinant,
+            (-b * (x - e) + a * (y - f)) / determinant,
+        ))
+    }
     pub fn apply(&self, x: f32, y: f32) -> (f32, f32) {
         let [a, b, c, d, e, f] = self.0;
         (a * x + c * y + e, b * x + d * y + f)
@@ -427,6 +443,13 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             }
         }
         Request::Crop(page, bounds) => match engine.crop_page(state.doc.as_mut()?, page, bounds) {
+            Ok(()) => {
+                state.generation += 1;
+                Some(changed(state, ChangeKind::Edit, None, 1))
+            }
+            Err(e) => failed(e),
+        },
+        Request::Draw(drawing) => match engine.add_drawing(state.doc.as_mut()?, &drawing) {
             Ok(()) => {
                 state.generation += 1;
                 Some(changed(state, ChangeKind::Edit, None, 1))

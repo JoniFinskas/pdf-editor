@@ -1803,3 +1803,63 @@ fn cropping_changes_view_and_preserves_content_for_undo() {
     assert_eq!(doc.bytes, original);
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn drawings_are_real_annotations_and_render_after_reopen() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    let before = doc.bytes.clone();
+    let raster = e.render(&doc, 0, 1.0).unwrap().rgba;
+    for (i, kind) in [
+        DrawingKind::Freehand,
+        DrawingKind::Rectangle,
+        DrawingKind::Ellipse,
+        DrawingKind::Line,
+        DrawingKind::Arrow,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        e.add_drawing(
+            &mut doc,
+            &Drawing {
+                page: 0,
+                kind,
+                points: vec![
+                    [20.0 + i as f32 * 50.0, 20.0],
+                    [60.0 + i as f32 * 50.0, 80.0],
+                ],
+                color: [40, 100, 220],
+                width: 2.0,
+                opacity: 0.8,
+            },
+        )
+        .unwrap();
+    }
+    let pdf = parse(&doc.bytes).unwrap();
+    let page = pdf.get_pages()[&1];
+    assert_eq!(
+        pdf.get_dictionary(page)
+            .unwrap()
+            .get(b"Annots")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        5
+    );
+    assert!(raster != e.render(&doc, 0, 1.0).unwrap().rgba);
+    let path = temp("drawings.pdf");
+    let _ = fs::remove_file(&path);
+    doc.save_as(&path).unwrap();
+    assert!(
+        e.render(&doc, 0, 1.0).unwrap().rgba
+            == e.render(&e.open(&path).unwrap(), 0, 1.0).unwrap().rgba
+    );
+    for _ in 0..5 {
+        doc.undo();
+    }
+    assert_eq!(doc.bytes, before);
+    fs::remove_file(path).unwrap();
+}

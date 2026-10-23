@@ -158,3 +158,7 @@ Each `Document` owns its byte snapshots, revision, undo/redo stacks and source i
 ## Page cropping
 
 - `Engine::crop_page(document, page, bounds) -> Result<()>`: set a validated CropBox inside the inherited MediaBox as one undoable change, preserving underlying content.
+
+## Drawing annotations
+
+- `Engine::add_drawing(document, Drawing) -> Result<()>`: create a freehand, rectangle, ellipse, line or arrow as a standard PDF annotation with color, width, opacity and page-space geometry.

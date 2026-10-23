@@ -17,6 +17,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Draw freehand, rectangles, ellipses, lines and arrows directly on pages as annotations.
+
 - Crop pages using validated visible page bounds.
 
 - Export selected pages as PNG or JPG with a DPI choice.
