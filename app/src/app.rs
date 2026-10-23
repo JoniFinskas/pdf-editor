@@ -243,6 +243,7 @@ pub struct EditorApp {
     organize: crate::organize::Organize,
     markup: crate::markup::MarkupTool,
     pictures: crate::pictures::Pictures,
+    redaction: crate::redaction::Redaction,
     find: FindState,
     worker: Worker,
     engine_alive: bool,
@@ -520,6 +521,7 @@ impl EditorApp {
             organize: Default::default(),
             markup: Default::default(),
             pictures: Default::default(),
+            redaction: Default::default(),
             find: FindState::default(),
             worker,
             engine_alive: true,
@@ -1823,6 +1825,20 @@ impl EditorApp {
             let mut open = None;
             Popup::menu(&recent).show(|ui| {
                 ui.set_min_width(260.0);
+                if Btn::new("Redact…")
+                    .enabled(idle)
+                    .min_width(260.0)
+                    .align_left()
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.redaction.open = true;
+                    if let Some(o) = self.text_tool.selection.get(self.text_tool.selected) {
+                        self.redaction.page = o.page;
+                        self.redaction.bounds = o.bounds;
+                    }
+                    ui.close();
+                }
                 if Btn::new("OCR current page")
                     .enabled(idle)
                     .min_width(260.0)
@@ -3180,6 +3196,16 @@ impl eframe::App for EditorApp {
             self.floating_tools(&ctx, central.response.rect, &p);
         }
 
+        if let Some(request) = self.redaction.show(
+            &ctx,
+            &p,
+            self.busy == 0,
+            self.doc.as_ref().map_or(0, |d| d.pages.len()),
+        ) {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
         if let Some(request) = self.pictures.show(
             &ctx,
             &p,
@@ -3909,6 +3935,7 @@ mod tests {
                 organize: Default::default(),
                 markup: Default::default(),
                 pictures: Default::default(),
+                redaction: Default::default(),
                 find: FindState::default(),
                 worker,
                 engine_alive: true,

@@ -8,6 +8,7 @@ mod organize;
 mod passwords;
 mod pictures;
 mod recovery;
+mod redaction;
 mod replace;
 mod shortcuts;
 mod signatures;

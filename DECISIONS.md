@@ -352,3 +352,9 @@ Each tab owns its entire editor state and worker, including undo history, unsave
 Use the installed Windows.Media.Ocr recognizer through the exact existing `windows = 0.62.2` crate. It and the activated Windows support crates were released 2025-10-06, well before the 14-day cutoff. No OCR engine, model download or cloud request is bundled. Initialize a scoped WinRT apartment on the worker and recognize a bounded raster. Missing Windows language support returns an actionable error.
 
 Write recognized words as embedded Unicode text with invisible rendering mode 3. Map OCR pixel geometry back into PDF coordinates, including page rotation, and use actual font advances for horizontal fitting. Refuse pages with an existing text layer to avoid duplicate text. Recognition and layer insertion are one atomic history operation.
+
+## Part G: True redaction
+
+Use a conservative raster rebuild for secure redaction. All pages are freshly encoded at up to 200 DPI, with a bounded pixel budget; selected pixels are replaced with black before encoding. No source objects, resource dictionaries, attachments, form values, metadata, annotation dictionaries or text layers are copied. This avoids recoverable content in unused image resources, nested forms or incremental history.
+
+The tradeoff is explicit in the UI: the whole document becomes image-only, with interactive features and bookmarks removed. Require acknowledgment of flattening before application. The original file remains untouched; in-memory undo can restore the pre-redaction snapshot, but Save As serializes only sanitized current bytes. A one-pixel margin covers edge antialiasing. Large outputs fail atomically at the existing size limit.

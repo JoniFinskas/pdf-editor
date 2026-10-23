@@ -22,6 +22,7 @@ pub enum Request {
     OpenPassword(PathBuf, String),
     SavePassword(PathBuf, String),
     Print,
+    Redact(u16, pdf_editor_core::Bounds),
     Ocr(u16),
     Pictures,
     MovePicture(pdf_editor_core::PlacedPicture, pdf_editor_core::Placement),
@@ -373,6 +374,13 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                     Some(format!("Added {words} searchable words using Windows OCR.")),
                     words,
                 ))
+            }
+            Err(e) => failed(e),
+        },
+        Request::Redact(page, bounds) => match engine.redact(state.doc.as_mut()?, page, bounds) {
+            Ok(()) => {
+                state.generation += 1;
+                Some(changed(state,ChangeKind::Edit,Some("Redaction applied. The document is flattened; Save As writes a sanitized copy.".into()),1))
             }
             Err(e) => failed(e),
         },

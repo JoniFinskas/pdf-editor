@@ -137,3 +137,7 @@ Each `Document` owns its byte snapshots, revision, undo/redo stacks and source i
 ## Windows OCR
 
 - `Engine::ocr_page(document, page) -> Result<usize>`: recognize a scanned page with installed Windows OCR languages and add an invisible, searchable text layer as one undo step; returns the number of recognized words.
+
+## Secure redaction
+
+- `Engine::redact(document, page, bounds) -> Result<()>`: black out the selected rectangle in rendered pixels and rebuild every page into a fresh image-only PDF, retaining no original object graph; one undo step.

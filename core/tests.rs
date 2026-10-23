@@ -1564,3 +1564,63 @@ fn windows_ocr_recognizes_scanned_page() {
     assert!(before == e.render(&doc, 0, 1.0).unwrap().rgba);
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn redaction_removes_source_objects_and_pixels() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    e.place_picture(
+        &mut doc,
+        &Picture {
+            width: 1,
+            height: 1,
+            rgba: vec![250, 30, 90, 255],
+        },
+        Placement {
+            page: 0,
+            left: 20.0,
+            bottom: 20.0,
+            width: 80.0,
+            height: 80.0,
+        },
+    )
+    .unwrap();
+    let original = doc.bytes.clone();
+    let pages = e.pages(&doc).unwrap().len();
+    e.redact(
+        &mut doc,
+        0,
+        Bounds {
+            left: 20.0,
+            bottom: 20.0,
+            right: 100.0,
+            top: 100.0,
+        },
+    )
+    .unwrap();
+    assert_eq!(e.pages(&doc).unwrap().len(), pages);
+    assert!(e.text_objects(&doc, 0).unwrap().is_empty());
+    assert!(e.placed_pictures(&doc).unwrap().is_empty());
+    let pdf = parse(&doc.bytes).unwrap();
+    assert!(!pdf.trailer.has(b"Info"));
+    assert!(
+        pdf.objects
+            .values()
+            .filter_map(|o| o.as_dict().ok())
+            .all(|d| d.get(b"Type").ok().and_then(|o| o.as_name().ok()) != Some(b"Font"))
+    );
+    let image = e.render(&doc, 0, 1.0).unwrap();
+    let (x, y) = e.page_to_pixel(&doc, 0, 1.0, 60.0, 60.0).unwrap();
+    let offset = (y as usize * image.width as usize + x as usize) * 4;
+    assert_eq!(&image.rgba[offset..offset + 3], &[0, 0, 0]);
+    let path = temp("redacted.pdf");
+    let _ = fs::remove_file(&path);
+    doc.save_as(&path).unwrap();
+    let reopened = e.open(&path).unwrap();
+    assert!(e.text_objects(&reopened, 0).unwrap().is_empty());
+    assert!(image.rgba == e.render(&reopened, 0, 1.0).unwrap().rgba);
+    doc.undo();
+    assert_eq!(doc.bytes, original);
+    fs::remove_file(path).unwrap();
+}

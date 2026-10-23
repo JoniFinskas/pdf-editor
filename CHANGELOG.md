@@ -17,6 +17,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Secure rectangle redaction through a fresh image-only document rebuild.
+
 - Windows OCR for scanned pages with an invisible searchable text layer.
 
 - Multiple document tabs with independent undo history, unsaved state and recovery.
