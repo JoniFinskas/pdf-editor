@@ -32,6 +32,7 @@ const MAX_RENDER_PIXELS: f32 = 15_500_000.0;
 const KEEP_PAGES: usize = 2;
 
 pub struct EditorApp {
+    recent_files: Vec<PathBuf>,
     dragging_page: Option<usize>,
     text_tool: TextTool,
     find: FindState,
@@ -247,6 +248,10 @@ impl EditorApp {
         let orphans = recovery::orphans();
         let worker = Worker::spawn(cc.egui_ctx.clone(), library.unwrap_or_default(), policy);
         let mut app = Self {
+            recent_files: config_path
+                .as_deref()
+                .and_then(|p| pdf_editor_core::Settings::load(p).ok())
+                .map_or_else(Vec::new, |s| s.recent_files),
             dragging_page: None,
             text_tool: TextTool::default(),
             find: FindState::default(),
@@ -547,6 +552,24 @@ impl EditorApp {
                 pages,
                 suggested,
             } => {
+                if self.restoring.is_none() {
+                    if let Some(config) = &self.config_path {
+                        let result = (|| -> pdf_editor_core::Result<Vec<PathBuf>> {
+                            let mut settings = pdf_editor_core::Settings::load(config)?;
+                            let absolute = path.canonicalize().unwrap_or_else(|_| path.clone());
+                            settings.remember(&absolute);
+                            settings.save(config)?;
+                            Ok(settings.recent_files)
+                        })();
+                        match result {
+                            Ok(paths) => self.recent_files = paths,
+                            Err(e) => self.banner(
+                                BannerKind::Warning,
+                                format!("Recent files could not be saved: {e}"),
+                            ),
+                        }
+                    }
+                }
                 self.text_tool.selection.clear();
                 self.text_tool.adding = false;
                 self.text_tool.at = None;
@@ -1199,6 +1222,28 @@ impl EditorApp {
             ui.spacing_mut().item_spacing.x = 4.0;
             if tool_button(ui, "Open", ready && idle, "Open a PDF (Ctrl+O)").clicked() {
                 self.request_open(None);
+            }
+            let mut recent = None;
+            ui.menu_button("Recent", |ui| {
+                if self.recent_files.is_empty() {
+                    ui.label("No recent files");
+                }
+                for path in &self.recent_files {
+                    if ui
+                        .add_enabled(
+                            idle,
+                            Button::new(path.file_name().unwrap_or_default().to_string_lossy()),
+                        )
+                        .on_hover_text(path.display().to_string())
+                        .clicked()
+                    {
+                        recent = Some(path.clone());
+                        ui.close();
+                    }
+                }
+            });
+            if let Some(path) = recent {
+                self.request_open(Some(path));
             }
             let dirty = self.doc.as_ref().is_some_and(DocView::dirty);
             let save = if dirty {

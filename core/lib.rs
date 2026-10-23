@@ -12,7 +12,7 @@ pub use search::SearchMatch;
 mod tests;
 
 use pdfium_render::prelude::*;
-pub use settings::Substitution;
+pub use settings::{Settings, Substitution};
 use std::{
     fmt, fs,
     io::{Read, Write},

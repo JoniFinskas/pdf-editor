@@ -228,3 +228,7 @@ Page controls operate on the current page; dragging a thumbnail onto another mov
 ## Part D: Shortcuts
 
 Retain text-field undo ownership while a field is focused. Document shortcuts are tested using real egui key events, including shifted plus/equal keyboard layouts. Add a visible Find action for discoverability. No PDF API is needed for keyboard dispatch; existing headless history and rendering tests cover its core operations.
+
+## Part D: Recent files
+
+Extend the existing settings.txt with ten hex-encoded UTF-8 paths after its original policy line. Legacy files remain readable and changing substitution preserves recents. Record only successful opens, exclude recovery copies, deduplicate case-insensitively for Windows, and route Recent through the same unsaved-change guard as Open.

@@ -6,6 +6,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Recent menu with the last ten successfully opened PDFs, persisted in settings.txt.
+
 - Find toolbar action and tested keyboard commands, including shifted plus layouts.
 
 - Rotate, delete, drag to reorder, and insert PDF pages with undo/redo.

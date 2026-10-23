@@ -965,3 +965,30 @@ fn page_operations_roundtrip_and_undo() {
             .is_err()
     );
 }
+
+#[test]
+fn recent_files_migrate_deduplicate_and_preserve_policy() {
+    let path = temp("recent-settings.txt");
+    fs::write(&path, b"document\n").unwrap();
+    let mut settings = Settings::load(&path).unwrap();
+    assert_eq!(settings.substitution, Substitution::Document);
+    for i in 0..12 {
+        settings.remember(&PathBuf::from(format!("C:/Docs/{i} ä.pdf")));
+    }
+    assert_eq!(settings.recent_files.len(), 10);
+    let last = settings.recent_files[9].clone();
+    settings.remember(&last);
+    assert_eq!(settings.recent_files[0], last);
+    settings.save(&path).unwrap();
+    assert_eq!(
+        Settings::load(&path).unwrap().recent_files,
+        settings.recent_files
+    );
+    Substitution::Line.save(&path).unwrap();
+    let loaded = Settings::load(&path).unwrap();
+    assert_eq!(loaded.recent_files, settings.recent_files);
+    assert_eq!(loaded.substitution, Substitution::Line);
+    fs::write(&path, b"line\nrecent=xyz\n").unwrap();
+    assert!(Settings::load(&path).is_err());
+    let _ = fs::remove_file(path);
+}
