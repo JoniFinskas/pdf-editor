@@ -285,3 +285,22 @@ Match them with egui only, without new dependencies:
 - The status bar keeps the edit hint and the version next to the page count,
   the pages toggle and the zoom menu. The pages sidebar can be hidden.
 - Canonicalized Windows paths are shown without the `\?\` prefix.
+
+## Part C: Release build and cleanup
+
+Use size optimization (`s`), thin LTO, one code-generation unit and stripped
+symbols for the Windows release executable. Keep panic unwinding because the
+core catches recoverable parser panics; abort-on-panic would remove that behavior.
+Keep AccessKit accessibility support and the existing non-V8 PDFium binary.
+
+The dependency audit found all direct dependencies in active use: eframe for UI,
+rfd for native dialogs, the internal core crate, pdfium-render for native PDF
+operations, skrifa for font metadata/glyphs, and lopdf for content editing.
+Compiler and strict Clippy checks found no unused private code. Keep documented
+public core APIs even when they are used only by library consumers or tests.
+No dependency removals or new exceptions are needed.
+
+PDFium setup now copies the archive's third-party notices and verifies a reused
+cached archive. Identical installed DLLs are left untouched to allow setup while
+a matching editor is running. The manual checklist remains unchecked until a
+human run; a release-mode build alone does not justify a version bump or tag.

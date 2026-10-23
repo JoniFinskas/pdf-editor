@@ -6,24 +6,58 @@ built on its public API.
 
 Implementation requirements and scope are documented in [SPEC.md](SPEC.md).
 
-## Build and test the engine
+## Build on Windows
 
-Requirements: Windows x64, stable Rust with the MSVC build tools, and PowerShell.
+Requirements: Windows x64, PowerShell, stable Rust with the
+`x86_64-pc-windows-msvc` toolchain, and Visual Studio Build Tools with the
+**Desktop development with C++** workload and a Windows SDK. Run these commands
+from the repository root:
 
 ```powershell
 ./scripts/setup-pdfium.ps1
-cargo build --locked
-cargo test --locked
-cargo install cargo-deny --version 0.20.2 --locked
-cargo deny check
-cargo run -p pdf-editor
+cargo build --release --locked
+.\target\release\pdf-editor.exe
+# Or open a document immediately:
+.\target\release\pdf-editor.exe "C:\Documents\My report.pdf"
 ```
 
-The setup script downloads the non-V8 PDFium chromium/8111 release, verifies the
-committed SHA256, and places the DLL and license in target/debug and target/release.
-No download occurs while opening or editing a document. Dependency versions are
-pinned in the crate manifests and Cargo.lock. `python scripts/check-crate-age.py 2026-10-22`
-checks the publication dates of every locked registry package through crates.io.
+Keep `pdf-editor.exe` and `pdfium.dll` together. The executable embeds its Inter
+UI fonts; no font download or Rust installation is needed to run the built app.
+The release profile uses size optimization, thin LTO, one code-generation unit
+and stripped symbols. Panic unwinding remains enabled for recoverable parser
+errors. The build does not create an installer, register file associations or
+publish a release.
+
+The setup script uses the non-V8 PDFium chromium/8111 release, verifies the
+committed archive SHA256 on every run, and places the DLL, `pdfium-LICENSE.txt`
+and `pdfium-licenses/` in `target/debug` and `target/release`. A verified cached
+archive is reused. An invalid cached archive causes an error; remove that archive
+and rerun the script to download it again. Retain these notices, the Inter
+`app/assets/fonts/OFL.txt`, the project licenses and applicable dependency notices
+when redistributing binaries. Do not substitute an arbitrary DLL from a download site.
+
+If Windows reports that the executable is in use, close that copy before
+rebuilding, or use `cargo build --release --locked --target-dir target/check` and
+copy the verified DLL beside the executable in `target/check/release`.
+No download occurs while opening or editing a document.
+
+## Automated checks
+
+```powershell
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo install cargo-deny --version 0.20.2 --locked
+cargo deny check
+```
+
+Use `cargo run -p pdf-editor --locked` for a debug build. Exact dependency versions
+are pinned in the crate manifests and Cargo.lock. Python is optional for supply
+chain verification: `python scripts/check-crate-age.py YYYY-MM-DD` checks the
+publication dates of every locked registry package against that date's 14-day
+floor. Normal tests need neither Python nor fixture downloads.
+
+Before distributing a build, complete [MANUAL_TEST.md](MANUAL_TEST.md). Automated
+checks and their limits are recorded in [TEST_REPORT.md](TEST_REPORT.md).
 
 Auto-save keeps recovery copies of unsaved edits in
 `%LOCALAPPDATA%\PdfEditor\Recovery`, never in place of the original or a saved

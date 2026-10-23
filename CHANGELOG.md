@@ -6,6 +6,10 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Changed
 
+- Size-focused release profile with thin LTO and stripped symbols; preserve panic recovery.
+- PDFium setup reuses verified downloads and includes all bundled native license notices.
+- Complete Windows release build instructions and a manual test checklist.
+
 - New look: dark charcoal theme with a blue accent (light theme to match),
   painted icons, a home page with an open card and recent files, a settings
   page with General, Editing, Shortcuts and About sections, floating find and

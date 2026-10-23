@@ -5,9 +5,6 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
 
 ## P1: Next
 
-- **Part C finish (SPEC.md).** Produce a small release build with the exe and
-  pdfium.dll. Remove unused dependencies and dead code. Complete the README build
-  and usage steps, and write MANUAL_TEST.md as a short checklist for manual testing.
 - **Manual checks of untested paths.** Test the native Open and Save As
   dialogs, drag and drop from Explorer, and the close confirmation from the
   title bar. Also check display scales other than 150% and a long editing
@@ -41,7 +38,8 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
     once a later release passes the floor.
   - RUSTSEC-2026-0370, -0371 and -0372 are ignored for Linux-only AccessKit
     dependencies; remove the ignores once eframe's AccessKit moves to zbus 6.
-- **First release.** Tag v0.1.0 following VERSIONING.md once Part C is done.
+- **First versioned release.** Complete MANUAL_TEST.md and follow VERSIONING.md
+  before changing the version or tagging a release.
 
 ## Out of scope for v1
 
