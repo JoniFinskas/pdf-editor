@@ -43,6 +43,8 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
 
 ## Out of scope for v1
 
-Paragraph reflow across lines remains excluded. Parts F and G add forms,
-annotations, image editing and OCR. Nested Form XObject text and ambiguous text mappings are
-refused rather than rewritten heuristically.
+Paragraph reflow, forms, annotations, image editing and OCR are implemented.
+Nested Form XObject text and ambiguous text mappings remain unsupported for text
+rewriting. Objects mode moves/deletes top-level grouped artwork as a whole;
+unsupported native copies fail cleanly. Ungrouping, cross-tab object clipboard,
+object resizing handles and arbitrary nested-object editing remain unimplemented.

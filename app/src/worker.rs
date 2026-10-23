@@ -54,6 +54,12 @@ pub enum Request {
     Thumbnail(u16),
     Pages(pdf_editor_core::PageEdit),
     DeleteText(TextObject),
+    EditItems(
+        Vec<pdf_editor_core::PageItem>,
+        pdf_editor_core::ObjectAction,
+    ),
+    CopyItems(Vec<pdf_editor_core::PageItem>),
+    PasteItems(u16),
     StyleText {
         object: TextObject,
         size: f32,
@@ -91,6 +97,10 @@ pub struct PageTransform([f32; 6]);
 
 impl PageTransform {
     #[cfg(test)]
+    pub(crate) fn for_test(matrix: [f32; 6]) -> Self {
+        Self(matrix)
+    }
+    #[cfg(test)]
     pub fn identity() -> Self {
         Self([1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
     }
@@ -112,6 +122,7 @@ impl PageTransform {
 }
 
 pub enum Reply {
+    ItemsCopied,
     Bookmarks(pdf_editor_core::BookmarkSet),
     Printed(bool),
     Pictures(Vec<pdf_editor_core::PlacedPicture>),
@@ -150,6 +161,7 @@ pub enum Reply {
         page: u16,
         transform: PageTransform,
         objects: Vec<TextObject>,
+        items: Vec<pdf_editor_core::PageItem>,
     },
     Changed {
         pages: Vec<PageInfo>,
@@ -225,6 +237,7 @@ impl Worker {
 }
 
 struct State {
+    clipboard: Option<pdf_editor_core::ObjectClipboard>,
     engine: Option<Engine>,
     engine_error: String,
     doc: Option<Document>,
@@ -247,6 +260,7 @@ fn run(
         ),
     };
     let mut state = State {
+        clipboard: None,
         engine,
         engine_error,
         doc: None,
@@ -537,6 +551,38 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 Err(e) => failed(e),
             }
         }
+        Request::CopyItems(items) => match engine.copy_page_items(state.doc.as_ref()?, &items) {
+            Ok(clipboard) => {
+                state.clipboard = Some(clipboard);
+                Some(Reply::ItemsCopied)
+            }
+            Err(e) => failed(e),
+        },
+        Request::PasteItems(page) => {
+            let Some(clipboard) = &state.clipboard else {
+                return Some(Reply::Failed {
+                    message: "Copy an object first".into(),
+                    blocking: true,
+                    page: None,
+                });
+            };
+            match engine.paste_page_items(state.doc.as_mut()?, clipboard, page) {
+                Ok(()) => {
+                    state.generation += 1;
+                    Some(content_changed(state, ChangeKind::Edit, None, 1))
+                }
+                Err(e) => failed(e),
+            }
+        }
+        Request::EditItems(items, action) => {
+            match engine.edit_page_items(state.doc.as_mut()?, &items, action) {
+                Ok(()) => {
+                    state.generation += 1;
+                    Some(content_changed(state, ChangeKind::Edit, None, items.len()))
+                }
+                Err(e) => failed(e),
+            }
+        }
         Request::StyleText {
             object,
             size,
@@ -546,7 +592,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             match engine.style_text(doc, &object, size, color) {
                 Ok(()) => {
                     state.generation += 1;
-                    Some(changed(state, ChangeKind::Edit, None, 1))
+                    Some(content_changed(state, ChangeKind::Edit, None, 1))
                 }
                 Err(e) => failed(e),
             }
@@ -556,7 +602,9 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             match engine.delete_text(doc, &object) {
                 Ok(result) => {
                     state.generation += 1;
-                    Some(changed(
+                    // Text edits cannot change page order or dimensions. Keep the
+                    // existing page previews while their new rasters are rendered.
+                    Some(content_changed(
                         state,
                         ChangeKind::Edit,
                         result.warning,
@@ -738,6 +786,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 page,
                 transform,
                 objects,
+                items: engine.page_items(doc, page).unwrap_or_default(),
             })
         }
         Request::Edit { .. } | Request::EditParagraph(..) => {
@@ -754,7 +803,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                     if result.objects_changed > 0 {
                         state.generation += 1;
                     }
-                    Some(changed(
+                    Some(content_changed(
                         state,
                         ChangeKind::Edit,
                         result.warning,
@@ -826,17 +875,30 @@ fn changed(
     warning: Option<String>,
     objects_changed: usize,
 ) -> Reply {
+    let mut reply = content_changed(state, kind, warning, objects_changed);
+    if let Reply::Changed { pages, .. } = &mut reply {
+        *pages = state
+            .engine
+            .as_ref()
+            .zip(state.doc.as_ref())
+            .and_then(|(e, d)| e.pages(d).ok())
+            .unwrap_or_default();
+    }
+    reply
+}
+
+fn content_changed(
+    state: &State,
+    kind: ChangeKind,
+    warning: Option<String>,
+    objects_changed: usize,
+) -> Reply {
     let (can_undo, can_redo) = state
         .doc
         .as_ref()
         .map_or((false, false), |d| (d.can_undo(), d.can_redo()));
     Reply::Changed {
-        pages: state
-            .engine
-            .as_ref()
-            .zip(state.doc.as_ref())
-            .and_then(|(e, d)| e.pages(d).ok())
-            .unwrap_or_default(),
+        pages: Vec::new(),
         generation: state.generation,
         kind,
         can_undo,

@@ -108,6 +108,19 @@ existing files and the original path are never overwritten.
 - Add text: choose a font, size and color, click a baseline on a page, then Place text.
 - Click existing text to edit it. The text-object toolbar selects individual runs for
   size/color changes or deletion; those operations are undoable.
+- Drag empty page space or the gray canvas to pan. Drag text before entering its
+  editor to move the line/paragraph; finish or cancel an open edit first. A moving
+  outline previews placement, and release commits one undoable move.
+- Toggle **Objects** in the bottom bar to select and drag individual text runs,
+  images, vector icons or grouped artwork. Right-click for **Copy**, **Paste on
+  this page**, **Duplicate** or **Delete**; Ctrl+C, Ctrl+V, Ctrl+D and Delete also
+  act on the selection when a text field is not focused. Copy/paste uses a private
+  in-memory clipboard within the document tab, including between its pages.
+  Grouped Form artwork is selected as one object; unsupported native copies fail
+  without changing the document. Annotations retain their separate editing tools.
+- Text edits retain page and thumbnail previews while replacements render in the
+  background. Search refreshes preserve the current viewing position. Complex
+  PDF edits can still take time; this is not a guarantee of zero processing latency.
 - The Pages sidebar navigates by thumbnail. Rotate and Delete act on the current
   page. Drag a thumbnail onto another to reorder; Insert PDF adds all source pages
   before the current page. The last page cannot be deleted.

@@ -2055,3 +2055,165 @@ fn loaded_page_geometry_matches_fast_metadata_for_generated_rotations() {
     assert!(checked_page_size(100.0, f32::INFINITY).is_err());
     assert!(checked_page_size(0.0, 100.0).is_err());
 }
+
+#[test]
+fn page_item_moves_preserve_text_and_neighbors_and_undo() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    for rotation in [0, 90, 180, 270] {
+        let path = temp(&format!("object-move-{rotation}.pdf"));
+        fs::write(
+            &path,
+            generated("Move me", false, rotation, 0.0, false, false),
+        )
+        .unwrap();
+        let original = e.open(&path).unwrap();
+        let mut doc = e.open(&path).unwrap();
+        let before = e.text_objects(&doc, 0).unwrap();
+        let item = e
+            .page_items(&doc, 0)
+            .unwrap()
+            .into_iter()
+            .find(|i| i.index == before[0].index)
+            .unwrap();
+        e.edit_page_items(
+            &mut doc,
+            std::slice::from_ref(&item),
+            ObjectAction::Move {
+                dx: 24.0,
+                dy: -16.0,
+            },
+        )
+        .unwrap();
+        let after = e.text_objects(&doc, 0).unwrap();
+        assert_eq!(before.len(), after.len());
+        for (i, (a, b)) in before.iter().zip(&after).enumerate() {
+            assert_eq!(a.text, b.text);
+            assert_eq!(a.font, b.font);
+            assert_eq!(a.color, b.color);
+            if i > 0 {
+                assert_eq!(a.matrix, b.matrix);
+            }
+        }
+        assert!((after[0].bounds.left - before[0].bounds.left - 24.0).abs() < 0.1);
+        assert!((after[0].bounds.bottom - before[0].bounds.bottom + 16.0).abs() < 0.1);
+        assert_outside_equal(&e, &original, &doc, &before[0], &after[0]);
+        assert!(
+            e.edit_page_items(&mut doc, &[item], ObjectAction::Delete)
+                .is_err()
+        );
+        let saved = temp(&format!("object-move-saved-{rotation}.pdf"));
+        let _ = fs::remove_file(&saved);
+        doc.save_as(&saved).unwrap();
+        assert_eq!(
+            e.text_objects(&e.open(&saved).unwrap(), 0).unwrap()[0].matrix,
+            after[0].matrix
+        );
+        assert!(doc.undo());
+        assert_eq!(doc.bytes, original.bytes);
+        assert!(doc.redo());
+    }
+}
+
+#[test]
+fn page_item_duplicate_delete_and_invalid_move_are_atomic() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut doc = e.open(&fixture("unicode-cid.pdf")).unwrap();
+    let before = doc.bytes.clone();
+    let items = e.page_items(&doc, 0).unwrap();
+    assert!(
+        e.edit_page_items(
+            &mut doc,
+            &items[..1],
+            ObjectAction::Move {
+                dx: f32::NAN,
+                dy: 0.0
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(doc.bytes, before);
+    e.edit_page_items(
+        &mut doc,
+        &items[..1],
+        ObjectAction::Duplicate {
+            dx: 20.0,
+            dy: -30.0,
+        },
+    )
+    .unwrap();
+    let after = e.page_items(&doc, 0).unwrap();
+    assert_eq!(after.len(), items.len() + 1);
+    e.edit_page_items(&mut doc, &after[after.len() - 1..], ObjectAction::Delete)
+        .unwrap();
+    assert_eq!(e.page_items(&doc, 0).unwrap().len(), items.len());
+    assert!(doc.undo());
+    assert!(doc.undo());
+    assert_eq!(doc.bytes, before);
+}
+
+#[test]
+fn artwork_objects_copy_move_delete_and_paste_snapshot() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut pdf = parse(&generated("Artwork", false, 0, 0.0, false, false)).unwrap();
+    let page = *pdf.get_pages().get(&1).unwrap();
+    let mut bytes = pdf.get_page_content_with_limit(page, MAX_STREAM).unwrap();
+    bytes.extend(b"\nq 0 0 1 rg 60 60 30 30 re f Q\n");
+    let stream = pdf.add_object(Stream::new(dictionary! {}, bytes));
+    pdf.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    let path = temp("object-artwork.pdf");
+    pdf.save(&path).unwrap();
+    let mut doc = e.open(&path).unwrap();
+    e.place_picture(
+        &mut doc,
+        &Picture {
+            width: 2,
+            height: 2,
+            rgba: vec![255; 16],
+        },
+        Placement {
+            page: 0,
+            left: 120.0,
+            bottom: 60.0,
+            width: 20.0,
+            height: 20.0,
+        },
+    )
+    .unwrap();
+    for kind in ["Path", "Image"] {
+        let item = e
+            .page_items(&doc, 0)
+            .unwrap()
+            .into_iter()
+            .find(|i| i.kind == kind)
+            .unwrap();
+        let clipboard = e
+            .copy_page_items(&doc, std::slice::from_ref(&item))
+            .unwrap();
+        let original = doc.bytes.clone();
+        e.edit_page_items(&mut doc, &[item], ObjectAction::Move { dx: 15.0, dy: 10.0 })
+            .unwrap();
+        assert!(doc.undo());
+        assert_eq!(doc.bytes, original);
+        let item = e
+            .page_items(&doc, 0)
+            .unwrap()
+            .into_iter()
+            .find(|i| i.kind == kind)
+            .unwrap();
+        let count = e.page_items(&doc, 0).unwrap().len();
+        e.edit_page_items(&mut doc, &[item], ObjectAction::Delete)
+            .unwrap();
+        assert_eq!(e.page_items(&doc, 0).unwrap().len(), count - 1);
+        e.paste_page_items(&mut doc, &clipboard, 0).unwrap();
+        assert_eq!(e.page_items(&doc, 0).unwrap().len(), count);
+        e.render(&doc, 0, 1.0).unwrap();
+        assert!(doc.undo());
+        assert!(doc.undo());
+        assert_eq!(doc.bytes, original);
+    }
+}

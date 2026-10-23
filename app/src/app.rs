@@ -545,6 +545,7 @@ impl SettingsTab {
 
 #[derive(Default)]
 struct FindState {
+    refresh_only: bool,
     open: bool,
     focus: bool,
     query: String,
@@ -553,6 +554,10 @@ struct FindState {
 }
 
 struct DocView {
+    panning: bool,
+    object_mode: bool,
+    selected_item: Option<pdf_editor_core::PageItem>,
+    dragging_item: Option<ItemDrag>,
     protected: bool,
     name: String,
     /// Path the document was opened from.
@@ -585,6 +590,7 @@ struct DocView {
 }
 
 struct PageView {
+    thumbnail_generation: Option<u64>,
     thumbnail: Option<TextureHandle>,
     pending_thumbnail: bool,
     info: PageInfo,
@@ -631,10 +637,18 @@ struct PageTexture {
 }
 
 struct PageObjects {
+    items: Vec<pdf_editor_core::PageItem>,
     transform: PageTransform,
     generation: u64,
     /// Editable lines in paint order.
     lines: Vec<Line>,
+}
+
+struct ItemDrag {
+    page: usize,
+    items: Vec<pdf_editor_core::PageItem>,
+    bounds: Rect,
+    delta: Vec2,
 }
 
 /// Adjacent text objects that read as one line, edited together. Browser
@@ -1026,6 +1040,9 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::ItemsCopied => {
+                self.busy = self.busy.saturating_sub(1);
+            }
             Reply::Bookmarks(items) => {
                 self.busy = self.busy.saturating_sub(1);
                 self.bookmarks.receive(items);
@@ -1078,6 +1095,7 @@ impl EditorApp {
                     && let Some(p) = self.page_mut(page)
                 {
                     p.pending_thumbnail = false;
+                    p.thumbnail_generation = Some(generation);
                     p.thumbnail = Some(ctx.load_texture(
                         format!("thumb-{generation}-{page}"),
                         egui::ColorImage::from_rgba_unmultiplied(
@@ -1101,8 +1119,16 @@ impl EditorApp {
                     && self.find.query == query
                 {
                     self.find.matches = matches;
-                    self.find.active = 0;
-                    self.go_match();
+                    if self.find.refresh_only {
+                        self.find.active = self
+                            .find
+                            .active
+                            .min(self.find.matches.len().saturating_sub(1));
+                        self.find.refresh_only = false;
+                    } else {
+                        self.find.active = 0;
+                        self.go_match();
+                    }
                 }
             }
             Reply::Opened {
@@ -1159,6 +1185,10 @@ impl EditorApp {
                     None => (name, path, suggested),
                 };
                 self.doc = Some(DocView {
+                    panning: false,
+                    object_mode: false,
+                    selected_item: None,
+                    dragging_item: None,
                     protected,
                     name,
                     source,
@@ -1169,6 +1199,7 @@ impl EditorApp {
                     pages: pages
                         .into_iter()
                         .map(|info| PageView {
+                            thumbnail_generation: None,
                             thumbnail: None,
                             pending_thumbnail: false,
                             info,
@@ -1244,6 +1275,7 @@ impl EditorApp {
                 page,
                 transform,
                 objects,
+                items,
             } => {
                 let current = self
                     .doc
@@ -1256,7 +1288,7 @@ impl EditorApp {
                     view.pending_objects = None;
                 }
                 if current {
-                    let items = objects
+                    let text_items = objects
                         .into_iter()
                         .map(|o| {
                             let rect = raster_rect(&transform, &o);
@@ -1264,9 +1296,10 @@ impl EditorApp {
                         })
                         .collect();
                     view.objects = Some(PageObjects {
+                        items,
                         transform,
                         generation,
-                        lines: group_lines(items),
+                        lines: group_lines(text_items),
                     });
                 }
             }
@@ -1299,11 +1332,14 @@ impl EditorApp {
                     }
                 }
                 if doc.generation != generation {
+                    doc.selected_item = None;
+                    doc.dragging_item = None;
                     self.text_tool.selection.clear();
                     doc.generation = generation;
                     self.find.matches.clear();
                     self.replace.count = None;
                     if !self.find.query.is_empty() {
+                        self.find.refresh_only = true;
                         self.worker.send(Request::Find(self.find.query.clone()));
                     }
                     doc.edit = None;
@@ -1311,6 +1347,7 @@ impl EditorApp {
                         doc.pages = pages
                             .into_iter()
                             .map(|info| PageView {
+                                thumbnail_generation: None,
                                 info,
                                 thumbnail: None,
                                 pending_thumbnail: false,
@@ -1325,11 +1362,13 @@ impl EditorApp {
                         self.text_tool.at = None;
                     }
                     for page in &mut doc.pages {
-                        page.thumbnail = None;
+                        // Keep the previous preview until its replacement arrives.
+                        page.thumbnail_generation = None;
                         page.pending_thumbnail = false;
                         page.pending_render = None;
                         page.pending_objects = None;
                         page.objects = None;
+                        page.error = None;
                     }
                 }
                 if self.bookmarks.open {
@@ -1561,7 +1600,8 @@ impl EditorApp {
                             );
                         }
                         paint_thumbnail(ui, rect, page, p);
-                        if page.thumbnail.is_none()
+                        if (page.thumbnail.is_none()
+                            || page.thumbnail_generation != Some(doc.generation))
                             && !page.pending_thumbnail
                             && page.error.is_none()
                         {
@@ -1887,6 +1927,7 @@ impl EditorApp {
                             self.find.focus = false;
                         }
                         if field.changed() {
+                            self.find.refresh_only = false;
                             self.find.matches.clear();
                             self.send(Request::Find(self.find.query.clone()));
                         }
@@ -1961,7 +2002,7 @@ impl EditorApp {
         if self.confirm.is_some() || self.settings_open {
             return;
         }
-        for command in crate::shortcuts::consume(ctx, ctx.egui_wants_keyboard_input()) {
+        for command in crate::shortcuts::consume(ctx, ctx.text_edit_focused()) {
             use crate::shortcuts::Command;
             match command {
                 Command::Open => self.request_open(None),
@@ -2440,6 +2481,8 @@ impl EditorApp {
 
     fn status_bar(&mut self, ui: &mut Ui, p: &Palette) {
         let Some(doc) = &self.doc else { return };
+        let mut object_mode = doc.object_mode;
+        let can_switch = self.busy == 0 && doc.edit.as_ref().is_none_or(|e| e.text == e.line.text);
         let (current, total) = (doc.current_page + 1, doc.pages.len());
         let hint = if doc.edit.is_some() {
             "Enter or click away applies \u{b7} Esc cancels"
@@ -2449,6 +2492,10 @@ impl EditorApp {
         let zoom = format!("{:.0}%", doc.zoom * 100.0);
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
+            ui.add_enabled_ui(can_switch, |ui| {
+                ui.toggle_value(&mut object_mode, "Objects")
+                    .on_hover_text("Select and drag text, images or vector artwork; right-click to duplicate or delete");
+            });
             ui.label(RichText::new("Page").color(p.muted));
             ui.label(RichText::new(current.to_string()).color(p.text));
             ui.label(RichText::new(format!("of {total}")).color(p.muted));
@@ -2491,6 +2538,14 @@ impl EditorApp {
                     .on_hover_text("PDF Editor version");
             });
         });
+        if let Some(doc) = &mut self.doc {
+            if object_mode != doc.object_mode {
+                doc.edit = None;
+                self.text_tool.selection.clear();
+                doc.selected_item = None;
+            }
+            doc.object_mode = object_mode;
+        }
     }
 
     /// Home page: open card and recent files, or the recent list alone.
@@ -2641,13 +2696,65 @@ impl EditorApp {
             + 2.0 * CANVAS_PAD;
         let content_w = (widest + 2.0 * CANVAS_PAD).max(canvas_rect.width());
 
-        let mut area = ScrollArea::both().auto_shrink(false);
+        let mut area = ScrollArea::both()
+            .auto_shrink(false)
+            .scroll_source(egui::scroll_area::ScrollSource::ALL);
         if let Some(offset) = doc.scroll_to.take() {
             area = area.scroll_offset(offset);
         }
         let mut requests = Vec::new();
         let mut start_edit: Option<EditState> = None;
         let mut clicked_at: Option<(usize, Pos2)> = None;
+        if doc.object_mode && !busy && doc.edit.is_none() && !ctx.text_edit_focused() {
+            let clipboard_event = |paste| {
+                ctx.input_mut(|i| {
+                    let found = i.events.iter().position(|event| {
+                        if paste {
+                            matches!(event, egui::Event::Paste(_))
+                        } else {
+                            matches!(event, egui::Event::Copy)
+                        }
+                    });
+                    if let Some(index) = found {
+                        i.events.remove(index);
+                        true
+                    } else {
+                        false
+                    }
+                })
+            };
+            if clipboard_event(true)
+                || ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::V))
+            {
+                requests.push(Request::PasteItems(doc.current_page as u16));
+                self.busy += 1;
+            } else if let Some(item) = &doc.selected_item {
+                let request = if clipboard_event(false)
+                    || ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::C))
+                {
+                    Some(Request::CopyItems(vec![item.clone()]))
+                } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Delete)) {
+                    Some(Request::EditItems(
+                        vec![item.clone()],
+                        pdf_editor_core::ObjectAction::Delete,
+                    ))
+                } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::D)) {
+                    Some(Request::EditItems(
+                        vec![item.clone()],
+                        pdf_editor_core::ObjectAction::Duplicate {
+                            dx: 12.0,
+                            dy: -12.0,
+                        },
+                    ))
+                } else {
+                    None
+                };
+                if let Some(request) = request {
+                    requests.push(request);
+                    self.busy += 1;
+                }
+            }
+        }
 
         let output = area.show_viewport(ui, |ui, viewport| {
             let origin = ui.max_rect().min;
@@ -2759,15 +2866,8 @@ impl EditorApp {
                     );
                 }
                 // Hover and click hit testing against cached object extents.
-                let response = ui.interact(
-                    rect,
-                    Id::new(("pdf-page", index)),
-                    if self.drawing.active {
-                        Sense::click_and_drag()
-                    } else {
-                        Sense::click()
-                    },
-                );
+                let response =
+                    ui.interact(rect, Id::new(("pdf-page", index)), Sense::click_and_drag());
                 if !busy
                     && let Some(objects) = &page.objects
                     && let Some(request) = self.drawing.on_page(
@@ -2809,6 +2909,155 @@ impl EditorApp {
                             .find(|l| l.rect.expand(1.0).contains(at))
                     })
                 });
+                if !self.drawing.active && !self.text_tool.adding && !busy {
+                    let at = (if response.drag_started() {
+                        ctx.input(|i| i.pointer.press_origin())
+                    } else {
+                        response.interact_pointer_pos()
+                    })
+                    .map(|pos| ((pos - rect.min) / scale).to_pos2());
+                    let item_hit = page.objects.as_ref().and_then(|objects| {
+                        at.and_then(|at| {
+                            objects.items.iter().rev().find(|item| {
+                                bounds_rect(&objects.transform, item.bounds)
+                                    .expand(2.0)
+                                    .contains(at)
+                            })
+                        })
+                    });
+                    if doc.object_mode && (response.clicked() || response.secondary_clicked()) {
+                        doc.selected_item = item_hit.cloned();
+                        if doc.edit.as_ref().is_none_or(|e| e.text == e.line.text) {
+                            doc.edit = None;
+                        }
+                    }
+                    let can_drag = doc.edit.is_none();
+                    if response.drag_started() && can_drag {
+                        let items = if doc.object_mode {
+                            item_hit.cloned().into_iter().collect::<Vec<_>>()
+                        } else if let Some(objects) = &page.objects {
+                            objects
+                                .lines
+                                .iter()
+                                .rev()
+                                .find(|line| {
+                                    at.is_some_and(|at| line.rect.expand(1.0).contains(at))
+                                })
+                                .map(|line| {
+                                    objects
+                                        .items
+                                        .iter()
+                                        .filter(|item| {
+                                            line.objects.iter().any(|o| o.index == item.index)
+                                        })
+                                        .cloned()
+                                        .collect()
+                                })
+                                .unwrap_or_default()
+                        } else {
+                            Vec::new()
+                        };
+                        doc.panning = items.is_empty();
+                        if !items.is_empty()
+                            && let Some(objects) = &page.objects
+                        {
+                            let bounds = items.iter().fold(Rect::NOTHING, |bounds, item| {
+                                bounds.union(bounds_rect(&objects.transform, item.bounds))
+                            });
+                            doc.dragging_item = Some(ItemDrag {
+                                page: index,
+                                items,
+                                bounds,
+                                delta: Vec2::ZERO,
+                            });
+                        }
+                    }
+                    if let Some(drag) = &mut doc.dragging_item
+                        && drag.page == index
+                    {
+                        drag.delta += response.drag_delta() / scale;
+                        let preview = to_screen(drag.bounds.translate(drag.delta), rect, scale);
+                        painter.rect_stroke(
+                            preview,
+                            2.0,
+                            Stroke::new(2.0, p.accent),
+                            StrokeKind::Outside,
+                        );
+                        ctx.set_cursor_icon(CursorIcon::Grabbing);
+                        if response.drag_stopped() {
+                            let drag = doc.dragging_item.take().unwrap();
+                            if let Some(objects) = &page.objects
+                                && let Some((dx, dy)) = raster_delta(&objects.transform, drag.delta)
+                                && (dx.abs() > 0.01 || dy.abs() > 0.01)
+                            {
+                                self.busy += 1;
+                                requests.push(Request::EditItems(
+                                    drag.items,
+                                    pdf_editor_core::ObjectAction::Move { dx, dy },
+                                ));
+                            }
+                        }
+                    } else if response.dragged() && can_drag && doc.panning {
+                        ui.scroll_with_delta_animation(
+                            response.drag_delta(),
+                            egui::style::ScrollAnimation::none(),
+                        );
+                        ctx.set_cursor_icon(CursorIcon::Grabbing);
+                    }
+                    if response.drag_stopped() {
+                        doc.panning = false;
+                    }
+                    if doc.object_mode
+                        && let Some(item) = &doc.selected_item
+                        && item.page == page_no
+                        && let Some(objects) = &page.objects
+                    {
+                        painter.rect_stroke(
+                            to_screen(bounds_rect(&objects.transform, item.bounds), rect, scale),
+                            2.0,
+                            Stroke::new(1.5, p.accent),
+                            StrokeKind::Outside,
+                        );
+                    }
+                    if doc.object_mode {
+                        response.context_menu(|ui| {
+                            if let Some(item) = doc
+                                .selected_item
+                                .as_ref()
+                                .filter(|item| item.page == page_no)
+                            {
+                                ui.label(format!("{} object", item.kind));
+                                if ui.button("Copy").clicked() {
+                                    self.busy += 1;
+                                    requests.push(Request::CopyItems(vec![item.clone()]));
+                                    ui.close();
+                                }
+                                for (label, action) in [
+                                    (
+                                        "Duplicate",
+                                        pdf_editor_core::ObjectAction::Duplicate {
+                                            dx: 12.0,
+                                            dy: -12.0,
+                                        },
+                                    ),
+                                    ("Delete", pdf_editor_core::ObjectAction::Delete),
+                                ] {
+                                    if ui.button(label).clicked() {
+                                        self.busy += 1;
+                                        requests
+                                            .push(Request::EditItems(vec![item.clone()], action));
+                                        ui.close();
+                                    }
+                                }
+                            }
+                            if ui.button("Paste on this page").clicked() {
+                                self.busy += 1;
+                                requests.push(Request::PasteItems(page_no));
+                                ui.close();
+                            }
+                        });
+                    }
+                }
                 let editing_this = |line: &Line| {
                     doc.edit.as_ref().is_some_and(|e| {
                         e.page == index && e.line.objects[0].index == line.objects[0].index
@@ -2829,7 +3078,9 @@ impl EditorApp {
                     painter.circle_stroke(at, 5.0, Stroke::new(1.5, p.accent));
                     self.tool_anchor = Some(Rect::from_center_size(at, vec2(10.0, 10.0)));
                 }
-                if let Some(line) = hit.filter(|_| !self.text_tool.adding && !self.drawing.active) {
+                if let Some(line) = hit
+                    .filter(|_| !doc.object_mode && !self.text_tool.adding && !self.drawing.active)
+                {
                     if !editing_this(line) && !busy {
                         let screen = to_screen(line.rect, rect, scale);
                         painter.rect_stroke(
@@ -4286,7 +4537,16 @@ fn line_from(group: Vec<(TextObject, Rect)>) -> Line {
 }
 
 fn raster_rect(transform: &PageTransform, object: &TextObject) -> Rect {
-    let b = object.bounds;
+    bounds_rect(transform, object.bounds)
+}
+
+fn raster_delta(transform: &PageTransform, delta: Vec2) -> Option<(f32, f32)> {
+    let origin = transform.inverse(0.0, 0.0)?;
+    let end = transform.inverse(delta.x, delta.y)?;
+    Some((end.0 - origin.0, end.1 - origin.1))
+}
+
+fn bounds_rect(transform: &PageTransform, b: pdf_editor_core::Bounds) -> Rect {
     let corners = [
         (b.left, b.bottom),
         (b.right, b.bottom),
@@ -4567,6 +4827,252 @@ mod tests {
     }
 
     #[test]
+    fn content_refresh_keeps_previews_and_position_but_rejects_stale_rasters() {
+        let ctx = Context::default();
+        let (mut app, _inbox, _outbox) = mock_app();
+        opened(&mut app, &ctx);
+        let image = || pdf_editor_core::Image {
+            width: 2,
+            height: 2,
+            rgba: vec![255; 16],
+        };
+        app.handle(
+            &ctx,
+            Reply::Rendered {
+                generation: 1,
+                page: 0,
+                scale: 1.0,
+                image: image(),
+            },
+        );
+        app.handle(
+            &ctx,
+            Reply::Thumbnail {
+                generation: 1,
+                page: 0,
+                image: image(),
+            },
+        );
+        let doc = app.doc.as_mut().unwrap();
+        doc.offset = vec2(18.0, 90.0);
+        doc.scroll_to = None;
+        let old = doc.pages[0].texture.as_ref().unwrap().handle.id();
+        app.find.query = "match".into();
+        app.handle(
+            &ctx,
+            Reply::Changed {
+                pages: vec![],
+                generation: 2,
+                kind: ChangeKind::Edit,
+                can_undo: true,
+                can_redo: false,
+                warning: None,
+                objects_changed: 1,
+            },
+        );
+        let doc = app.doc.as_ref().unwrap();
+        assert_eq!(doc.pages[0].texture.as_ref().unwrap().handle.id(), old);
+        assert!(doc.pages[0].thumbnail.is_some());
+        assert_eq!(doc.pages[0].thumbnail_generation, None);
+        assert_eq!(doc.offset, vec2(18.0, 90.0));
+        assert!(doc.pages[0].objects.is_none());
+        app.handle(
+            &ctx,
+            Reply::Rendered {
+                generation: 1,
+                page: 0,
+                scale: 1.0,
+                image: image(),
+            },
+        );
+        assert_eq!(
+            app.doc.as_ref().unwrap().pages[0]
+                .texture
+                .as_ref()
+                .unwrap()
+                .handle
+                .id(),
+            old
+        );
+        app.handle(
+            &ctx,
+            Reply::Found {
+                generation: 2,
+                query: "match".into(),
+                matches: vec![(1, vec![[0.0, 0.0, 10.0, 10.0]])],
+            },
+        );
+        assert!(app.doc.as_ref().unwrap().scroll_to.is_none());
+        app.handle(
+            &ctx,
+            Reply::Rendered {
+                generation: 2,
+                page: 0,
+                scale: 1.0,
+                image: image(),
+            },
+        );
+        assert_eq!(
+            app.doc.as_ref().unwrap().pages[0]
+                .texture
+                .as_ref()
+                .unwrap()
+                .generation,
+            2
+        );
+    }
+
+    #[test]
+    fn drag_delta_respects_rotated_page_coordinates() {
+        assert_eq!(
+            raster_delta(
+                &PageTransform::for_test([0.0, 1.0, -1.0, 0.0, 600.0, 20.0]),
+                vec2(12.0, 8.0)
+            ),
+            Some((8.0, -12.0))
+        );
+        assert_eq!(
+            raster_delta(
+                &PageTransform::for_test([1.0, 0.0, 0.0, -1.0, 0.0, 800.0]),
+                vec2(12.0, 8.0)
+            ),
+            Some((12.0, -8.0))
+        );
+    }
+
+    #[test]
+    fn canvas_drag_dispatches_one_move_and_empty_page_drag_pans() {
+        fn frame(app: &mut EditorApp, ctx: &Context, events: Vec<egui::Event>) {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(600.0, 400.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let p = theme::palette(ui);
+                    egui::CentralPanel::default().show(ui, |ui| app.canvas(ui, &p));
+                },
+            );
+            output.textures_delta.clear();
+        }
+        fn button(pos: Pos2, pressed: bool) -> egui::Event {
+            egui::Event::PointerButton {
+                pos,
+                pressed,
+                button: egui::PointerButton::Primary,
+                modifiers: egui::Modifiers::NONE,
+            }
+        }
+        for object_mode in [false, true] {
+            let ctx = Context::default();
+            theme::install(&ctx);
+            let (mut app, inbox, _outbox) = mock_app();
+            opened(&mut app, &ctx);
+            app.doc.as_mut().unwrap().object_mode = object_mode;
+            let mut text = glyph("drag", 20.0, 40.0).0;
+            text.index = 0;
+            text.bounds = pdf_editor_core::Bounds {
+                left: 20.0,
+                bottom: 20.0,
+                right: 80.0,
+                top: 70.0,
+            };
+            app.handle(
+                &ctx,
+                Reply::Objects {
+                    generation: 1,
+                    page: 0,
+                    transform: PageTransform::for_test([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+                    objects: vec![text],
+                    items: vec![pdf_editor_core::PageItem {
+                        page: 0,
+                        index: 0,
+                        revision: 1,
+                        kind: "Path".into(),
+                        bounds: pdf_editor_core::Bounds {
+                            left: 20.0,
+                            bottom: 20.0,
+                            right: 80.0,
+                            top: 70.0,
+                        },
+                    }],
+                },
+            );
+            for _ in 0..3 {
+                frame(&mut app, &ctx, vec![]);
+            }
+            inbox.try_iter().for_each(drop);
+            let rect = ctx
+                .read_response(Id::new(("pdf-page", 0usize)))
+                .unwrap()
+                .rect;
+            let start = rect.min + vec2(40.0, 40.0) * PT_TO_UI;
+            frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(start), button(start, true)],
+            );
+            let end = start + vec2(90.0, 15.0);
+            frame(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
+            frame(&mut app, &ctx, vec![button(end, false)]);
+            let moves: Vec<_> = inbox
+                .try_iter()
+                .filter_map(|r| match r {
+                    Request::EditItems(items, pdf_editor_core::ObjectAction::Move { dx, dy }) => {
+                        Some((items, dx, dy))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(moves.len(), 1);
+            assert_eq!(moves[0].0[0].index, 0);
+            assert!((moves[0].1 - 90.0 / PT_TO_UI).abs() < 0.01);
+            app.busy = 0;
+            let blank = rect.min + vec2(160.0, 180.0) * PT_TO_UI;
+            frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(blank), button(blank, true)],
+            );
+            let end = blank - vec2(0.0, 70.0);
+            frame(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
+            frame(&mut app, &ctx, vec![button(end, false)]);
+            for _ in 0..4 {
+                frame(&mut app, &ctx, vec![]);
+            }
+            assert!(app.doc.as_ref().unwrap().offset.y > 0.0);
+            assert!(
+                !inbox
+                    .try_iter()
+                    .any(|r| matches!(r, Request::EditItems(..)))
+            );
+            app.doc.as_mut().unwrap().object_mode = true;
+            let item = app.doc.as_ref().unwrap().pages[0]
+                .objects
+                .as_ref()
+                .unwrap()
+                .items[0]
+                .clone();
+            app.doc.as_mut().unwrap().selected_item = Some(item);
+            ctx.memory_mut(|m| m.request_focus(Id::new(("pdf-page", 0usize))));
+            frame(&mut app, &ctx, vec![egui::Event::Copy]);
+            assert!(inbox.try_iter().any(|r| matches!(r, Request::CopyItems(_))));
+            app.handle(&ctx, Reply::ItemsCopied);
+            frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::Paste("ignored system clipboard".into())],
+            );
+            assert!(
+                inbox
+                    .try_iter()
+                    .any(|r| matches!(r, Request::PasteItems(_)))
+            );
+        }
+    }
+
+    #[test]
     fn pending_edits_and_failed_opens_keep_unsaved_guards() {
         let ctx = Context::default();
         let (mut app, _inbox, _outbox) = mock_app();
@@ -4791,6 +5297,7 @@ mod tests {
         let (mut app, inbox, _outbox) = mock_app();
         opened(&mut app, &ctx);
         for (index, page) in app.doc.as_mut().unwrap().pages.iter_mut().enumerate() {
+            page.thumbnail_generation = Some(1);
             page.thumbnail = Some(ctx.load_texture(
                 format!("test-{index}"),
                 egui::ColorImage::filled([80, 120], Color32::WHITE),

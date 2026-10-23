@@ -488,3 +488,22 @@ source usage review and the existing strict lint pass found no removal warranted
 Correct obsolete paragraph limitations and extend manual checks without marking
 interactive behavior as tested. Reuse unchanged Docker corpus evidence rather than
 opening downloaded PDFs on the host or repeating the same corpus run.
+
+## Editing continuity and page-object interactions
+
+Keep old page and thumbnail rasters during content-only text changes, invalidate
+hit-test objects immediately, and replace previews only with matching-generation
+results. Structural page edits still rebuild page views. Automatic Find refreshes
+must not jump to the first match. Native core work stays on the background worker;
+this removes blanking without claiming to eliminate processing latency.
+
+Enable mouse drag scrolling on the canvas. A drag beginning on text moves the
+selected line/paragraph; Objects mode targets one top-level native object. Convert
+screen deltas through the inverse page transform for rotated pages. Preview only
+an outline while dragging, then commit one atomic operation on release.
+
+Use PDFium object transforms/removal/copy with bounded input and candidate
+validation. Preserve grouped Form objects as groups and fail unsupported copies
+without accepting partial changes. Copy/paste keeps one private in-memory PDF
+snapshot per tab, never writes the operating-system clipboard or disk, and remains
+valid after the source is edited/deleted. Annotations keep their dedicated tools.

@@ -29,12 +29,16 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Fixed
 
+- Retain page/thumbnail previews during text-edit refresh and preserve the current
+  scroll position when search results refresh after an edit.
 - Fall back to indexed page loading when metadata sizing fails, preserving loading errors and rejecting invalid geometry.
 
 - Keep the expanded document-tools menu scrollable on smaller windows.
 
 ### Added
 
+- Drag-to-pan, draggable text and an Objects selection mode with move, copy/paste,
+  duplication and deletion of supported top-level PDF artwork; all changes undoable.
 - Add an isolated, on-demand corpus downloader and validator with Defender pre-scan, bounded container execution and aggregate-only reporting.
 
 - Headless merge, split, extract, compress, rotate, image export, Windows OCR, and

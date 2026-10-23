@@ -19,6 +19,8 @@ mod drawing;
 mod export;
 pub use drawing::{Drawing, DrawingKind};
 mod features;
+mod objects;
+pub use objects::{ObjectAction, ObjectClipboard, PageItem};
 pub use export::PageImageFormat;
 pub use features::NewText;
 mod fonts;
