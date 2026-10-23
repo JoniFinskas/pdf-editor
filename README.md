@@ -331,3 +331,5 @@ guarded errors, most often unavailable fallback fonts or unsupported text layout
 No crashes, panics, timeouts or render-diff failures were observed. This is not
 full Part H acceptance: the 3,000-file Govdocs minimum and fuzz testing remain
 incomplete. The native desktop itself is not container-sandboxed.
+
+Headers and footers are available in the page-number/watermark tool. Select Header or Footer, enter page ranges such as `1-3,5` (blank means all), and use `{date}`, `{page}` and `{pages}` tokens. The date defaults to UTC and is editable.

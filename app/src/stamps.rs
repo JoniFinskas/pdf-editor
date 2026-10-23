@@ -5,15 +5,21 @@ use crate::{
     worker::Request,
 };
 use eframe::egui;
-use pdf_editor_core::TextStamp;
+use pdf_editor_core::{RangeStamp, StampPlacement, TextStamp, stamp_date_today};
 pub struct Stamps {
     pub open: bool,
     stamp: TextStamp,
+    pages: String,
+    date: String,
+    placement: StampPlacement,
 }
 impl Default for Stamps {
     fn default() -> Self {
         Self {
             open: false,
+            pages: String::new(),
+            date: stamp_date_today(),
+            placement: StampPlacement::Absolute,
             stamp: TextStamp {
                 template: "{page} / {pages}".into(),
                 font: "Arial".into(),
@@ -29,7 +35,7 @@ impl Default for Stamps {
 impl Stamps {
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, idle: bool) -> Option<Request> {
         let mut request = None;
-        ToolWindow::new("Page numbers and watermark", Icon::Hash)
+        ToolWindow::new("Headers, footers and watermark", Icon::Hash)
             .width(420.0)
             .show(ctx, p, &mut self.open, |ui| {
                 widgets::field(ui, p, "Start from", |ui| {
@@ -62,7 +68,7 @@ impl Stamps {
                 widgets::field(ui, p, "Text", |ui| {
                     ui.add(widgets::text_field(&mut self.stamp.template, width));
                 });
-                widgets::hint(ui, p, "{page} is the page number; {pages} is the total.");
+                widgets::hint(ui, p, "Tokens: {page}, {pages}, {date}. Date is editable and fixed for this operation.");
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
                     let font_width = 2.0 * widgets::column_width(ui) + 10.0;
@@ -84,13 +90,20 @@ impl Stamps {
                         ui.color_edit_button_srgb(&mut self.stamp.color)
                     });
                 });
+                widgets::field(ui,p,"Page ranges (blank = all)",|ui| {ui.text_edit_singleline(&mut self.pages);});
+                widgets::field(ui,p,"Date",|ui| {ui.text_edit_singleline(&mut self.date);});
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.placement,StampPlacement::Header,"Header");
+                    ui.selectable_value(&mut self.placement,StampPlacement::Footer,"Footer");
+                    ui.selectable_value(&mut self.placement,StampPlacement::Absolute,"Watermark");
+                });
                 widgets::slider(
                     ui,
                     p,
                     "Opacity",
                     egui::Slider::new(&mut self.stamp.opacity, 0.0..=1.0),
                 );
-                widgets::caption(ui, p, "Position in PDF points, from the bottom-left corner");
+                widgets::caption(ui, p, "PDF points: left offset and edge margin (watermark uses bottom baseline)");
                 widgets::numbers(
                     ui,
                     p,
@@ -100,13 +113,13 @@ impl Stamps {
                     ],
                 );
                 widgets::actions(ui, |ui| {
-                    if Btn::new("Apply to all pages")
+                    if Btn::new("Apply to selected pages")
                         .look(Look::Primary)
                         .enabled(idle && !self.stamp.template.is_empty())
                         .show(ui, p)
                         .clicked()
                     {
-                        request = Some(Request::Stamp(self.stamp.clone()));
+                        request = Some(Request::Stamp(RangeStamp {stamp:self.stamp.clone(),pages:self.pages.clone(),date:self.date.clone(),placement:self.placement}));
                     }
                 });
             });

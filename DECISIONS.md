@@ -507,3 +507,6 @@ validation. Preserve grouped Form objects as groups and fail unsupported copies
 without accepting partial changes. Copy/paste keeps one private in-memory PDF
 snapshot per tab, never writes the operating-system clipboard or disk, and remains
 valid after the source is edited/deleted. Annotations keep their dedicated tools.
+
+### Ranged stamping
+Headers and footers use the visible page crop and rotation, with an edge margin in PDF points. Date expansion uses one explicit value per operation for reproducibility. Existing absolute watermark placement remains supported. A single candidate is validated before one undo snapshot is accepted.

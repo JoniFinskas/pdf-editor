@@ -3,6 +3,8 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Add ranged headers and footers with editable date and page-number tokens.
+
 
 ### Performance
 

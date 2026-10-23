@@ -2217,3 +2217,63 @@ fn artwork_objects_copy_move_delete_and_paste_snapshot() {
         assert_eq!(doc.bytes, original);
     }
 }
+
+#[test]
+fn ranged_headers_footers_expand_tokens_and_undo() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    let original = doc.bytes.clone();
+    let count = e.pages(&doc).unwrap().len();
+    let mut stamp = RangeStamp {
+        stamp: TextStamp {
+            template: "Report {date} {page}/{pages}".into(),
+            font: "Arial".into(),
+            size: 12.,
+            color: [0, 0, 0],
+            opacity: 1.,
+            x: 30.,
+            y: 20.,
+        },
+        pages: "2".into(),
+        date: "2026-10-23".into(),
+        placement: StampPlacement::Header,
+    };
+    e.stamp_page_range(&mut doc, &stamp).unwrap();
+    assert!(
+        e.text_objects(&doc, 0)
+            .unwrap()
+            .iter()
+            .all(|t| !t.text.contains("Report"))
+    );
+    assert!(
+        e.text_objects(&doc, 1)
+            .unwrap()
+            .iter()
+            .any(|t| t.text == format!("Report 2026-10-23 2/{count}"))
+    );
+    doc.undo();
+    assert_eq!(doc.bytes, original);
+    stamp.pages = "0".into();
+    assert!(e.stamp_page_range(&mut doc, &stamp).is_err());
+    assert_eq!(doc.bytes, original);
+    for rotation in [0, 90, 180, 270] {
+        let path = temp("stamp-rotation.pdf");
+        fs::write(
+            &path,
+            generated("Original", false, rotation, 0., false, false),
+        )
+        .unwrap();
+        let mut doc = e.open(&path).unwrap();
+        stamp.pages = "1".into();
+        stamp.placement = StampPlacement::Footer;
+        e.stamp_page_range(&mut doc, &stamp).unwrap();
+        assert!(
+            e.text_objects(&doc, 0)
+                .unwrap()
+                .iter()
+                .any(|t| t.text.contains("Report 2026-10-23"))
+        );
+        e.render(&doc, 0, 1.).unwrap();
+    }
+}

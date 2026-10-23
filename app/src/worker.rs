@@ -27,7 +27,7 @@ pub enum Request {
     Draw(pdf_editor_core::Drawing),
     Crop(u16, pdf_editor_core::Bounds),
     ExportImages(String, u16, pdf_editor_core::PageImageFormat, PathBuf),
-    Stamp(pdf_editor_core::TextStamp),
+    Stamp(pdf_editor_core::RangeStamp),
     Compress(u32, u8),
     Redact(u16, pdf_editor_core::Bounds),
     Ocr(u16),
@@ -446,7 +446,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 Err(e) => failed(e),
             }
         }
-        Request::Stamp(stamp) => match engine.stamp_pages(state.doc.as_mut()?, &stamp) {
+        Request::Stamp(stamp) => match engine.stamp_page_range(state.doc.as_mut()?, &stamp) {
             Ok(()) => {
                 state.generation += 1;
                 Some(changed(state, ChangeKind::Edit, None, 1))
