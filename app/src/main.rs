@@ -13,6 +13,7 @@ mod redaction;
 mod replace;
 mod shortcuts;
 mod signatures;
+mod stamps;
 mod theme;
 mod widgets;
 mod worker;

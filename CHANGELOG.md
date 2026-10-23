@@ -17,6 +17,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Page-number templates and text watermarks with position, size, color and opacity.
+
 - Image downscaling and recompression with before/after document sizes.
 
 - Secure rectangle redaction through a fresh image-only document rebuild.

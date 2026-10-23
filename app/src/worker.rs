@@ -22,6 +22,7 @@ pub enum Request {
     OpenPassword(PathBuf, String),
     SavePassword(PathBuf, String),
     Print,
+    Stamp(pdf_editor_core::TextStamp),
     Compress(u32, u8),
     Redact(u16, pdf_editor_core::Bounds),
     Ocr(u16),
@@ -402,6 +403,13 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 Err(e) => failed(e),
             }
         }
+        Request::Stamp(stamp) => match engine.stamp_pages(state.doc.as_mut()?, &stamp) {
+            Ok(()) => {
+                state.generation += 1;
+                Some(changed(state, ChangeKind::Edit, None, 1))
+            }
+            Err(e) => failed(e),
+        },
         Request::Print => {
             let doc = state.doc.as_ref()?;
             let result = (|| -> pdf_editor_core::Result<bool> {

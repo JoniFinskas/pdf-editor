@@ -145,3 +145,7 @@ Each `Document` owns its byte snapshots, revision, undo/redo stacks and source i
 ## Image compression
 
 - `Engine::compress_images(document, maximum_edge, jpeg_quality) -> Result<CompressionReport>`: downscale/recompress supported RGB XObjects while preserving text and alpha masks; report byte sizes and changed/skipped counts, retaining the original when no bytes are saved.
+
+## Page numbers and watermarks
+
+- `Engine::stamp_pages(document, TextStamp) -> Result<()>`: add positioned text to every page with font, size, color and opacity; expand `{page}` and `{pages}` placeholders and record one undo step.

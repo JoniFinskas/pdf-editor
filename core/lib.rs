@@ -28,8 +28,10 @@ mod redaction;
 mod replace;
 mod search;
 mod settings;
+mod stamps;
 mod startup;
 pub use search::SearchMatch;
+pub use stamps::TextStamp;
 pub use startup::startup_path;
 #[cfg(test)]
 mod tests;

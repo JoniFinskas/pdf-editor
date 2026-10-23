@@ -362,3 +362,7 @@ The tradeoff is explicit in the UI: the whole document becomes image-only, with 
 ## Part G: Image compression
 
 Compress standard 8-bit DeviceRGB images using bounded JPEG decoding/encoding and proportional downscaling. Preserve transparency through independently resized soft masks; preserve text and page geometry. Unsupported color spaces, predictors, masks or decode transforms are skipped. Retain the current bytes if the complete candidate would be larger. Report input/output byte counts and changed/skipped images, with one undo step for an accepted result.
+
+## Part G: Page numbers and watermarks
+
+Use one shared embedded font and opacity graphics state across all stamped pages. Treat page numbers as text templates with `{page}` and `{pages}` substitutions; a literal template is a watermark. Coordinates are PDF points from the bottom-left, with an explicit baseline. Preserve original page content in a graphics-state scope. The operation is atomic and undoable.

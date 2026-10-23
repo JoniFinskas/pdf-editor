@@ -1688,3 +1688,57 @@ fn compression_reduces_images_and_preserves_text() {
     assert_eq!(doc.bytes, original);
     assert!(e.compress_images(&mut doc, 0, 90).is_err());
 }
+
+#[test]
+fn page_numbers_watermarks_have_opacity_and_single_undo() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    let original = doc.bytes.clone();
+    let count = e.pages(&doc).unwrap().len();
+    e.stamp_pages(
+        &mut doc,
+        &TextStamp {
+            template: "Page {page} of {pages}".into(),
+            font: "Arial".into(),
+            size: 12.0,
+            color: [20, 40, 60],
+            opacity: 0.4,
+            x: 30.0,
+            y: 20.0,
+        },
+    )
+    .unwrap();
+    for page in 0..count {
+        assert!(
+            e.text_objects(&doc, page as u16)
+                .unwrap()
+                .iter()
+                .any(|o| o.text == format!("Page {} of {count}", page + 1))
+        );
+    }
+    let pdf = parse(&doc.bytes).unwrap();
+    assert!(
+        pdf.objects
+            .values()
+            .filter_map(|o| o.as_dict().ok())
+            .any(|d| d.get(b"ca").ok().and_then(|o| o.as_float().ok()) == Some(0.4))
+    );
+    doc.undo();
+    assert_eq!(doc.bytes, original);
+    e.stamp_pages(
+        &mut doc,
+        &TextStamp {
+            template: "DRAFT".into(),
+            font: "Arial".into(),
+            size: 40.0,
+            color: [80, 80, 80],
+            opacity: 0.2,
+            x: 70.0,
+            y: 120.0,
+        },
+    )
+    .unwrap();
+    assert_eq!(e.find_text(&doc, "DRAFT").unwrap().len(), count);
+    e.render(&doc, 0, 1.0).unwrap();
+}

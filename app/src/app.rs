@@ -245,6 +245,7 @@ pub struct EditorApp {
     pictures: crate::pictures::Pictures,
     redaction: crate::redaction::Redaction,
     compression: crate::compression::Compression,
+    stamps: crate::stamps::Stamps,
     find: FindState,
     worker: Worker,
     engine_alive: bool,
@@ -524,6 +525,7 @@ impl EditorApp {
             pictures: Default::default(),
             redaction: Default::default(),
             compression: Default::default(),
+            stamps: Default::default(),
             find: FindState::default(),
             worker,
             engine_alive: true,
@@ -1827,6 +1829,16 @@ impl EditorApp {
             let mut open = None;
             Popup::menu(&recent).show(|ui| {
                 ui.set_min_width(260.0);
+                if Btn::new("Page numbers / watermark…")
+                    .enabled(idle)
+                    .min_width(260.0)
+                    .align_left()
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.stamps.open = true;
+                    ui.close();
+                }
                 if Btn::new("Compress images…")
                     .enabled(idle)
                     .min_width(260.0)
@@ -3208,6 +3220,11 @@ impl eframe::App for EditorApp {
             self.floating_tools(&ctx, central.response.rect, &p);
         }
 
+        if let Some(request) = self.stamps.show(&ctx, &p, self.busy == 0) {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
         if let Some(request) = self.compression.show(&ctx, &p, self.busy == 0) {
             self.commit_edit();
             self.busy += 1;
@@ -3954,6 +3971,7 @@ mod tests {
                 pictures: Default::default(),
                 redaction: Default::default(),
                 compression: Default::default(),
+                stamps: Default::default(),
                 find: FindState::default(),
                 worker,
                 engine_alive: true,
