@@ -6,8 +6,12 @@ use lopdf::{
 };
 use std::sync::Mutex;
 static PDFIUM: Mutex<()> = Mutex::new(());
+/// Repository root; the core manifest lives one level below it.
 fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("core crate is inside the repository")
+        .to_path_buf()
 }
 fn engine() -> Engine {
     Engine::new(&root().join("target/debug/pdfium.dll"))

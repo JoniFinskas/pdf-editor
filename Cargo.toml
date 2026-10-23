@@ -1,14 +1,3 @@
-[package]
-name = "pdf-editor-core"
-version = "0.1.0"
-edition = "2024"
-license = "GPL-3.0-only"
-description = "Headless PDF text editing engine"
-
-[lib]
-path = "core/lib.rs"
-
-[dependencies]
-pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_latest", "thread_safe"] }
-skrifa = "=0.48.0"
-lopdf = { version = "=0.45.0", default-features = false }
+[workspace]
+members = ["core"]
+resolver = "3"
