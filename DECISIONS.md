@@ -366,3 +366,7 @@ Compress standard 8-bit DeviceRGB images using bounded JPEG decoding/encoding an
 ## Part G: Page numbers and watermarks
 
 Use one shared embedded font and opacity graphics state across all stamped pages. Treat page numbers as text templates with `{page}` and `{pages}` substitutions; a literal template is a watermark. Coordinates are PDF points from the bottom-left, with an explicit baseline. Preserve original page content in a graphics-state scope. The operation is atomic and undoable.
+
+## Part G: PNG/JPG page export
+
+Render page content, forms and annotations at the requested DPI with the existing native raster limits. Encode lossless PNG or quality-90 JPEG; JPEG also records the requested density. Pixel dimensions follow the DPI for both formats. Export uses exclusive filenames and leaves document history unchanged. Batch failure removes only files created by that batch.

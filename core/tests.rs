@@ -1742,3 +1742,36 @@ fn page_numbers_watermarks_have_opacity_and_single_undo() {
     assert_eq!(e.find_text(&doc, "DRAFT").unwrap().len(), count);
     e.render(&doc, 0, 1.0).unwrap();
 }
+
+#[test]
+fn page_image_exports_respect_dpi_format_and_existing_files() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    let original = doc.bytes.clone();
+    for (format, name, dpi) in [
+        (PageImageFormat::Png, "export.png", 72),
+        (PageImageFormat::Jpeg, "export.jpg", 144),
+    ] {
+        let path = temp(name);
+        let _ = fs::remove_file(&path);
+        e.export_page_image(&doc, 0, dpi, format, &path).unwrap();
+        let decoded = Picture::open(&path).unwrap();
+        let expected = e.render(&doc, 0, f32::from(dpi) / 72.0).unwrap();
+        assert_eq!(
+            (decoded.width, decoded.height),
+            (expected.width, expected.height)
+        );
+        if format == PageImageFormat::Png {
+            assert_eq!(decoded.rgba, expected.rgba);
+        }
+        assert!(e.export_page_image(&doc, 0, dpi, format, &path).is_err());
+        fs::remove_file(path).unwrap();
+    }
+    assert_eq!(doc.bytes, original);
+    assert!(!doc.can_undo());
+    assert!(
+        e.export_page_image(&doc, 0, 0, PageImageFormat::Png, &temp("invalid-dpi.png"))
+            .is_err()
+    );
+}

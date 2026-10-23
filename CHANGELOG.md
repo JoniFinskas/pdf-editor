@@ -17,6 +17,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Export selected pages as PNG or JPG with a DPI choice.
+
 - Page-number templates and text watermarks with position, size, color and opacity.
 
 - Image downscaling and recompression with before/after document sizes.

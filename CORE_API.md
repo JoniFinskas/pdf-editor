@@ -149,3 +149,8 @@ Each `Document` owns its byte snapshots, revision, undo/redo stacks and source i
 ## Page numbers and watermarks
 
 - `Engine::stamp_pages(document, TextStamp) -> Result<()>`: add positioned text to every page with font, size, color and opacity; expand `{page}` and `{pages}` placeholders and record one undo step.
+
+## Page image export
+
+- `Engine::export_page_image(document, page, dpi, format, destination) -> Result<()>`: render one page at 36–600 DPI to a new PNG/JPG within raster and file-size limits.
+- `Engine::export_page_images(document, pages, dpi, format, folder) -> Result<Vec<PathBuf>>`: export an ordered page selection to new numbered image files, cleaning up outputs if the batch fails.

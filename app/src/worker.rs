@@ -22,6 +22,7 @@ pub enum Request {
     OpenPassword(PathBuf, String),
     SavePassword(PathBuf, String),
     Print,
+    ExportImages(String, u16, pdf_editor_core::PageImageFormat, PathBuf),
     Stamp(pdf_editor_core::TextStamp),
     Compress(u32, u8),
     Redact(u16, pdf_editor_core::Bounds),
@@ -410,6 +411,20 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             }
             Err(e) => failed(e),
         },
+        Request::ExportImages(ranges, dpi, format, folder) => {
+            let doc = state.doc.as_ref()?;
+            match engine
+                .pages(doc)
+                .and_then(|p| pdf_editor_core::page_ranges(&ranges, p.len()))
+                .and_then(|pages| engine.export_page_images(doc, &pages, dpi, format, &folder))
+            {
+                Ok(paths) => Some(Reply::Exported(format!(
+                    "Exported {} page images at {dpi} DPI.",
+                    paths.len()
+                ))),
+                Err(e) => failed(e),
+            }
+        }
         Request::Print => {
             let doc = state.doc.as_ref()?;
             let result = (|| -> pdf_editor_core::Result<bool> {
