@@ -1,3 +1,5 @@
+#[path = "cli_stamps.rs"]
+mod cli_stamps;
 use pdf_editor_core::{Engine, PageEdit, PageImageFormat, page_ranges};
 use std::{
     collections::BTreeMap,
@@ -5,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const HELP: &str = "PDF Editor headless CLI\nCommands:\n  merge INPUT... --output NEW.pdf\n  split INPUT --pages '1-3;4-6' --output EXISTING_FOLDER\n  extract INPUT --pages 1,3-5 --output NEW.pdf\n  compress INPUT --output NEW.pdf [--edge 1600] [--quality 80]\n  rotate INPUT --output NEW.pdf [--pages 1-3] [--degrees 90|180|270]\n  to-image INPUT --output EXISTING_FOLDER [--pages 1-3] [--dpi 144] [--format png|jpg]\n  ocr INPUT --output NEW.pdf [--pages 1-3]\n  find-replace INPUT_OR_FOLDER --find TEXT [--replace TEXT --output PATH] [--dry-run]\nFolders are nonrecursive. Outputs must be new; sources are never overwritten.\nExit: 0 success, 1 processing failure, 2 usage error. OCR requires Windows.\nUse -- before positional paths beginning with a dash.\n";
+pub const HELP: &str = "PDF Editor headless CLI\nCommands:\n  merge INPUT... --output NEW.pdf\n  split INPUT --pages '1-3;4-6' --output EXISTING_FOLDER\n  extract INPUT --pages 1,3-5 --output NEW.pdf\n  compress INPUT --output NEW.pdf [--edge 1600] [--quality 80]\n  rotate INPUT --output NEW.pdf [--pages 1-3] [--degrees 90|180|270]\n  to-image INPUT --output EXISTING_FOLDER [--pages 1-3] [--dpi 144] [--format png|jpg]\n  ocr INPUT --output NEW.pdf [--pages 1-3]\n  find-replace INPUT_OR_FOLDER --find TEXT [--replace TEXT --output PATH] [--dry-run]\n  stamp INPUT_OR_FOLDER --output PATH [--text TEXT] [--pages 1-3] [--position header|footer|absolute] [--date YYYY-MM-DD] [--dry-run]\n  bates INPUT_OR_FOLDER --output PATH [--prefix TEXT] [--start 1] [--digits 6] [--pages 1-3] [--dry-run]\nStamp options: --font Arial --size 12 --color 000000 --opacity 1 --left 30 --margin 24. Tokens: {date}, {page}, {pages}.\nBates folders continue numbering in sorted filename order. --dry-run writes nothing and needs no output.\nFolders are nonrecursive. Outputs must be new; sources are never overwritten.\nExit: 0 success, 1 processing failure, 2 usage error. OCR requires Windows.\nUse -- before positional paths beginning with a dash.\n";
 const COMMANDS: &[&str] = &[
     "merge",
     "split",
@@ -15,6 +17,8 @@ const COMMANDS: &[&str] = &[
     "to-image",
     "ocr",
     "find-replace",
+    "stamp",
+    "bates",
 ];
 #[derive(Debug)]
 struct Command {
@@ -60,6 +64,35 @@ fn parse(args: Vec<OsString>) -> Result<Command, String> {
         "rotate" => &["--output", "--pages", "--degrees"],
         "to-image" => &["--output", "--pages", "--dpi", "--format"],
         "ocr" => &["--output", "--pages"],
+        "stamp" => &[
+            "--output",
+            "--pages",
+            "--text",
+            "--position",
+            "--date",
+            "--font",
+            "--size",
+            "--color",
+            "--opacity",
+            "--left",
+            "--margin",
+            "--dry-run",
+        ],
+        "bates" => &[
+            "--output",
+            "--pages",
+            "--prefix",
+            "--start",
+            "--digits",
+            "--position",
+            "--font",
+            "--size",
+            "--color",
+            "--opacity",
+            "--left",
+            "--margin",
+            "--dry-run",
+        ],
         _ => &["--output", "--find", "--replace", "--dry-run"],
     };
     let mut c = Command {
@@ -128,6 +161,9 @@ fn parse(args: Vec<OsString>) -> Result<Command, String> {
             || !(10..=95).contains(&c.number::<u8>("--quality", "80")?))
     {
         return Err("Use edge 128–8192 and quality 10–95".into());
+    }
+    if matches!(c.name.as_str(), "stamp" | "bates") {
+        cli_stamps::options(&c)?;
     }
     Ok(c)
 }
@@ -225,6 +261,9 @@ fn pdf_files(folder: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 fn execute(engine: &Engine, c: Command) -> Result<(), String> {
+    if matches!(c.name.as_str(), "stamp" | "bates") {
+        return cli_stamps::execute(engine, &c);
+    }
     let err = |e: pdf_editor_core::Error| e.to_string();
     if c.name == "find-replace" {
         let folder = c.inputs[0].is_dir();

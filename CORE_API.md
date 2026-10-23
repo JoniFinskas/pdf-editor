@@ -298,3 +298,6 @@ Redaction rebuilds a clean page graph, dropping document-wide annotations, forms
 - `replace_spelling(text, issue, replacement)` checks the current word and Unicode boundaries before replacement; stale results fail without changing text.
 
 `BatesNumber { prefix, start, digits }` formats fixed-width decimal labels. `label(offset)` rejects invalid prefixes, widths outside 1–20, overflow or a number wider than the chosen width. `Engine::stamp_bates(doc, range_stamp, bates)` numbers selected pages in document order, preserving leading zeroes in one atomic undo step; the text template is ignored.
+
+### Batch stamping CLI
+`stamp` and `bates` accept a PDF or a nonrecursive folder of PDFs. They use the same core range-stamping methods. Folder outputs retain the source basename in an existing output folder and never overwrite. Bates sequences continue across successful files in sorted filename order. A date is captured once per batch. Dry-run performs the same in-memory validation, returns counts and writes nothing. Per-file failures continue, retain successful outputs and produce exit code 1; usage errors return 2.
