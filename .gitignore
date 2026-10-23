@@ -22,6 +22,9 @@ CLAUDE.local.md
 Thumbs.db
 desktop.ini
 
+# Local design references (not redistributed)
+/design/refs/
+
 # Local contributor configuration
 /AGENTS.md
 /CLAUDE.md

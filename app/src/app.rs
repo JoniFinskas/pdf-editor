@@ -1,13 +1,16 @@
 //! Editor window: toolbar, page canvas, in-place edit box, banners, modals
 //! and the settings page.
 
+use crate::icons::Icon;
 use crate::recovery::{self, AutoSave, Orphan, Session};
 use crate::theme::{self, Palette};
+use crate::widgets::{self, Btn, Look};
 use crate::worker::{ChangeKind, PageTransform, Reply, Request, Worker};
 use eframe::egui::{
     self, Align, Align2, Button, Color32, Context, CornerRadius, CursorIcon, FontId, Frame, Id,
-    Key, Layout, Margin, Pos2, Rect, RichText, ScrollArea, Sense, Shadow, Stroke, StrokeKind,
-    TextEdit, TextureHandle, TextureOptions, Ui, Vec2, ViewportCommand, pos2, vec2,
+    Key, Layout, Margin, Popup, Pos2, Rect, RectAlign, RichText, ScrollArea, Sense, Shadow, Shape,
+    Stroke, StrokeKind, TextEdit, TextureHandle, TextureOptions, Ui, Vec2, ViewportCommand,
+    WidgetInfo, WidgetType, pos2, vec2,
 };
 use pdf_editor_core::{PageInfo, Substitution, TextObject};
 use std::path::PathBuf;
@@ -30,6 +33,21 @@ const MAX_TEXTURE_SIDE: f32 = 8192.0;
 const MAX_RENDER_PIXELS: f32 = 15_500_000.0;
 /// Pages farther than this from the viewport release their textures.
 const KEEP_PAGES: usize = 2;
+/// Largest thumbnail in the pages sidebar, and the height of one row.
+const THUMB_BOX: Vec2 = vec2(112.0, 140.0);
+const THUMB_ROW: f32 = 186.0;
+/// Shortcut list on the settings page: action, keys and a note.
+const SHORTCUTS: [(&str, &[&str], &str); 9] = [
+    ("Open a PDF", &["Ctrl", "O"], ""),
+    ("Save As", &["Ctrl", "S"], "Ctrl + Shift + S also works."),
+    ("Undo", &["Ctrl", "Z"], ""),
+    ("Redo", &["Ctrl", "Y"], "Ctrl + Shift + Z also works."),
+    ("Find text", &["Ctrl", "F"], ""),
+    ("Zoom in", &["Ctrl", "+"], ""),
+    ("Zoom out", &["Ctrl", "\u{2212}"], ""),
+    ("Actual size", &["Ctrl", "0"], "Resets the zoom to 100%."),
+    ("Zoom at the pointer", &["Ctrl", "Wheel"], ""),
+];
 
 pub struct EditorApp {
     recent_files: Vec<PathBuf>,
@@ -48,6 +66,14 @@ pub struct EditorApp {
     next_banner: u64,
     /// Shows the settings page instead of the document.
     settings_open: bool,
+    settings_tab: SettingsTab,
+    /// Pages sidebar shown next to the document.
+    pages_open: bool,
+    /// Home page shows only the recent files list.
+    home_recent: bool,
+    /// Screen rect the floating text toolbar points at: the selected text
+    /// object or the new text position.
+    tool_anchor: Option<Rect>,
     confirm: Option<Pending>,
     allow_close: bool,
     title: String,
@@ -85,6 +111,46 @@ impl Default for TextTool {
             size: 16.0,
             color: [0, 0, 0],
             at: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum SettingsTab {
+    #[default]
+    General,
+    Editing,
+    Shortcuts,
+    About,
+}
+
+impl SettingsTab {
+    const ALL: [Self; 4] = [Self::General, Self::Editing, Self::Shortcuts, Self::About];
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Editing => "Editing",
+            Self::Shortcuts => "Shortcuts",
+            Self::About => "About",
+        }
+    }
+
+    fn summary(self) -> &'static str {
+        match self {
+            Self::General => "Auto-save and unsaved changes.",
+            Self::Editing => "How text edits handle fonts and characters.",
+            Self::Shortcuts => "Keyboard shortcuts for common actions.",
+            Self::About => "Version, privacy and licenses.",
+        }
+    }
+
+    fn icon(self) -> Icon {
+        match self {
+            Self::General => Icon::Gear,
+            Self::Editing => Icon::Edit,
+            Self::Shortcuts => Icon::Keyboard,
+            Self::About => Icon::Info,
         }
     }
 }
@@ -269,6 +335,10 @@ impl EditorApp {
             next_banner: banners.len() as u64,
             banners,
             settings_open: false,
+            settings_tab: SettingsTab::default(),
+            pages_open: true,
+            home_recent: false,
+            tool_anchor: None,
             confirm: None,
             allow_close: false,
             title: String::new(),
@@ -877,95 +947,171 @@ impl EditorApp {
         }
     }
 
-    fn thumbnails(&mut self, ui: &mut Ui) {
-        ui.heading("Pages");
+    fn thumbnails(&mut self, ui: &mut Ui, p: &Palette) {
+        let Some(doc) = &self.doc else { return };
+        let idle = self.busy == 0;
+        let count = doc.pages.len();
+        let current = u16::try_from(doc.current_page).unwrap_or(0);
         let mut action = None;
-        if let Some(doc) = &self.doc {
-            let page = doc.current_page as u16;
-            ui.add_enabled_ui(self.busy == 0, |ui| {
+        Frame::new()
+            .inner_margin(Margin {
+                left: 16,
+                right: 8,
+                top: 8,
+                bottom: 8,
+            })
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("Rotate").clicked() {
-                        action = Some(pdf_editor_core::PageEdit::Rotate { page });
-                    }
-                    if ui
-                        .add_enabled(doc.pages.len() > 1, Button::new("Delete"))
-                        .clicked()
-                    {
-                        action = Some(pdf_editor_core::PageEdit::Delete { page });
-                    }
+                    ui.label(RichText::new("Pages").font(theme::semibold(15.0)));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        let more = Btn::icon(Icon::Dots)
+                            .id("page-menu")
+                            .height(30.0)
+                            .tip("Page actions")
+                            .show(ui, p);
+                        Popup::menu(&more).show(|ui| {
+                            if let Some(edit) = page_menu(ui, p, current, count, idle) {
+                                action = Some(edit);
+                            }
+                        });
+                        if Btn::icon(Icon::Plus)
+                            .id("insert-pages")
+                            .height(30.0)
+                            .enabled(idle)
+                            .tip("Insert pages from a PDF before the current page")
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            action = pick_insert(current);
+                        }
+                        if Btn::icon(Icon::ChevronLeft)
+                            .id("hide-pages")
+                            .height(30.0)
+                            .tip("Hide pages")
+                            .show(ui, p)
+                            .clicked()
+                        {
+                            self.pages_open = false;
+                        }
+                    });
                 });
-                if ui
-                    .button("Insert PDF…")
-                    .on_hover_text("Insert all pages before the current page")
-                    .clicked()
-                    && let Some(path) = rfd::FileDialog::new()
-                        .add_filter("PDF", &["pdf"])
-                        .pick_file()
-                {
-                    action = Some(pdf_editor_core::PageEdit::Insert { path, before: page });
-                }
             });
-        }
+        widgets::rule(ui, p);
+
         let Some(doc) = &mut self.doc else { return };
         let mut requests = Vec::new();
         let mut jump = None;
-        ScrollArea::vertical().show_rows(ui, 180.0, doc.pages.len(), |ui, range| {
-            for index in range.clone() {
-                let page = &mut doc.pages[index];
-                ui.vertical_centered(|ui| {
-                    ui.set_min_height(180.0);
-                    let response = if let Some(texture) = &page.thumbnail {
-                        ui.add(
-                            egui::Image::new((texture.id(), texture.size_vec2()))
-                                .sense(Sense::click_and_drag()),
-                        )
-                    } else {
-                        if !page.pending_thumbnail && page.error.is_none() {
+        ScrollArea::vertical().auto_shrink(false).show_rows(
+            ui,
+            THUMB_ROW,
+            doc.pages.len(),
+            |ui, range| {
+                for index in range.clone() {
+                    let selected = doc.current_page == index;
+                    let page = &mut doc.pages[index];
+                    ui.vertical_centered(|ui| {
+                        ui.set_height(THUMB_ROW);
+                        ui.add_space(14.0);
+                        let natural = page.thumbnail.as_ref().map_or(
+                            vec2(page.info.width, page.info.height),
+                            TextureHandle::size_vec2,
+                        );
+                        let fit = (THUMB_BOX.x / natural.x.max(1.0))
+                            .min(THUMB_BOX.y / natural.y.max(1.0));
+                        let size = (natural * fit).round().max(vec2(8.0, 8.0));
+                        let backdrop = ui.painter().add(Shape::Noop);
+                        let (rect, response) =
+                            ui.allocate_exact_size(size, Sense::click_and_drag());
+                        response.widget_info(|| {
+                            WidgetInfo::selected(
+                                WidgetType::Button,
+                                true,
+                                selected,
+                                format!("Page {}", index + 1),
+                            )
+                        });
+                        ui.add_space(2.0);
+                        let number = ui.label(
+                            RichText::new((index + 1).to_string())
+                                .size(12.5)
+                                .color(if selected { p.text } else { p.muted }),
+                        );
+                        if selected || response.has_focus() {
+                            let frame = rect.union(number.rect).expand2(vec2(8.0, 6.0));
+                            ui.painter().set(
+                                backdrop,
+                                egui::epaint::RectShape::new(
+                                    frame,
+                                    CornerRadius::same(theme::RADIUS),
+                                    if selected {
+                                        p.accent_soft
+                                    } else {
+                                        Color32::TRANSPARENT
+                                    },
+                                    Stroke::new(2.0, p.accent),
+                                    StrokeKind::Inside,
+                                ),
+                            );
+                        } else if response.hovered() {
+                            let frame = rect.union(number.rect).expand2(vec2(8.0, 6.0));
+                            ui.painter().set(
+                                backdrop,
+                                egui::epaint::RectShape::filled(
+                                    frame,
+                                    CornerRadius::same(theme::RADIUS),
+                                    p.hover,
+                                ),
+                            );
+                        }
+                        paint_thumbnail(ui, rect, page, p);
+                        if page.thumbnail.is_none()
+                            && !page.pending_thumbnail
+                            && page.error.is_none()
+                        {
                             page.pending_thumbnail = true;
                             requests.push(Request::Thumbnail(index as u16));
                         }
-                        ui.add_sized(
-                            vec2(120.0, 150.0),
-                            Button::new(if page.error.is_some() {
-                                "Unavailable"
-                            } else {
-                                "Loading…"
-                            }),
-                        )
-                    };
-                    if response.clicked() {
-                        jump = Some(index);
-                    }
-                    if self.busy == 0 && response.drag_started() {
-                        self.dragging_page = Some(index);
-                    }
-                    if let Some(from) = self.dragging_page
-                        && response.contains_pointer()
-                    {
-                        ui.painter().rect_stroke(
-                            response.rect,
-                            0.0,
-                            Stroke::new(2.0, ui.visuals().selection.stroke.color),
-                            StrokeKind::Outside,
-                        );
-                        if ui.input(|i| i.pointer.any_released()) && from != index {
-                            action = Some(pdf_editor_core::PageEdit::Move {
-                                from: from as u16,
-                                to: index as u16,
-                            });
+                        if response.clicked() {
+                            jump = Some(index);
                         }
-                    }
-                    ui.selectable_label(doc.current_page == index, format!("Page {}", index + 1))
-                        .clicked()
-                        .then(|| jump = Some(index));
-                });
-            }
-            for (i, page) in doc.pages.iter_mut().enumerate() {
-                if i + 2 < range.start || i > range.end + 2 {
-                    page.thumbnail = None;
+                        Popup::context_menu(&response).show(|ui| {
+                            if let Ok(page) = u16::try_from(index)
+                                && let Some(edit) = page_menu(ui, p, page, count, idle)
+                            {
+                                action = Some(edit);
+                            }
+                        });
+                        if idle && response.drag_started() {
+                            self.dragging_page = Some(index);
+                        }
+                        if let Some(from) = self.dragging_page
+                            && response.contains_pointer()
+                        {
+                            if from != index {
+                                ui.painter().rect_stroke(
+                                    rect.expand(4.0),
+                                    CornerRadius::same(4),
+                                    Stroke::new(2.0, p.accent),
+                                    StrokeKind::Outside,
+                                );
+                            }
+                            if ui.input(|i| i.pointer.any_released()) && from != index {
+                                action = Some(pdf_editor_core::PageEdit::Move {
+                                    from: from as u16,
+                                    to: index as u16,
+                                });
+                            }
+                        }
+                    });
                 }
-            }
-        });
+                for (i, page) in doc.pages.iter_mut().enumerate() {
+                    if i + 2 < range.start || i > range.end + 2 {
+                        page.thumbnail = None;
+                    }
+                }
+            },
+        );
         if let Some(index) = jump {
             let y = CANVAS_PAD
                 + doc
@@ -989,42 +1135,68 @@ impl EditorApp {
         }
     }
 
-    fn object_tools(&mut self, ui: &mut Ui) {
+    /// Floating toolbar for the selected text object: run, size, color,
+    /// apply, delete and deselect.
+    fn object_tools(&mut self, ui: &mut Ui, p: &Palette) {
         let ready = self.busy == 0
             && !self
                 .doc
                 .as_ref()
                 .and_then(|d| d.edit.as_ref())
                 .is_some_and(|e| e.text != e.line.text);
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Text object");
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
             let previous = self.text_tool.selected;
-            egui::ComboBox::from_id_salt("selected-run")
-                .selected_text(format!("Run {}", self.text_tool.selected + 1))
-                .show_ui(ui, |ui| {
-                    for (index, object) in self.text_tool.selection.iter().enumerate() {
-                        ui.selectable_value(
-                            &mut self.text_tool.selected,
-                            index,
-                            format!("{}: {}", index + 1, object.text),
-                        );
-                    }
-                });
+            let runs = self.text_tool.selection.len();
+            if runs > 1 {
+                egui::ComboBox::from_id_salt("selected-run")
+                    .selected_text(format!("Run {} of {runs}", self.text_tool.selected + 1))
+                    .show_ui(ui, |ui| {
+                        for (index, object) in self.text_tool.selection.iter().enumerate() {
+                            ui.selectable_value(
+                                &mut self.text_tool.selected,
+                                index,
+                                format!("{}: {}", index + 1, object.text),
+                            );
+                        }
+                    });
+            }
             if previous != self.text_tool.selected
                 && let Some(o) = self.text_tool.selection.get(self.text_tool.selected)
             {
                 self.text_tool.size = o.size;
                 self.text_tool.color = [o.color[0], o.color[1], o.color[2]];
             }
+            if let Some(o) = self.text_tool.selection.get(self.text_tool.selected) {
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(RichText::new(shorten(&o.font, 24)).color(p.muted))
+                        .selectable(false),
+                )
+                .on_hover_text(format!("Font: {}", o.font));
+            }
+            widgets::divider(ui, p, 22.0);
             ui.add(
                 egui::DragValue::new(&mut self.text_tool.size)
                     .range(1.0..=1000.0)
                     .suffix(" pt"),
-            );
-            ui.color_edit_button_srgb(&mut self.text_tool.color);
-            if ui
-                .add_enabled(ready, Button::new("Apply style"))
-                .on_disabled_hover_text("Finish the text edit before changing its style")
+            )
+            .on_hover_text("Font size");
+            ui.color_edit_button_srgb(&mut self.text_tool.color)
+                .on_hover_text("Text color");
+            widgets::divider(ui, p, 22.0);
+            let finish = "Finish the text edit first";
+            if Btn::new("Apply style")
+                .id("apply-style")
+                .look(Look::OutlineAccent)
+                .height(30.0)
+                .enabled(ready)
+                .tip(if ready {
+                    "Apply the size and color"
+                } else {
+                    finish
+                })
+                .show(ui, p)
                 .clicked()
                 && let Some(object) = self
                     .text_tool
@@ -1040,9 +1212,12 @@ impl EditorApp {
                     color: self.text_tool.color,
                 });
             }
-            if ui
-                .add_enabled(ready, Button::new("Delete object"))
-                .on_disabled_hover_text("Finish the text edit before deleting the object")
+            if Btn::icon(Icon::Trash)
+                .id("delete-object")
+                .height(30.0)
+                .enabled(ready)
+                .tip(if ready { "Delete text object" } else { finish })
+                .show(ui, p)
                 .clicked()
                 && let Some(object) = self
                     .text_tool
@@ -1054,35 +1229,58 @@ impl EditorApp {
                 self.busy += 1;
                 self.send(Request::DeleteText(object));
             }
-            if ui.button("Deselect").clicked() {
+            if Btn::icon(Icon::Close)
+                .id("deselect")
+                .height(30.0)
+                .tip("Deselect")
+                .show(ui, p)
+                .clicked()
+            {
                 self.commit_edit();
                 self.text_tool.selection.clear();
             }
         });
     }
 
-    fn text_tools(&mut self, ui: &mut Ui) {
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Click a page to choose the text baseline.");
-            ui.text_edit_singleline(&mut self.text_tool.text);
+    /// Floating toolbar for placing new text.
+    fn text_tools(&mut self, ui: &mut Ui, p: &Palette) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            if self.text_tool.at.is_none() {
+                ui.label(RichText::new("Click the page where the text starts").color(p.muted));
+                widgets::divider(ui, p, 22.0);
+            }
+            ui.add(
+                TextEdit::singleline(&mut self.text_tool.text)
+                    .desired_width(160.0)
+                    .hint_text("Text"),
+            );
             egui::ComboBox::from_id_salt("system-font")
-                .selected_text(&self.text_tool.font)
+                .width(150.0)
+                .selected_text(shorten(&self.text_tool.font, 20))
                 .show_ui(ui, |ui| {
                     for name in &self.text_tool.fonts {
                         ui.selectable_value(&mut self.text_tool.font, name.clone(), name);
                     }
-                });
+                })
+                .response
+                .on_hover_text("Font");
             ui.add(
                 egui::DragValue::new(&mut self.text_tool.size)
                     .range(1.0..=1000.0)
                     .suffix(" pt"),
-            );
-            ui.color_edit_button_srgb(&mut self.text_tool.color);
-            if ui
-                .add_enabled(
-                    self.busy == 0 && self.text_tool.at.is_some(),
-                    Button::new("Place text"),
-                )
+            )
+            .on_hover_text("Font size");
+            ui.color_edit_button_srgb(&mut self.text_tool.color)
+                .on_hover_text("Text color");
+            widgets::divider(ui, p, 22.0);
+            if Btn::new("Place text")
+                .id("place-text")
+                .look(Look::Primary)
+                .height(30.0)
+                .enabled(self.busy == 0 && self.text_tool.at.is_some())
+                .tip("Add the text at the chosen point")
+                .show(ui, p)
                 .clicked()
                 && let Some((page, at)) = self.text_tool.at
             {
@@ -1101,8 +1299,44 @@ impl EditorApp {
                 });
                 self.text_tool.adding = false;
             }
-            if ui.button("Cancel").clicked() {
+            if Btn::icon(Icon::Close)
+                .id("cancel-text")
+                .height(30.0)
+                .tip("Cancel")
+                .show(ui, p)
+                .clicked()
+            {
                 self.text_tool.adding = false;
+            }
+        });
+    }
+
+    /// Find bar and text toolbars floating over the page canvas.
+    fn floating_tools(&mut self, ctx: &Context, canvas: Rect, p: &Palette) {
+        let mut top = canvas.top() + 12.0;
+        if self.find.open {
+            let at = pos2(canvas.right() - 16.0, top);
+            floating(ctx, "find-bar", canvas, Align2::RIGHT_TOP, at, p, |ui| {
+                self.find_bar(ui, p);
+            });
+            top += 60.0;
+        }
+        let adding = self.text_tool.adding;
+        if !adding && self.text_tool.selection.is_empty() {
+            return;
+        }
+        let (pivot, at) = match self.tool_anchor.filter(|r| canvas.intersects(*r)) {
+            Some(r) if r.top() - 64.0 > top => {
+                (Align2::CENTER_BOTTOM, pos2(r.center().x, r.top() - 10.0))
+            }
+            Some(r) => (Align2::CENTER_TOP, pos2(r.center().x, r.bottom() + 10.0)),
+            None => (Align2::CENTER_TOP, pos2(canvas.center().x, top)),
+        };
+        floating(ctx, "text-tools", canvas, pivot, at, p, |ui| {
+            if adding {
+                self.text_tools(ui, p);
+            } else {
+                self.object_tools(ui, p);
             }
         });
     }
@@ -1122,32 +1356,95 @@ impl EditorApp {
             doc.scroll_to = Some(vec2(doc.offset.x, (y - 80.0).max(0.0)));
         }
     }
-    fn find_bar(&mut self, ui: &mut Ui) {
+    fn find_bar(&mut self, ui: &mut Ui, p: &Palette) {
         ui.horizontal(|ui| {
-            ui.label("Find");
-            let field = ui.text_edit_singleline(&mut self.find.query);
-            if self.find.focus {
-                field.request_focus();
-                self.find.focus = false;
-            }
-            if field.changed() {
-                self.find.matches.clear();
-                self.send(Request::Find(self.find.query.clone()));
-            }
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.add_space(4.0);
+            widgets::icon(ui, Icon::Search, 18.0, p.muted);
+            let field_id = Id::new("find-field");
+            let focused = ui.memory(|m| m.has_focus(field_id));
+            Frame::new()
+                .fill(p.field)
+                .stroke(Stroke::new(
+                    1.0,
+                    if focused { p.accent } else { p.border_strong },
+                ))
+                .corner_radius(CornerRadius::same(theme::RADIUS))
+                .inner_margin(Margin {
+                    left: 10,
+                    right: 3,
+                    top: 3,
+                    bottom: 3,
+                })
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        let field = ui.add(
+                            TextEdit::singleline(&mut self.find.query)
+                                .id(field_id)
+                                .frame(Frame::NONE)
+                                .hint_text("Find in document")
+                                .desired_width(170.0),
+                        );
+                        if self.find.focus {
+                            field.request_focus();
+                            self.find.focus = false;
+                        }
+                        if field.changed() {
+                            self.find.matches.clear();
+                            self.send(Request::Find(self.find.query.clone()));
+                        }
+                        let clear = Btn::icon(Icon::Close)
+                            .id("find-clear")
+                            .height(24.0)
+                            .enabled(!self.find.query.is_empty())
+                            .tip("Clear")
+                            .show(ui, p);
+                        if clear.clicked() {
+                            self.find.query.clear();
+                            self.find.matches.clear();
+                            self.find.focus = true;
+                        }
+                    });
+                });
             let count = self.find.matches.len();
-            ui.label(format!(
-                "{} / {count}",
-                if count == 0 { 0 } else { self.find.active + 1 }
-            ));
-            if ui.add_enabled(count > 0, Button::new("Previous")).clicked() {
+            let position = if count == 0 { 0 } else { self.find.active + 1 };
+            ui.add_sized(
+                vec2(58.0, 30.0),
+                egui::Label::new(RichText::new(format!("{position} of {count}")).color(p.muted)),
+            );
+            if Btn::icon(Icon::ArrowUp)
+                .id("find-previous")
+                .look(Look::Outline)
+                .height(32.0)
+                .enabled(count > 0)
+                .tip("Previous match")
+                .show(ui, p)
+                .clicked()
+            {
                 self.find.active = (self.find.active + count - 1) % count;
                 self.go_match();
             }
-            if ui.add_enabled(count > 0, Button::new("Next")).clicked() {
+            if Btn::icon(Icon::ArrowDown)
+                .id("find-next")
+                .look(Look::OutlineAccent)
+                .height(32.0)
+                .enabled(count > 0)
+                .tip("Next match")
+                .show(ui, p)
+                .clicked()
+            {
                 self.find.active = (self.find.active + 1) % count;
                 self.go_match();
             }
-            if ui.button("Close").clicked() {
+            widgets::divider(ui, p, 24.0);
+            if Btn::icon(Icon::Close)
+                .id("find-close")
+                .height(32.0)
+                .tip("Close find")
+                .show(ui, p)
+                .clicked()
+            {
                 self.find.open = false;
             }
         });
@@ -1220,214 +1517,492 @@ impl EditorApp {
 
     // ----- Layout -----
 
+    /// Top bar: the document toolbar, or the app bar on the home and
+    /// settings pages.
     fn toolbar(&mut self, ui: &mut Ui, p: &Palette) {
-        let has_doc = self.doc.is_some();
+        if self.settings_open {
+            self.settings_bar(ui, p);
+        } else if self.doc.is_some() {
+            self.document_bar(ui, p);
+        } else {
+            self.home_bar(ui, p);
+        }
+    }
+
+    fn document_bar(&mut self, ui: &mut Ui, p: &Palette) {
         let idle = self.busy == 0 && self.engine_alive;
         let ready = self.setup_error.is_none() && self.engine_alive;
-        ui.horizontal_wrapped(|ui| {
+        // Narrow windows show icons only; every button keeps its tooltip.
+        let compact = ui.available_width() < 1120.0;
+        let text = |label: &'static str| if compact { "" } else { label };
+        ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            if tool_button(ui, "Open", ready && idle, "Open a PDF (Ctrl+O)").clicked() {
+            widgets::icon(ui, Icon::File, 24.0, p.accent_strong);
+            ui.add_space(6.0);
+            if let Some(doc) = &self.doc {
+                let name = RichText::new(&doc.name)
+                    .font(theme::semibold(15.0))
+                    .color(p.text);
+                let width = if compact { 120.0 } else { 240.0 };
+                ui.allocate_ui(vec2(width, 30.0), |ui| {
+                    ui.add(egui::Label::new(name).truncate())
+                        .on_hover_text(shown_path(&doc.source));
+                });
+                if doc.dirty() {
+                    ui.add_space(6.0);
+                    widgets::dot(ui, p.accent_strong);
+                    ui.label(RichText::new("Edited").size(13.5).color(p.muted));
+                }
+            }
+            widgets::divider(ui, p, 26.0);
+            if Btn::new(text("Open"))
+                .with_icon(Icon::Folder)
+                .id("open")
+                .enabled(ready && idle)
+                .tip("Open a PDF (Ctrl+O)")
+                .show(ui, p)
+                .clicked()
+            {
                 self.request_open(None);
             }
-            let mut recent = None;
-            ui.menu_button("Recent", |ui| {
+            let recent = Btn::icon(Icon::ChevronDown)
+                .id("recent")
+                .min_width(24.0)
+                .height(34.0)
+                .tip("Recent files")
+                .show(ui, p);
+            let mut open = None;
+            Popup::menu(&recent).show(|ui| {
+                ui.set_min_width(260.0);
                 if self.recent_files.is_empty() {
-                    ui.label("No recent files");
+                    ui.label(RichText::new("No recent files").color(p.muted));
                 }
                 for path in &self.recent_files {
-                    if ui
-                        .add_enabled(
-                            idle,
-                            Button::new(path.file_name().unwrap_or_default().to_string_lossy()),
-                        )
-                        .on_hover_text(path.display().to_string())
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    let tip = shown_path(path);
+                    if Btn::new(&name)
+                        .with_icon(Icon::File)
+                        .align_left()
+                        .min_width(260.0)
+                        .height(32.0)
+                        .enabled(idle)
+                        .tip(&tip)
+                        .show(ui, p)
                         .clicked()
                     {
-                        recent = Some(path.clone());
+                        open = Some(path.clone());
                         ui.close();
                     }
                 }
             });
-            if let Some(path) = recent {
+            if let Some(path) = open {
                 self.request_open(Some(path));
             }
-            let dirty = self.doc.as_ref().is_some_and(DocView::dirty);
-            let save = if dirty {
-                ui.add_enabled(
-                    has_doc && idle,
-                    Button::new(RichText::new("Save As").color(p.accent_text)).fill(p.accent),
-                )
-            } else {
-                ui.add_enabled(has_doc && idle, Button::new("Save As"))
-            };
-            if save
-                .on_hover_text("Save a copy; the original is never changed (Ctrl+S)")
+            if Btn::new(text("Save As"))
+                .with_icon(Icon::Save)
+                .id("save-as")
+                .enabled(idle)
+                .tip("Save a copy; the original is never changed (Ctrl+S)")
+                .show(ui, p)
                 .clicked()
             {
                 self.save_as();
             }
-            divider(ui, p);
+            widgets::divider(ui, p, 26.0);
             let (can_undo, can_redo) = self
                 .doc
                 .as_ref()
                 .map_or((false, false), |d| (d.can_undo, d.can_redo));
-            if tool_button(ui, "Undo", can_undo && idle, "Undo (Ctrl+Z)").clicked() {
+            if Btn::new(text("Undo"))
+                .with_icon(Icon::Undo)
+                .id("undo")
+                .enabled(can_undo && idle)
+                .tip("Undo (Ctrl+Z)")
+                .show(ui, p)
+                .clicked()
+            {
                 self.undo();
             }
-            if tool_button(ui, "Redo", can_redo && idle, "Redo (Ctrl+Y)").clicked() {
+            if Btn::new(text("Redo"))
+                .with_icon(Icon::Redo)
+                .id("redo")
+                .enabled(can_redo && idle)
+                .tip("Redo (Ctrl+Y)")
+                .show(ui, p)
+                .clicked()
+            {
                 self.redo();
             }
-            divider(ui, p);
-            if tool_button(ui, "Add text", has_doc && idle, "Place a new text box").clicked() {
+            widgets::divider(ui, p, 26.0);
+            let adding = self.text_tool.adding;
+            if Btn::new(text("Add text"))
+                .with_icon(Icon::TextPlus)
+                .id("add-text")
+                .look(if adding { Look::Active } else { Look::Ghost })
+                .enabled(idle)
+                .tip("Place a new text box")
+                .show(ui, p)
+                .clicked()
+            {
                 self.commit_edit();
-                self.text_tool.adding = true;
+                self.text_tool.adding = !adding;
                 self.text_tool.at = None;
                 if self.text_tool.fonts.is_empty() {
                     self.send(Request::Fonts);
                 }
             }
-            if tool_button(ui, "Find", has_doc, "Find text (Ctrl+F)").clicked() {
-                self.find.open = true;
-                self.find.focus = true;
+            if Btn::new(text("Find"))
+                .with_icon(Icon::Search)
+                .id("find")
+                .look(if self.find.open {
+                    Look::Active
+                } else {
+                    Look::Ghost
+                })
+                .tip("Find text (Ctrl+F)")
+                .show(ui, p)
+                .clicked()
+            {
+                self.find.open = !self.find.open;
+                self.find.focus = self.find.open;
             }
-            self.zoom_controls(ui, has_doc);
+            ui.add_space(6.0);
+            self.zoom_controls(ui, p);
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                if tool_button(
-                    ui,
-                    "Settings",
-                    true,
-                    "Font substitution, auto-save and version",
-                )
-                .clicked()
-                {
-                    self.settings_open = !self.settings_open;
-                    self.commit_edit();
-                }
+                self.settings_button(ui, p);
                 if self.busy > 0 {
-                    ui.add(egui::Spinner::new().size(14.0).color(p.muted));
-                }
-                if let Some(doc) = &self.doc {
-                    ui.add_space(4.0);
-                    let name = RichText::new(&doc.name)
-                        .font(theme::semibold(13.5))
-                        .color(p.text);
-                    ui.add(egui::Label::new(name).truncate());
-                    if doc.dirty() {
-                        ui.label(RichText::new("Edited").small().color(p.muted));
-                    }
+                    ui.add(egui::Spinner::new().size(16.0).color(p.muted));
                 }
             });
         });
     }
 
-    fn zoom_controls(&mut self, ui: &mut Ui, has_doc: bool) {
-        let zoom = self.doc.as_ref().map_or(1.0, |d| d.zoom);
-        if tool_button(
-            ui,
-            "\u{2212}",
-            has_doc && zoom > MIN_ZOOM,
-            "Zoom out (Ctrl+−)",
-        )
-        .clicked()
-        {
-            self.step_zoom(false);
-        }
-        let label = format!("{:.0}%", zoom * 100.0);
-        ui.add_enabled_ui(has_doc, |ui| {
-            ui.menu_button(label, |ui| {
-                ui.set_min_width(140.0);
-                for step in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0] {
-                    if ui.button(format!("{:.0}%", step * 100.0)).clicked() {
-                        self.set_zoom(step, None);
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                if ui.button("Fit width").clicked() {
-                    self.fit_zoom(false);
-                    ui.close();
-                }
-                if ui.button("Fit page").clicked() {
-                    self.fit_zoom(true);
-                    ui.close();
-                }
-            })
-            .response
-            .on_hover_text("Zoom presets (Ctrl+0 resets to 100%)");
-        });
-        if tool_button(ui, "+", has_doc && zoom < MAX_ZOOM, "Zoom in (Ctrl++)").clicked() {
-            self.step_zoom(true);
-        }
-    }
-
-    fn status_bar(&self, ui: &mut Ui, p: &Palette) {
+    fn home_bar(&mut self, ui: &mut Ui, p: &Palette) {
+        let ready = self.setup_error.is_none() && self.engine_alive && self.busy == 0;
         ui.horizontal_centered(|ui| {
-            let muted = |t: &str| RichText::new(t).small().color(p.muted);
-            match &self.doc {
-                Some(doc) => {
-                    ui.label(muted(&format!(
-                        "Page {} of {}",
-                        doc.current_page + 1,
-                        doc.pages.len()
-                    )));
-                }
-                None => {
-                    ui.label(muted("No document"));
+            ui.spacing_mut().item_spacing.x = 6.0;
+            brand(ui, p);
+            for (recent, icon, label, key) in [
+                (false, Icon::Home, "Home", "nav-home"),
+                (true, Icon::Clock, "Recent", "nav-recent"),
+            ] {
+                let look = if self.home_recent == recent {
+                    Look::Active
+                } else {
+                    Look::Ghost
+                };
+                if Btn::new(label)
+                    .with_icon(icon)
+                    .id(key)
+                    .look(look)
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.home_recent = recent;
                 }
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let hint = if self.doc.as_ref().is_some_and(|d| d.edit.is_some()) {
-                    "Enter or click away applies · Esc cancels"
-                } else if self.doc.is_some() {
-                    "Click text to edit it in place"
-                } else {
-                    "Ctrl+O to open · Drop a PDF anywhere"
-                };
-                ui.label(muted(&version_label()))
-                    .on_hover_text("PDF Editor version");
-                ui.label(muted("·"));
-                ui.label(muted(hint));
+                ui.spacing_mut().item_spacing.x = 8.0;
+                self.settings_button(ui, p);
+                if Btn::new("Open PDF")
+                    .with_icon(Icon::Folder)
+                    .id("open")
+                    .look(Look::Outline)
+                    .enabled(ready)
+                    .tip("Open a PDF (Ctrl+O)")
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.request_open(None);
+                }
+                if self.busy > 0 {
+                    ui.add(egui::Spinner::new().size(16.0).color(p.muted));
+                }
             });
         });
     }
 
-    fn empty_state(&mut self, ui: &mut Ui, p: &Palette) {
-        let size = vec2(420.0, 220.0);
-        let rect = Rect::from_center_size(ui.max_rect().center(), size);
-        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-            ui.vertical_centered(|ui| {
-                if let Some(error) = &self.setup_error {
-                    ui.label(RichText::new("PDF engine missing").font(theme::semibold(20.0)));
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(error).color(p.muted));
-                    return;
-                }
-                if self.opening {
-                    ui.add_space(40.0);
-                    ui.add(egui::Spinner::new().size(22.0).color(p.accent));
-                    ui.add_space(8.0);
-                    ui.label(RichText::new("Opening…").color(p.muted));
-                    return;
-                }
-                ui.label(RichText::new("Edit PDF text in place").font(theme::semibold(22.0)));
-                ui.add_space(2.0);
-                ui.label(
-                    RichText::new("Open a document, click a line of text and type. Fonts, size and color stay as they were.")
-                        .color(p.muted),
-                );
-                ui.add_space(14.0);
-                let button = Button::new(RichText::new("Open PDF…").color(p.accent_text))
-                    .fill(p.accent)
-                    .min_size(vec2(132.0, 36.0));
-                if ui.add_enabled(self.engine_alive, button).clicked() {
-                    self.request_open(None);
-                }
-                ui.add_space(8.0);
-                ui.label(RichText::new("or drop a file anywhere").small().color(p.muted));
+    fn settings_bar(&mut self, ui: &mut Ui, p: &Palette) {
+        ui.horizontal_centered(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            brand(ui, p);
+            let back = match &self.doc {
+                Some(doc) => format!("Back to {}", shorten(&doc.name, 48)),
+                None => "Back".to_string(),
+            };
+            if Btn::new(&back)
+                .with_icon(Icon::ArrowLeft)
+                .id("back")
+                .tip("Close settings (Esc)")
+                .show(ui, p)
+                .clicked()
+            {
+                self.settings_open = false;
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                self.settings_button(ui, p);
             });
         });
+    }
+
+    fn settings_button(&mut self, ui: &mut Ui, p: &Palette) {
+        let look = if self.settings_open {
+            Look::Active
+        } else {
+            Look::Ghost
+        };
+        if Btn::icon(Icon::Gear)
+            .id("settings")
+            .look(look)
+            .tip("Settings")
+            .show(ui, p)
+            .clicked()
+        {
+            self.settings_open = !self.settings_open;
+            self.commit_edit();
+        }
+    }
+
+    /// Bordered zoom group: out, presets, in.
+    fn zoom_controls(&mut self, ui: &mut Ui, p: &Palette) {
+        let has_doc = self.doc.is_some();
+        let zoom = self.doc.as_ref().map_or(1.0, |d| d.zoom);
+        Frame::new()
+            .stroke(Stroke::new(1.0, p.border_strong))
+            .corner_radius(CornerRadius::same(theme::RADIUS))
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                if Btn::icon(Icon::Minus)
+                    .id("zoom-out")
+                    .height(32.0)
+                    .min_width(36.0)
+                    .enabled(has_doc && zoom > MIN_ZOOM)
+                    .tip("Zoom out (Ctrl+\u{2212})")
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.step_zoom(false);
+                }
+                widgets::divider(ui, p, 32.0);
+                let label = format!("{:.0}%", zoom * 100.0);
+                let presets = Btn::new(&label)
+                    .id("zoom-presets")
+                    .height(32.0)
+                    .min_width(64.0)
+                    .enabled(has_doc)
+                    .tip("Zoom presets (Ctrl+0 resets to 100%)")
+                    .show(ui, p);
+                Popup::menu(&presets).show(|ui| self.zoom_menu(ui, p));
+                widgets::divider(ui, p, 32.0);
+                if Btn::icon(Icon::Plus)
+                    .id("zoom-in")
+                    .height(32.0)
+                    .min_width(36.0)
+                    .enabled(has_doc && zoom < MAX_ZOOM)
+                    .tip("Zoom in (Ctrl++)")
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.step_zoom(true);
+                }
+            });
+    }
+
+    fn zoom_menu(&mut self, ui: &mut Ui, p: &Palette) {
+        let row = |ui: &mut Ui, label: &str| {
+            Btn::new(label)
+                .align_left()
+                .min_width(150.0)
+                .height(30.0)
+                .show(ui, p)
+                .clicked()
+        };
+        for step in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0] {
+            if row(ui, &format!("{:.0}%", step * 100.0)) {
+                self.set_zoom(step, None);
+                ui.close();
+            }
+        }
+        ui.separator();
+        if row(ui, "Fit width") {
+            self.fit_zoom(false);
+            ui.close();
+        }
+        if row(ui, "Fit page") {
+            self.fit_zoom(true);
+            ui.close();
+        }
+    }
+
+    fn status_bar(&mut self, ui: &mut Ui, p: &Palette) {
+        let Some(doc) = &self.doc else { return };
+        let (current, total) = (doc.current_page + 1, doc.pages.len());
+        let hint = if doc.edit.is_some() {
+            "Enter or click away applies \u{b7} Esc cancels"
+        } else {
+            "Click text to edit it in place"
+        };
+        let zoom = format!("{:.0}%", doc.zoom * 100.0);
+        ui.horizontal_centered(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.label(RichText::new("Page").color(p.muted));
+            ui.label(RichText::new(current.to_string()).color(p.text));
+            ui.label(RichText::new(format!("of {total}")).color(p.muted));
+            ui.add_space(16.0);
+            ui.add(egui::Label::new(RichText::new(hint).small().color(p.muted)).truncate());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let presets = Btn::new(&zoom)
+                    .trailing(Icon::ChevronDown)
+                    .id("status-zoom")
+                    .height(28.0)
+                    .tip("Zoom presets")
+                    .show(ui, p);
+                Popup::menu(&presets)
+                    .align(RectAlign::TOP_END)
+                    .show(|ui| self.zoom_menu(ui, p));
+                widgets::divider(ui, p, 18.0);
+                let pages = Btn::icon(Icon::Sidebar)
+                    .id("toggle-pages")
+                    .height(28.0)
+                    .look(if self.pages_open {
+                        Look::Ghost
+                    } else {
+                        Look::Active
+                    })
+                    .tip(if self.pages_open {
+                        "Hide pages"
+                    } else {
+                        "Show pages"
+                    })
+                    .show(ui, p);
+                if pages.clicked() {
+                    self.pages_open = !self.pages_open;
+                }
+                widgets::divider(ui, p, 18.0);
+                ui.label(RichText::new(version_label()).small().color(p.muted))
+                    .on_hover_text("PDF Editor version");
+            });
+        });
+    }
+
+    /// Home page: open card and recent files, or the recent list alone.
+    fn empty_state(&mut self, ui: &mut Ui, p: &Palette) {
+        let mut open: Option<Option<PathBuf>> = None;
+        let recent_files = self.recent_files.clone();
+        let idle = self.busy == 0 && self.engine_alive && self.setup_error.is_none();
+        ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            let width = (ui.available_width() - 48.0).clamp(280.0, 620.0);
+            let left = ((ui.available_width() - width) / 2.0).max(0.0);
+            ui.add_space(44.0);
+            ui.horizontal(|ui| {
+                ui.add_space(left);
+                ui.vertical(|ui| {
+                    ui.set_width(width);
+                    if !self.home_recent {
+                        ui.label(
+                            RichText::new("WORKSPACE")
+                                .size(11.5)
+                                .extra_letter_spacing(2.4)
+                                .color(p.muted),
+                        );
+                        ui.label(RichText::new("Open a PDF").font(theme::semibold(34.0)));
+                        ui.label(
+                            RichText::new("Drop a file here or browse your computer.")
+                                .size(16.0)
+                                .color(p.muted),
+                        );
+                        ui.add_space(14.0);
+                        if self.drop_zone(ui, p, width) {
+                            open = Some(None);
+                        }
+                        ui.add_space(32.0);
+                    }
+                    ui.label(RichText::new("Recent files").font(theme::semibold(24.0)));
+                    let summary = if recent_files.is_empty() {
+                        "Files you open appear here.".to_string()
+                    } else {
+                        format!("{} most recent", recent_files.len())
+                    };
+                    ui.label(RichText::new(summary).color(p.muted));
+                    ui.add_space(8.0);
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    for (index, path) in recent_files.iter().enumerate() {
+                        if recent_row(ui, p, index, path, idle).clicked() {
+                            open = Some(Some(path.clone()));
+                        }
+                    }
+                    ui.add_space(24.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "PDF Editor {} \u{b7} Works offline",
+                            version_label()
+                        ))
+                        .small()
+                        .color(p.muted),
+                    );
+                    ui.add_space(28.0);
+                });
+            });
+        });
+        if let Some(path) = open {
+            self.request_open(path);
+        }
+    }
+
+    /// Dashed drop card with the open button. Returns true when clicked.
+    fn drop_zone(&self, ui: &mut Ui, p: &Palette, width: f32) -> bool {
+        let (rect, _) = ui.allocate_exact_size(vec2(width, 248.0), Sense::hover());
+        ui.painter().rect(
+            rect,
+            CornerRadius::same(10),
+            p.surface,
+            Stroke::new(1.0, p.border),
+            StrokeKind::Inside,
+        );
+        widgets::dashed_rect(ui, rect.shrink(8.0), Stroke::new(1.0, p.border_strong));
+        let mut clicked = false;
+        let inner = egui::UiBuilder::new()
+            .max_rect(rect.shrink(20.0))
+            .layout(Layout::top_down(Align::Center));
+        // A child Ui leaves the parent's cursor below the card.
+        ui.new_child(inner).scope(|ui| {
+            ui.add_space(26.0);
+            widgets::icon(ui, Icon::File, 44.0, p.muted);
+            ui.add_space(10.0);
+            if let Some(error) = &self.setup_error {
+                ui.label(RichText::new("PDF engine missing").font(theme::semibold(17.0)));
+                ui.label(RichText::new(error).color(p.muted));
+                return;
+            }
+            if self.opening {
+                ui.add_space(8.0);
+                ui.add(egui::Spinner::new().size(22.0).color(p.accent));
+                ui.label(RichText::new("Opening\u{2026}").color(p.muted));
+                return;
+            }
+            clicked = Btn::new("Choose file")
+                .id("choose-file")
+                .look(Look::OutlineAccent)
+                .height(38.0)
+                .min_width(150.0)
+                .enabled(self.engine_alive && self.busy == 0)
+                .tip("Open a PDF (Ctrl+O)")
+                .show(ui, p)
+                .clicked();
+            ui.add_space(2.0);
+            ui.label(RichText::new("or drop a PDF here").color(p.muted));
+            let keys = ["Ctrl", "O"];
+            let width = widgets::keys_width(ui, &keys);
+            ui.allocate_ui_with_layout(
+                vec2(width, 26.0),
+                Layout::left_to_right(Align::Center),
+                |ui| widgets::keys(ui, p, &keys),
+            );
+        });
+        clicked
     }
 
     fn canvas(&mut self, ui: &mut Ui, p: &Palette) {
@@ -1448,6 +2023,7 @@ impl EditorApp {
         }
 
         let busy = self.busy > 0;
+        self.tool_anchor = None;
         let Some(doc) = &mut self.doc else { return };
         let scale = doc.scale();
         let widest = doc.pages.iter().map(|pg| pg.info.width).fold(0.0, f32::max) * scale;
@@ -1542,6 +2118,7 @@ impl EditorApp {
                         Stroke::new(1.5, p.accent),
                         StrokeKind::Outside,
                     );
+                    self.tool_anchor = Some(screen.expand(2.0));
                 }
                 if self.find.open {
                     for (n, (_, boxes)) in self
@@ -1557,16 +2134,12 @@ impl EditorApp {
                                 rect,
                                 scale,
                             );
-                            painter.rect_filled(
-                                r,
-                                0.0,
-                                Color32::from_rgba_unmultiplied(
-                                    255,
-                                    185,
-                                    30,
-                                    if n == self.find.active { 140 } else { 65 },
-                                ),
-                            );
+                            let fill = if n == self.find.active {
+                                p.highlight_active
+                            } else {
+                                p.highlight
+                            };
+                            painter.rect_filled(r.expand(1.0), CornerRadius::same(2), fill);
                         }
                     }
                 }
@@ -1618,6 +2191,7 @@ impl EditorApp {
                 {
                     let at = rect.min + at.to_vec2() * scale;
                     painter.circle_stroke(at, 5.0, Stroke::new(1.5, p.accent));
+                    self.tool_anchor = Some(Rect::from_center_size(at, vec2(10.0, 10.0)));
                 }
                 if let Some(line) = hit.filter(|_| !self.text_tool.adding) {
                     if !editing_this(line) && !busy {
@@ -1791,13 +2365,21 @@ impl EditorApp {
             );
             ui.add_space(12.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let discard = Button::new(RichText::new(format!("Discard and {}", action.to_lowercase())).color(p.accent_text))
-                    .fill(p.error_fg)
-                    .min_size(vec2(0.0, 32.0));
-                if ui.add_enabled(self.busy==0,discard).clicked() {
+                let discard = format!("Discard and {}", action.to_lowercase());
+                if Btn::new(&discard)
+                    .look(Look::Danger)
+                    .enabled(self.busy == 0)
+                    .show(ui, p)
+                    .clicked()
+                {
                     choice = Some(true);
                 }
-                if ui.add(secondary_button("Cancel", p)).clicked() {
+                if Btn::new("Cancel")
+                    .look(Look::Outline)
+                    .min_width(84.0)
+                    .show(ui, p)
+                    .clicked()
+                {
                     choice = Some(false);
                 }
             });
@@ -1911,18 +2493,16 @@ impl EditorApp {
                 );
                 ui.add_space(12.0);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let restore = Button::new(RichText::new("Restore").color(p.accent_text))
-                        .fill(p.accent)
-                        .min_size(vec2(96.0, 32.0));
-                    if ui.add(restore).clicked() {
+                    let button = |label, look| Btn::new(label).look(look).min_width(84.0);
+                    if button("Restore", Look::Primary).show(ui, p).clicked() {
                         action = Some(0);
                     }
-                    if ui.add(secondary_button("Discard", p)).clicked() {
+                    if button("Discard", Look::Outline).show(ui, p).clicked() {
                         action = Some(1);
                     }
-                    if ui
-                        .add(secondary_button("Later", p))
-                        .on_hover_text("Keep the copy and ask again next time")
+                    if button("Later", Look::Outline)
+                        .tip("Keep the copy and ask again next time")
+                        .show(ui, p)
                         .clicked()
                     {
                         action = Some(2);
@@ -1955,117 +2535,112 @@ impl EditorApp {
         }
     }
 
+    fn settings_nav(&mut self, ui: &mut Ui, p: &Palette) {
+        Frame::new()
+            .inner_margin(Margin {
+                left: 16,
+                right: 16,
+                top: 28,
+                bottom: 16,
+            })
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Settings").font(theme::semibold(22.0)));
+                });
+                ui.add_space(14.0);
+                ui.spacing_mut().item_spacing.y = 4.0;
+                let width = ui.available_width();
+                for tab in SettingsTab::ALL {
+                    let selected = self.settings_tab == tab;
+                    let response = Btn::new(tab.title())
+                        .with_icon(tab.icon())
+                        .id(tab.title())
+                        .align_left()
+                        .min_width(width)
+                        .height(44.0)
+                        .look(if selected { Look::Active } else { Look::Ghost })
+                        .show(ui, p);
+                    if selected {
+                        let bar = Rect::from_min_size(
+                            response.rect.left_top(),
+                            vec2(3.0, response.rect.height()),
+                        );
+                        ui.painter().rect_filled(
+                            bar,
+                            CornerRadius {
+                                nw: 2,
+                                sw: 2,
+                                ne: 0,
+                                se: 0,
+                            },
+                            p.accent,
+                        );
+                    }
+                    if response.clicked() {
+                        self.settings_tab = tab;
+                    }
+                }
+            });
+    }
+
     fn settings_page(&mut self, ui: &mut Ui, p: &Palette) {
         if ui.input(|i| i.key_pressed(Key::Escape)) {
             self.settings_open = false;
         }
         let mut policy = self.policy;
         let mut autosave = self.autosave;
+        let tab = self.settings_tab;
         ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            let width = (ui.available_width() - 48.0).clamp(280.0, 640.0);
-            ui.vertical_centered(|ui| {
-                ui.set_max_width(width);
-                ui.add_space(28.0);
-                ui.horizontal(|ui| {
-                    let back = if self.doc.is_some() { "← Back to document" } else { "← Back" };
-                    if ui.add(Button::new(back).min_size(vec2(0.0, 30.0))).clicked() {
-                        self.settings_open = false;
+            Frame::new()
+                .inner_margin(Margin {
+                    left: 40,
+                    right: 40,
+                    top: 28,
+                    bottom: 32,
+                })
+                .show(ui, |ui| {
+                    ui.set_max_width(ui.available_width().min(880.0));
+                    ui.label(RichText::new(tab.title()).font(theme::semibold(28.0)));
+                    ui.label(RichText::new(tab.summary()).size(15.0).color(p.muted));
+                    ui.add_space(16.0);
+                    widgets::rule(ui, p);
+                    ui.add_space(18.0);
+                    match tab {
+                        SettingsTab::General => self.general_settings(ui, p, &mut autosave),
+                        SettingsTab::Editing => editing_settings(ui, p, &mut policy),
+                        SettingsTab::Shortcuts => {
+                            section_title(ui, "Keyboard shortcuts");
+                            for (action, keys, note) in SHORTCUTS {
+                                widgets::setting_row(ui, p, action, note, |ui| {
+                                    widgets::keys(ui, p, keys);
+                                });
+                            }
+                        }
+                        SettingsTab::About => {
+                            section_title(ui, "PDF Editor");
+                            widgets::setting_row(ui, p, "Version", "", |ui| {
+                                ui.label(RichText::new(version_label()).color(p.text));
+                            });
+                            widgets::setting_row(
+                                ui,
+                                p,
+                                "Privacy",
+                                "Works offline. Documents stay on this computer and the editor \
+                                 opens no network connections.",
+                                |_| {},
+                            );
+                            widgets::setting_row(ui, p, "License", "", |ui| {
+                                ui.label(RichText::new(env!("CARGO_PKG_LICENSE")).color(p.text));
+                            });
+                            widgets::setting_row(ui, p, "Interface font", "", |ui| {
+                                ui.label(
+                                    RichText::new("Inter, SIL Open Font License 1.1").color(p.text),
+                                );
+                            });
+                        }
                     }
                 });
-                ui.add_space(8.0);
-                ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                    ui.label(RichText::new("Settings").font(theme::semibold(24.0)));
-                    ui.label(RichText::new("Changes are saved automatically.").color(p.muted));
-                    ui.add_space(12.0);
-
-                    section(ui, p, "Font substitution", |ui| {
-                        ui.label(
-                            RichText::new(
-                                "When the original font lacks a character you type and is not installed, \
-                                 the closest installed font is used and a warning is shown.",
-                            )
-                            .color(p.muted),
-                        );
-                        ui.add_space(8.0);
-                        choice(ui, p, &mut policy, Substitution::Line, "Substitute this line only",
-                            "Only the edited line uses the replacement font.");
-                        choice(ui, p, &mut policy, Substitution::Document, "Substitute whole document",
-                            "Every line using the missing font switches, for a consistent look.");
-                    });
-
-                    section(ui, p, "Auto-save", |ui| {
-                        ui.label(
-                            RichText::new(
-                                "Unsaved edits are copied to a private recovery folder on this computer. \
-                                 Your original file and your saved copies are never overwritten. If the \
-                                 editor closes unexpectedly, it offers to restore the edits on next start.",
-                            )
-                            .color(p.muted),
-                        );
-                        ui.add_space(10.0);
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            let mut option = |ui: &mut Ui, value: AutoSave, label: &str| {
-                                let selected = autosave == value;
-                                let text = if selected {
-                                    RichText::new(label).color(p.accent_text)
-                                } else {
-                                    RichText::new(label)
-                                };
-                                let mut button = Button::new(text).min_size(vec2(72.0, 32.0));
-                                button = if selected {
-                                    button.fill(p.accent)
-                                } else {
-                                    button.stroke(Stroke::new(1.0, p.border))
-                                };
-                                if ui.add(button).clicked() {
-                                    autosave = value;
-                                }
-                            };
-                            option(ui, AutoSave(None), "Off");
-                            for minutes in recovery::INTERVALS {
-                                option(ui, AutoSave(Some(minutes)), &format!("Every {minutes} min"));
-                            }
-                        });
-                        ui.add_space(8.0);
-                        let status = match (&self.session_error, autosave.0) {
-                            (Some(e), Some(_)) => format!("Auto-save is unavailable: {e}"),
-                            (_, None) => "Auto-save is off. Unsaved edits are lost if the editor closes unexpectedly.".to_string(),
-                            (None, Some(_)) => {
-                                let folder = recovery::root()
-                                    .map(|r| r.display().to_string())
-                                    .unwrap_or_default();
-                                format!(
-                                    "Copies are kept in {folder} and deleted when you save, discard your edits or close normally."
-                                )
-                            }
-                        };
-                        ui.label(RichText::new(status).small().color(p.muted));
-                    });
-
-                    section(ui, p, "About", |ui| {
-                        ui.label(
-                            RichText::new(format!("PDF Editor {}", version_label()))
-                                .font(theme::semibold(14.0)),
-                        );
-                        ui.label(
-                            RichText::new(
-                                "Works offline. Documents stay on this computer and the editor opens \
-                                 no network connections.",
-                            )
-                            .color(p.muted),
-                        );
-                        ui.label(
-                            RichText::new(
-                                "Licensed GPL-3.0-only. Interface font: Inter, SIL Open Font License 1.1.",
-                            )
-                            .small()
-                            .color(p.muted),
-                        );
-                    });
-                    ui.add_space(28.0);
-                });
-            });
         });
         if policy != self.policy {
             self.set_policy(policy);
@@ -2073,6 +2648,82 @@ impl EditorApp {
         if autosave != self.autosave {
             self.set_autosave(autosave);
         }
+    }
+
+    fn general_settings(&self, ui: &mut Ui, p: &Palette, autosave: &mut AutoSave) {
+        section_title(ui, "Auto-save");
+        let label = |value: AutoSave| match value.0 {
+            None => "Off".to_string(),
+            Some(minutes) => format!("Every {minutes} minutes"),
+        };
+        widgets::setting_row(
+            ui,
+            p,
+            "Recovery copies",
+            "Copy unsaved edits to a private recovery folder on this computer. If the \
+             editor closes unexpectedly, it offers to restore them on the next start.",
+            |ui| {
+                egui::ComboBox::from_id_salt("autosave")
+                    .width(240.0)
+                    .selected_text(label(*autosave))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(autosave, AutoSave(None), label(AutoSave(None)));
+                        for minutes in recovery::INTERVALS {
+                            let value = AutoSave(Some(minutes));
+                            ui.selectable_value(autosave, value, label(value));
+                        }
+                    });
+            },
+        );
+        let status = match (&self.session_error, autosave.0) {
+            (Some(e), Some(_)) => format!("Auto-save is unavailable: {e}"),
+            (_, None) => {
+                "Auto-save is off. Unsaved edits are lost if the editor closes unexpectedly."
+                    .to_string()
+            }
+            (None, Some(_)) => "Copies are deleted when you save, discard your edits or close \
+                                normally. Your original file and saved copies are never \
+                                overwritten."
+                .to_string(),
+        };
+        ui.label(RichText::new(status).small().color(p.muted));
+        if autosave.0.is_some()
+            && self.session_error.is_none()
+            && let Some(folder) = recovery::root()
+        {
+            let folder = shown_path(&folder);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(format!("Folder: {folder}"))
+                        .small()
+                        .color(p.muted),
+                )
+                .truncate(),
+            )
+            .on_hover_text(folder);
+        }
+        ui.add_space(20.0);
+        widgets::rule(ui, p);
+        ui.add_space(18.0);
+        section_title(ui, "Safety");
+        widgets::setting_row(
+            ui,
+            p,
+            "Unsaved edits",
+            "Closing the window or opening another PDF asks before discarding unsaved edits.",
+            |ui| {
+                ui.label(RichText::new("Always on").color(p.muted));
+            },
+        );
+        widgets::setting_row(
+            ui,
+            p,
+            "Original files",
+            "Save As writes a new file. The original PDF is never changed.",
+            |ui| {
+                ui.label(RichText::new("Always on").color(p.muted));
+            },
+        );
     }
 
     fn drop_overlay(&self, ctx: &Context, p: &Palette) {
@@ -2115,42 +2766,46 @@ impl eframe::App for EditorApp {
             .frame(
                 Frame::new()
                     .fill(p.chrome)
-                    .inner_margin(Margin::symmetric(12, 8))
+                    .inner_margin(Margin::symmetric(14, 10))
                     .stroke(Stroke::new(1.0, p.border)),
             )
             .show_separator_line(false)
-            .min_size(48.0)
+            .min_size(56.0)
             .show(ui, |ui| self.toolbar(ui, &p));
         let toolbar_bottom = toolbar.response.rect.bottom();
 
-        egui::Panel::bottom("status")
-            .frame(
-                Frame::new()
-                    .fill(p.chrome)
-                    .inner_margin(Margin::symmetric(14, 4))
-                    .stroke(Stroke::new(1.0, p.border)),
-            )
-            .show_separator_line(false)
-            .exact_size(28.0)
-            .show(ui, |ui| self.status_bar(ui, &p));
-
-        if !self.text_tool.selection.is_empty() && !self.text_tool.adding && !self.settings_open {
-            egui::Panel::top("selected-object").show(ui, |ui| self.object_tools(ui));
+        let document = self.doc.is_some() && !self.settings_open;
+        if document {
+            egui::Panel::bottom("status")
+                .frame(
+                    Frame::new()
+                        .fill(p.chrome)
+                        .inner_margin(Margin::symmetric(16, 0))
+                        .stroke(Stroke::new(1.0, p.border)),
+                )
+                .show_separator_line(false)
+                .exact_size(36.0)
+                .show(ui, |ui| self.status_bar(ui, &p));
+            if self.pages_open {
+                egui::Panel::left("thumbnails")
+                    .frame(Frame::new().fill(p.chrome))
+                    .default_size(200.0)
+                    .min_size(150.0)
+                    .max_size(320.0)
+                    .resizable(true)
+                    .show(ui, |ui| self.thumbnails(ui, &p));
+            }
         }
-        if self.text_tool.adding && !self.settings_open {
-            egui::Panel::top("text-tools").show(ui, |ui| self.text_tools(ui));
+        if self.settings_open {
+            egui::Panel::left("settings-nav")
+                .frame(Frame::new().fill(p.chrome))
+                .exact_size(280.0)
+                .resizable(false)
+                .show(ui, |ui| self.settings_nav(ui, &p));
         }
-        if self.find.open && !self.settings_open {
-            egui::Panel::top("find").show(ui, |ui| self.find_bar(ui));
-        }
-        if self.doc.is_some() && !self.settings_open {
-            egui::Panel::left("thumbnails")
-                .default_size(180.0)
-                .resizable(true)
-                .show(ui, |ui| self.thumbnails(ui));
-        }
-        egui::CentralPanel::no_frame()
-            .frame(Frame::new().fill(p.canvas))
+        let fill = if document { p.canvas } else { p.chrome };
+        let central = egui::CentralPanel::no_frame()
+            .frame(Frame::new().fill(fill))
             .show(ui, |ui| {
                 if self.settings_open {
                     self.settings_page(ui, &p);
@@ -2160,6 +2815,9 @@ impl eframe::App for EditorApp {
                     self.empty_state(ui, &p);
                 }
             });
+        if document {
+            self.floating_tools(&ctx, central.response.rect, &p);
+        }
 
         self.banners(&ctx, toolbar_bottom, &p);
         self.confirm_modal(&ctx, &p);
@@ -2195,19 +2853,262 @@ fn version_label() -> String {
     }
 }
 
-fn section(ui: &mut Ui, p: &Palette, title: &str, add: impl FnOnce(&mut Ui)) {
-    Frame::new()
-        .fill(p.chrome)
-        .stroke(Stroke::new(1.0, p.border))
-        .corner_radius(CornerRadius::same(12))
-        .inner_margin(Margin::same(20))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new(title).font(theme::semibold(15.0)));
-            ui.add_space(4.0);
-            add(ui);
+/// Logo and name at the left of the home and settings bars.
+fn brand(ui: &mut Ui, p: &Palette) {
+    widgets::icon(ui, Icon::File, 26.0, p.accent_strong);
+    ui.add_space(4.0);
+    ui.label(RichText::new("PDF Editor").font(theme::semibold(16.0)));
+    widgets::divider(ui, p, 28.0);
+}
+
+fn section_title(ui: &mut Ui, title: &str) {
+    ui.label(RichText::new(title).font(theme::semibold(18.0)));
+    ui.add_space(10.0);
+}
+
+fn editing_settings(ui: &mut Ui, p: &Palette, policy: &mut Substitution) {
+    section_title(ui, "Font substitution");
+    widgets::setting_row(
+        ui,
+        p,
+        "When a typed character is missing",
+        "The original font lacks the character and is not installed. The closest \
+         installed font is used and a warning is shown.",
+        |ui| {
+            widgets::segmented(
+                ui,
+                p,
+                "substitution",
+                policy,
+                &[
+                    (Substitution::Line, "This line"),
+                    (Substitution::Document, "Whole document"),
+                ],
+            );
+        },
+    );
+    let detail = match policy {
+        Substitution::Line => "Only the edited line uses the replacement font.",
+        Substitution::Document => {
+            "Every line using the missing font switches, for a consistent look."
+        }
+    };
+    ui.label(RichText::new(detail).small().color(p.muted));
+    ui.add_space(20.0);
+    widgets::rule(ui, p);
+    ui.add_space(18.0);
+    section_title(ui, "Text editing");
+    widgets::setting_row(
+        ui,
+        p,
+        "Apply an edit",
+        "Clicking elsewhere also applies the typed text.",
+        |ui| widgets::keys(ui, p, &["Enter"]),
+    );
+    widgets::setting_row(ui, p, "Cancel an edit", "", |ui| {
+        widgets::keys(ui, p, &["Esc"]);
+    });
+}
+
+/// Page actions shared by the sidebar menu and a thumbnail's context menu.
+fn page_menu(
+    ui: &mut Ui,
+    p: &Palette,
+    page: u16,
+    count: usize,
+    idle: bool,
+) -> Option<pdf_editor_core::PageEdit> {
+    use pdf_editor_core::PageEdit;
+    let item = |ui: &mut Ui, icon: Icon, label: &str, enabled: bool| {
+        let clicked = Btn::new(label)
+            .with_icon(icon)
+            .align_left()
+            .min_width(230.0)
+            .height(34.0)
+            .enabled(enabled)
+            .show(ui, p)
+            .clicked();
+        if clicked {
+            ui.close();
+        }
+        clicked
+    };
+    let mut action = None;
+    if item(ui, Icon::RotateRight, "Rotate right", idle) {
+        action = Some(PageEdit::Rotate { page });
+    }
+    if item(ui, Icon::Trash, "Delete page", idle && count > 1) {
+        action = Some(PageEdit::Delete { page });
+    }
+    if item(ui, Icon::FilePlus, "Insert pages from PDF\u{2026}", idle) {
+        action = pick_insert(page);
+    }
+    action
+}
+
+fn pick_insert(before: u16) -> Option<pdf_editor_core::PageEdit> {
+    let path = rfd::FileDialog::new()
+        .set_title("Insert pages from PDF")
+        .add_filter("PDF document", &["pdf"])
+        .pick_file()?;
+    Some(pdf_editor_core::PageEdit::Insert { path, before })
+}
+
+fn paint_thumbnail(ui: &Ui, rect: Rect, page: &PageView, p: &Palette) {
+    let painter = ui.painter();
+    let radius = CornerRadius::same(2);
+    painter.add(
+        Shadow {
+            offset: [0, 2],
+            blur: 10,
+            spread: 0,
+            color: p.page_shadow,
+        }
+        .as_shape(rect, radius),
+    );
+    painter.rect_filled(rect, radius, Color32::WHITE);
+    match &page.thumbnail {
+        Some(texture) => {
+            let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+            painter.image(texture.id(), rect, uv, Color32::WHITE);
+        }
+        None => {
+            let text = if page.error.is_some() {
+                "Unavailable"
+            } else {
+                "Loading\u{2026}"
+            };
+            painter.text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                text,
+                FontId::proportional(11.5),
+                Color32::from_gray(140),
+            );
+        }
+    }
+    painter.rect_stroke(
+        rect,
+        radius,
+        Stroke::new(1.0, Color32::from_black_alpha(24)),
+        StrokeKind::Outside,
+    );
+}
+
+/// One recent file: icon, name and folder; an arrow appears on hover.
+fn recent_row(
+    ui: &mut Ui,
+    p: &Palette,
+    index: usize,
+    path: &std::path::Path,
+    enabled: bool,
+) -> egui::Response {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 58.0), Sense::hover());
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let response = ui.interact(rect, Id::new(("recent-file", index)), sense);
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &name));
+    let hot = enabled && (response.hovered() || response.has_focus());
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        CornerRadius::same(theme::RADIUS),
+        if hot { p.hover } else { p.surface },
+        Stroke::new(
+            1.0,
+            if response.has_focus() {
+                p.accent
+            } else {
+                p.border
+            },
+        ),
+        StrokeKind::Inside,
+    );
+    let icon = Rect::from_center_size(pos2(rect.left() + 30.0, rect.center().y), vec2(22.0, 22.0));
+    crate::icons::paint(
+        painter,
+        icon,
+        Icon::File,
+        if hot { p.text } else { p.muted },
+    );
+    let text_width = rect.width() - 56.0 - 52.0;
+    let line = |text: &str, font: FontId, color: Color32| {
+        let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), font, color);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(text_width.max(40.0));
+        painter.layout_job(job)
+    };
+    let title = line(&name, theme::semibold(14.5), p.text);
+    let folder = path.parent().map(shown_path).unwrap_or_default();
+    let folder = line(&folder, FontId::proportional(12.5), p.muted);
+    painter.galley(pos2(rect.left() + 56.0, rect.top() + 10.0), title, p.text);
+    painter.galley(pos2(rect.left() + 56.0, rect.top() + 31.0), folder, p.muted);
+    if hot {
+        let arrow =
+            Rect::from_center_size(pos2(rect.right() - 28.0, rect.center().y), vec2(18.0, 18.0));
+        crate::icons::paint(painter, arrow, Icon::ArrowRight, p.accent_strong);
+    }
+    if enabled {
+        response.on_hover_cursor(CursorIcon::PointingHand)
+    } else {
+        response
+    }
+}
+
+/// Path for display, without the `\\?\` prefix of canonicalized Windows paths.
+fn shown_path(path: &std::path::Path) -> String {
+    let text = path.display().to_string();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with("UNC") => rest.to_string(),
+        _ => text,
+    }
+}
+
+/// Shortens `text` to `max` characters with an ellipsis.
+fn shorten(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        text.to_string()
+    } else {
+        let head: String = text.chars().take(max.saturating_sub(1)).collect();
+        format!("{head}\u{2026}")
+    }
+}
+
+/// Floating bar over the canvas, kept inside `bounds`.
+fn floating(
+    ctx: &Context,
+    id: &str,
+    bounds: Rect,
+    pivot: Align2,
+    at: Pos2,
+    p: &Palette,
+    add: impl FnOnce(&mut Ui),
+) {
+    egui::Area::new(Id::new(id))
+        .pivot(pivot)
+        .fixed_pos(at)
+        .constrain_to(bounds.shrink(8.0))
+        .show(ctx, |ui| {
+            Frame::new()
+                .fill(p.surface)
+                .stroke(Stroke::new(1.0, p.border_strong))
+                .corner_radius(CornerRadius::same(10))
+                .inner_margin(Margin::symmetric(8, 6))
+                .shadow(Shadow {
+                    offset: [0, 6],
+                    blur: 20,
+                    spread: 0,
+                    color: p.page_shadow,
+                })
+                .show(ui, add);
         });
-    ui.add_space(14.0);
 }
 
 /// `<stem>_edited.pdf` next to the original file.
@@ -2228,82 +3129,6 @@ fn time_ago(when: std::time::SystemTime) -> String {
 
 fn modal_frame(ctx: &Context) -> Frame {
     Frame::window(&ctx.global_style()).inner_margin(Margin::same(22))
-}
-
-fn secondary_button(label: &str, p: &Palette) -> Button<'static> {
-    Button::new(label.to_string())
-        .stroke(Stroke::new(1.0, p.border))
-        .min_size(vec2(84.0, 32.0))
-}
-
-fn tool_button(ui: &mut Ui, label: &str, enabled: bool, tip: &str) -> egui::Response {
-    ui.add_enabled(enabled, Button::new(label).min_size(vec2(30.0, 30.0)))
-        .on_hover_text(tip)
-        .on_disabled_hover_text(tip)
-}
-
-fn divider(ui: &mut Ui, p: &Palette) {
-    ui.add_space(6.0);
-    let (rect, _) = ui.allocate_exact_size(vec2(1.0, 18.0), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::ZERO, p.border);
-    ui.add_space(6.0);
-}
-
-fn choice(
-    ui: &mut Ui,
-    p: &Palette,
-    value: &mut Substitution,
-    option: Substitution,
-    title: &str,
-    detail: &str,
-) {
-    let selected = *value == option;
-    let stroke = if selected {
-        Stroke::new(1.5, p.accent)
-    } else {
-        Stroke::new(1.0, p.border)
-    };
-    let response = Frame::new()
-        .stroke(stroke)
-        .fill(if selected {
-            p.tint
-        } else {
-            Color32::TRANSPARENT
-        })
-        .corner_radius(CornerRadius::same(theme::RADIUS))
-        .inner_margin(Margin::symmetric(12, 10))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                let (rect, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-                ui.painter().circle_stroke(
-                    rect.center(),
-                    7.0,
-                    Stroke::new(1.5, if selected { p.accent } else { p.muted }),
-                );
-                if selected {
-                    ui.painter().circle_filled(rect.center(), 3.5, p.accent);
-                }
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.label(RichText::new(title).font(theme::semibold(13.5)));
-                    ui.label(RichText::new(detail).small().color(p.muted));
-                });
-            });
-        })
-        .response;
-    let response = ui.interact(
-        response.rect,
-        Id::new(("substitution", title)),
-        Sense::click(),
-    );
-    if response.hovered() {
-        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-    }
-    if response.clicked() {
-        *value = option;
-    }
-    ui.add_space(4.0);
 }
 
 fn paint_page(painter: &egui::Painter, ui: &Ui, rect: Rect, page: &PageView, p: &Palette) {
@@ -2415,6 +3240,9 @@ fn edit_box(
         Stroke::new(1.5, p.accent),
         StrokeKind::Outside,
     );
+    for corner in [rect.left_top(), rect.right_bottom()] {
+        painter.circle(corner, 3.5, Color32::WHITE, Stroke::new(1.5, p.accent));
+    }
 
     let id = Id::new(("edit-box", edit.page, first.index, first.revision));
     let editor = TextEdit::singleline(&mut edit.text)
@@ -2610,6 +3438,14 @@ mod tests {
     }
 
     #[test]
+    fn shown_paths_drop_the_verbatim_prefix() {
+        let path = PathBuf::from(r"\\?\D:\docs\a.pdf");
+        assert_eq!(shown_path(&path), r"D:\docs\a.pdf");
+        let unc = PathBuf::from(r"\\?\UNC\server\share\a.pdf");
+        assert_eq!(shown_path(&unc), unc.display().to_string());
+    }
+
+    #[test]
     fn render_scale_stays_within_core_limits() {
         let pages = [
             PageInfo {
@@ -2661,6 +3497,10 @@ mod tests {
                 banners: vec![],
                 next_banner: 0,
                 settings_open: false,
+                settings_tab: SettingsTab::default(),
+                pages_open: true,
+                home_recent: false,
+                tool_anchor: None,
                 confirm: None,
                 allow_close: false,
                 title: String::new(),
@@ -2767,12 +3607,15 @@ mod tests {
                 |ui| {
                     let p = theme::palette(ui);
                     egui::Panel::top("test-toolbar").show(ui, |ui| app.toolbar(ui, &p));
-                    egui::Panel::top("test-find").show(ui, |ui| app.find_bar(ui));
-                    egui::Panel::top("test-object").show(ui, |ui| app.object_tools(ui));
+                    egui::Panel::bottom("test-status").show(ui, |ui| app.status_bar(ui, &p));
                     egui::Panel::left("test-thumbnails")
-                        .exact_size(180.0)
-                        .show(ui, |ui| app.thumbnails(ui));
-                    egui::CentralPanel::default().show(ui, |ui| app.canvas(ui, &p));
+                        .exact_size(200.0)
+                        .show(ui, |ui| app.thumbnails(ui, &p));
+                    let canvas = egui::CentralPanel::default()
+                        .show(ui, |ui| app.canvas(ui, &p))
+                        .response
+                        .rect;
+                    app.floating_tools(ui.ctx(), canvas, &p);
                 },
             );
             assert!(!output.shapes.is_empty());
@@ -2811,11 +3654,14 @@ mod tests {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 820.0))),
                 ..Default::default()
             },
-            |ui| match tool {
-                0 => app.text_tools(ui),
-                1 => app.object_tools(ui),
-                2 => app.find_bar(ui),
-                _ => app.thumbnails(ui),
+            |ui| {
+                let p = theme::palette(ui);
+                match tool {
+                    0 => app.text_tools(ui, &p),
+                    1 => app.object_tools(ui, &p),
+                    2 => app.find_bar(ui, &p),
+                    _ => app.thumbnails(ui, &p),
+                }
             },
         );
         output.textures_delta.clear();
@@ -2830,6 +3676,13 @@ mod tests {
             }
         }
         panic!("Missing button: {label}");
+    }
+    /// Center of a button drawn with a stable key in the last frame.
+    fn tool_center(ctx: &Context, key: &str) -> Pos2 {
+        ctx.read_response(widgets::tool_id(key))
+            .unwrap_or_else(|| panic!("Missing button: {key}"))
+            .rect
+            .center()
     }
     fn click_at(pos: Pos2) -> Vec<egui::Event> {
         vec![
@@ -2880,22 +3733,26 @@ mod tests {
             Request::StyleText { size: 24.0, .. }
         ));
         app.busy = 0;
-        let shapes = tool_frame(&mut app, &ctx, vec![], 1);
-        let at = button_center(&shapes, "Delete object");
+        tool_frame(&mut app, &ctx, vec![], 1);
+        let at = tool_center(&ctx, "delete-object");
         tool_frame(&mut app, &ctx, click_at(at), 1);
         assert!(matches!(inbox.try_recv().unwrap(), Request::DeleteText(_)));
         app.find.matches = vec![
             (0, vec![[0.0, 0.0, 10.0, 10.0]]),
             (1, vec![[0.0, 0.0, 10.0, 10.0]]),
         ];
-        let shapes = tool_frame(&mut app, &ctx, vec![], 2);
-        let at = button_center(&shapes, "Next");
+        tool_frame(&mut app, &ctx, vec![], 2);
+        let at = tool_center(&ctx, "find-next");
         tool_frame(&mut app, &ctx, click_at(at), 2);
         assert_eq!(app.find.active, 1);
-        let shapes = tool_frame(&mut app, &ctx, vec![], 2);
-        let at = button_center(&shapes, "Next");
+        tool_frame(&mut app, &ctx, vec![], 2);
+        let at = tool_center(&ctx, "find-next");
         tool_frame(&mut app, &ctx, click_at(at), 2);
         assert_eq!(app.find.active, 0);
+        tool_frame(&mut app, &ctx, vec![], 2);
+        let at = tool_center(&ctx, "find-previous");
+        tool_frame(&mut app, &ctx, click_at(at), 2);
+        assert_eq!(app.find.active, 1);
     }
     #[test]
     fn thumbnail_drag_dispatches_page_move() {
@@ -2911,8 +3768,8 @@ mod tests {
             ));
         }
         let shapes = tool_frame(&mut app, &ctx, vec![], 3);
-        let from = button_center(&shapes, "Page 1") - vec2(0.0, 50.0);
-        let to = button_center(&shapes, "Page 2") - vec2(0.0, 50.0);
+        let from = button_center(&shapes, "1") - vec2(0.0, 50.0);
+        let to = button_center(&shapes, "2") - vec2(0.0, 50.0);
         tool_frame(
             &mut app,
             &ctx,
@@ -2950,24 +3807,119 @@ mod tests {
         theme::install(&ctx);
         let (mut app, _inbox, _outbox) = mock_app();
         opened(&mut app, &ctx);
-        let mut output = ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(640.0, 420.0))),
-                ..Default::default()
-            },
-            |ui| {
-                let p = theme::palette(ui);
-                egui::Panel::top("toolbar")
-                    .min_size(48.0)
-                    .show(ui, |ui| app.toolbar(ui, &p));
-            },
-        );
-        for label in [
-            "Open", "Recent", "Save As", "Undo", "Redo", "Add text", "Find", "Settings",
-        ] {
-            let at = button_center(&output.shapes, label);
-            assert!(at.x >= 0.0 && at.x < 640.0, "{label}: {at:?}");
+        for width in [640.0, 1180.0] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 420.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let p = theme::palette(ui);
+                    egui::Panel::top("toolbar")
+                        .min_size(56.0)
+                        .show(ui, |ui| app.toolbar(ui, &p));
+                },
+            );
+            for key in [
+                "open",
+                "recent",
+                "save-as",
+                "undo",
+                "redo",
+                "add-text",
+                "find",
+                "zoom-out",
+                "zoom-presets",
+                "zoom-in",
+                "settings",
+            ] {
+                let rect = ctx.read_response(widgets::tool_id(key)).unwrap().rect;
+                assert!(rect.min.x >= 0.0 && rect.max.x <= width, "{key}: {rect:?}");
+                assert!(rect.max.y <= 56.0, "{key} wrapped: {rect:?}");
+            }
+            if width > 1120.0 {
+                // Wide windows label the main actions.
+                for label in ["Open", "Save As", "Undo", "Redo", "Add text", "Find"] {
+                    button_center(&output.shapes, label);
+                }
+            }
+            output.textures_delta.clear();
         }
-        output.textures_delta.clear();
+    }
+    #[test]
+    fn home_and_settings_pages_render_in_both_themes() {
+        let ctx = Context::default();
+        theme::install(&ctx);
+        let (mut app, _inbox, _outbox) = mock_app();
+        app.recent_files = vec![PathBuf::from(r"C:\Docs\invoice.pdf")];
+        for dark in [false, true] {
+            ctx.set_visuals(if dark {
+                egui::Visuals::dark()
+            } else {
+                egui::Visuals::light()
+            });
+            for page in 0..6 {
+                app.settings_open = page >= 2;
+                app.home_recent = page == 1;
+                app.settings_tab = SettingsTab::ALL[page.max(2) - 2];
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 820.0))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let p = theme::palette(ui);
+                        egui::Panel::top("toolbar").show(ui, |ui| app.toolbar(ui, &p));
+                        if app.settings_open {
+                            egui::Panel::left("nav").show(ui, |ui| app.settings_nav(ui, &p));
+                        }
+                        egui::CentralPanel::default().show(ui, |ui| {
+                            if app.settings_open {
+                                app.settings_page(ui, &p);
+                            } else {
+                                app.empty_state(ui, &p);
+                            }
+                        });
+                    },
+                );
+                let texts: Vec<String> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|c| match &c.shape {
+                        egui::epaint::Shape::Text(t) => Some(t.galley.text().to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                let expected = match page {
+                    0 => "Open a PDF",
+                    1 => "invoice.pdf",
+                    _ => app.settings_tab.title(),
+                };
+                assert!(texts.iter().any(|t| t == expected), "{expected}: {texts:?}");
+                output.textures_delta.clear();
+            }
+        }
+        // The settings nav switches pages.
+        app.settings_open = true;
+        app.settings_tab = SettingsTab::General;
+        let frame = |app: &mut EditorApp, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 820.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let p = theme::palette(ui);
+                    egui::Panel::left("nav").show(ui, |ui| app.settings_nav(ui, &p));
+                },
+            );
+            output.textures_delta.clear();
+        };
+        // The first frame after the page layout changes settles the panel.
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        frame(&mut app, click_at(tool_center(&ctx, "Shortcuts")));
+        assert!(app.settings_tab == SettingsTab::Shortcuts);
     }
 }

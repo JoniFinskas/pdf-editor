@@ -250,3 +250,38 @@ from document lifecycle state, and retain a visible outline for the selected run
 New font resource names avoid collisions, and insertion verifies that existing
 text metadata and transforms are unchanged. UI pointer/keyboard tests supplement
 core round-trip tests without requiring desktop automation or new dependencies.
+
+## Part E: Restyle
+
+The reference images in design/refs/ are kept out of the repository
+(`/design/refs/` in .gitignore) because they are not ours to redistribute.
+
+Match them with egui only, without new dependencies:
+
+- Icons are painted line shapes (app/src/icons.rs) instead of an icon font,
+  so no extra font or license is added. Shared controls (icon buttons, keycaps,
+  segmented control, settings rows) live in app/src/widgets.rs and carry stable
+  ids, which the UI tests use to click icon-only buttons.
+- Palette: charcoal surfaces with a blue accent, yellow find matches and a blue
+  current match. The light theme uses the same structure, since the editor
+  follows the system theme.
+- The document toolbar shows icons with labels and drops the labels below
+  1120 points, instead of wrapping onto a second row. The minimum window width
+  still fits every action.
+- Find and the text-object tools float over the canvas instead of taking a
+  panel row. The text tools sit above the selected object or the new text point.
+- The home page (top bar with Home and Recent, open card, recent list) replaces
+  the old empty state. Recent rows show the folder; no open time is stored, so
+  none is shown.
+- Settings use a left navigation with General, Editing, Shortcuts and About.
+  Rows from the references with no behavior behind them are left out: theme
+  switch, default zoom, recent-file count, save behavior, warning toggles and
+  default font. Fixed behaviors (discard prompts, Save As only) are shown as
+  "Always on" rather than as toggles that would do nothing.
+- Page menus offer Rotate right only, because the core rotates pages clockwise
+  in 90 degree steps. There is no separate Select tool; clicking text selects it.
+- Size and color still need "Apply style": each change is an undoable core
+  edit, and applying on every drag step would flood the history.
+- The status bar keeps the edit hint and the version next to the page count,
+  the pages toggle and the zoom menu. The pages sidebar can be hidden.
+- Canonicalized Windows paths are shown without the `\?\` prefix.

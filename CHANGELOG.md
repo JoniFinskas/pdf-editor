@@ -4,6 +4,13 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+### Changed
+
+- New look: dark charcoal theme with a blue accent (light theme to match),
+  painted icons, a home page with an open card and recent files, a settings
+  page with General, Editing, Shortcuts and About sections, floating find and
+  text toolbars, and a pages sidebar that can be hidden.
+
 ### Added
 
 - Validated command-line PDF opening, preserving spaced and Unicode paths.

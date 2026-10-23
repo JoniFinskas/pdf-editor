@@ -1,9 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod icons;
 mod recovery;
 mod shortcuts;
 mod theme;
+mod widgets;
 mod worker;
 
 use eframe::egui;
