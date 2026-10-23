@@ -3027,6 +3027,11 @@ impl EditorApp {
                                 .filter(|item| item.page == page_no)
                             {
                                 ui.label(format!("{} object", item.kind));
+                                if item.kind == "XObjectForm" && ui.button("Ungroup").clicked() {
+                                    self.busy += 1;
+                                    requests.push(Request::UngroupItem(item.clone()));
+                                    ui.close();
+                                }
                                 if ui.button("Copy").clicked() {
                                     self.busy += 1;
                                     requests.push(Request::CopyItems(vec![item.clone()]));

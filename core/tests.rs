@@ -6,6 +6,117 @@ use lopdf::{
 };
 use std::sync::Mutex;
 static PDFIUM: Mutex<()> = Mutex::new(());
+
+#[test]
+fn ungroup_nested_shared_forms_preserves_render_and_allows_edits() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    for rotation in [0, 90, 180, 270] {
+        let path = temp(&format!("ungroup-{rotation}.pdf"));
+        fs::write(
+            &path,
+            generated("Grouped", false, rotation, 0., false, false),
+        )
+        .unwrap();
+        let original = e.open(&path).unwrap();
+        let mut pdf = parse(&original.bytes).unwrap();
+        let page = pdf.get_pages()[&1];
+        let mut resources = content::resources(&pdf, page).unwrap();
+        let picture = pdf.add_object(Stream::new(dictionary! {
+            "Type" => "XObject", "Subtype" => "Image", "Width" => 1,
+            "Height" => 1, "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8,
+        }, vec![255, 0, 0]));
+        resources.set("XObject", dictionary! { "Picture" => picture });
+        let mut data = pdf.get_page_content_with_limit(page, MAX_STREAM).unwrap();
+        data.extend_from_slice(b" q 0 0 1 rg 20 20 70 20 re f Q");
+        data.extend_from_slice(b" q 25 0 0 25 60 60 cm /Picture Do Q");
+        let child = pdf.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Form",
+                "BBox" => vec![30.into(),30.into(),550.into(),780.into()],
+                "Resources" => resources,
+            },
+            data,
+        ));
+        let parent = pdf.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Form",
+                "BBox" => vec![30.into(),30.into(),550.into(),780.into()],
+                "Matrix" => vec![0.8.into(),0.into(),0.into(),0.8.into(),10.into(),15.into()],
+                "Resources" => dictionary! { "XObject" => dictionary! { "Inner" => child } },
+            },
+            b"/Inner Do".to_vec(),
+        ));
+        let stream = pdf.add_object(Stream::new(
+            lopdf::Dictionary::new(),
+            b"q /Group Do Q q 1 0 0 1 100 0 cm /Group Do Q".to_vec(),
+        ));
+        let page_dict = pdf.get_dictionary_mut(page).unwrap();
+        page_dict.set("Contents", stream);
+        page_dict.set(
+            "Resources",
+            dictionary! { "XObject" => dictionary! { "Group" => parent } },
+        );
+        let mut doc = e.candidate(&original, pdf.clone()).unwrap();
+        let before = doc.bytes.clone();
+        let image = e.render(&doc, 0, 1.).unwrap();
+        let item = e.page_items(&doc, 0).unwrap().remove(0);
+        assert_eq!(item.kind, "XObjectForm");
+        e.ungroup_page_item(&mut doc, &item).unwrap();
+        assert_eq!(image.rgba, e.render(&doc, 0, 1.).unwrap().rgba);
+        let items = e.page_items(&doc, 0).unwrap();
+        assert_eq!(items.iter().filter(|i| i.kind == "XObjectForm").count(), 1);
+        assert!(items.iter().any(|i| i.kind == "Text"));
+        assert!(items.iter().any(|i| i.kind == "Image"));
+        let path_item = items.iter().find(|i| i.kind == "Path").unwrap();
+        e.edit_page_items(
+            &mut doc,
+            std::slice::from_ref(path_item),
+            ObjectAction::Move { dx: 10., dy: 8. },
+        )
+        .unwrap();
+        assert_ne!(image.rgba, e.render(&doc, 0, 1.).unwrap().rgba);
+        doc.undo();
+        let editable = e.text_objects(&doc, 0).unwrap().remove(0);
+        e.edit(&mut doc, &editable, "Group").unwrap();
+        assert_eq!(e.text_objects(&doc, 0).unwrap()[0].text, "Group");
+        doc.undo();
+        let text = e
+            .page_items(&doc, 0)
+            .unwrap()
+            .into_iter()
+            .find(|i| i.kind == "Text")
+            .unwrap();
+        e.edit_page_items(&mut doc, &[text], ObjectAction::Delete)
+            .unwrap();
+        doc.undo();
+        assert_eq!(image.rgba, e.render(&doc, 0, 1.).unwrap().rgba);
+        let saved = temp(&format!("ungroup-saved-{rotation}.pdf"));
+        let _ = fs::remove_file(&saved);
+        doc.save_as(&saved).unwrap();
+        assert_eq!(
+            image.rgba,
+            e.render(&e.open(&saved).unwrap(), 0, 1.).unwrap().rgba
+        );
+        doc.undo();
+        assert_eq!(doc.bytes, before);
+        assert!(e.ungroup_page_item(&mut doc, &item).is_err());
+        pdf.get_object_mut(parent)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .dict
+            .set("Group", dictionary! { "S" => "Transparency" });
+        let mut unsupported = e.candidate(&original, pdf).unwrap();
+        let bytes = unsupported.bytes.clone();
+        let item = e.page_items(&unsupported, 0).unwrap().remove(0);
+        assert!(e.ungroup_page_item(&mut unsupported, &item).is_err());
+        assert_eq!(unsupported.bytes, bytes);
+        assert!(!unsupported.can_undo());
+        fs::remove_file(path).unwrap();
+        fs::remove_file(saved).unwrap();
+    }
+}
 /// Repository root; the core manifest lives one level below it.
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

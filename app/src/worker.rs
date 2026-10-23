@@ -58,6 +58,7 @@ pub enum Request {
         Vec<pdf_editor_core::PageItem>,
         pdf_editor_core::ObjectAction,
     ),
+    UngroupItem(pdf_editor_core::PageItem),
     CopyItems(Vec<pdf_editor_core::PageItem>),
     PasteItems(u16),
     StyleText {
@@ -551,6 +552,13 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 Err(e) => failed(e),
             }
         }
+        Request::UngroupItem(item) => match engine.ungroup_page_item(state.doc.as_mut()?, &item) {
+            Ok(()) => {
+                state.generation += 1;
+                Some(content_changed(state, ChangeKind::Edit, None, 1))
+            }
+            Err(e) => failed(e),
+        },
         Request::CopyItems(items) => match engine.copy_page_items(state.doc.as_ref()?, &items) {
             Ok(clipboard) => {
                 state.clipboard = Some(clipboard);

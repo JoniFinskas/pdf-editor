@@ -206,3 +206,13 @@ Paragraph fallback substitution stays inside the paragraph even when the ordinar
 
 ## Corpus validation executable
 The opt-in corpus-runner binary exercises existing core APIs inside Docker only. It adds no public library functions and suppresses parser diagnostics and panic text.
+
+### Ungroup grouped artwork
+
+`Engine::ungroup_page_item(document, item)` expands a selected Form XObject and
+its nested forms into independent page objects in one undoable transaction.
+Selection uses the current revision and page object index. Existing transforms,
+resource bindings, paint order and form bounding-box clips remain intact; other
+instances sharing the same form remain grouped. Unsupported transparency groups,
+optional-content forms, reference forms, inline images, excessive nesting and
+ambiguous selections return an error without changing document history.
