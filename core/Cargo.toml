@@ -12,3 +12,4 @@ path = "lib.rs"
 pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_latest", "thread_safe"] }
 skrifa = "=0.48.0"
 lopdf = { version = "=0.45.0", default-features = false }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }

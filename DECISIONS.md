@@ -308,3 +308,9 @@ human run; a release-mode build alone does not justify a version bump or tag.
 ## Part F: Windows printing
 
 Use the native Windows Forms print dialog and Windows print spooler through the installed Windows PowerShell runtime; no new package or PDF file association is required. The worker prepares private BMP pages at up to 300 DPI (16-megapixel page and 512-MiB spool bounds), fits them within printer margins, and removes temporary files on cancel, success or failure. Printing uses the edited document and does not alter its saved state. Physical printer checks remain separate from automated raster/spool tests.
+
+## Part F: Signatures
+
+Signatures use bounded PNG/JPEG decoding and a transparent drawing pad. Reusable copies live in the config folder's `signatures` directory with exclusive filenames. Placement uses PDF-point controls and an on-page preview; width and height remain independently adjustable before placement. Embedded image and alpha-mask streams are ordinary page content, so Save As flattens signatures without external file dependencies. Undo removes a placement.
+
+Promoted the existing locked `image = 0.25.10` crate to an exact direct dependency with only PNG and JPEG features. Native image decoding is needed for imported signatures and pictures. Release-date evidence in the dependency-age audit: image 2026-03-10, zune-core 0.5.3 2026-08-07, zune-jpeg 0.5.15 2026-03-26; all precede the 2026-10-09 cutoff.

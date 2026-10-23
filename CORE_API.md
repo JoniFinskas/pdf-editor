@@ -86,3 +86,11 @@ Keyboard commands are UI dispatch only: Open/Save As use `Engine::open`/`Documen
 
 - `Engine::prepare_print(document)` -> temporary raster `PrintJob`, at up to 300 DPI within render/spool limits; dropping it removes the job.
 - `PrintJob::directory()` / `page_count()` -> private spool path and number of pages for native print integration.
+
+## Pictures and signatures
+
+- `Picture::open(path) -> Result<Picture>`: bounded PNG/JPG decode to RGBA.
+- `signature_image(strokes) -> Result<Picture>`: normalized drawing strokes to transparent signature pixels.
+- `store_signature(folder, picture) -> Result<PathBuf>`: save a reusable PNG under a new exclusive filename.
+- `signature_files(folder) -> Result<Vec<PathBuf>>`: list saved signature PNGs.
+- `Engine::place_picture(document, picture, Placement) -> Result<()>`: embed transparent image at PDF-point position and size as undoable page content.

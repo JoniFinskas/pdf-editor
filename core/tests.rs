@@ -1061,3 +1061,57 @@ fn print_spool_matches_page_count_and_cleans_up() {
     drop(job);
     assert!(!path.exists());
 }
+
+#[test]
+fn signature_round_trip_preserves_text_and_undo() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut doc = e.open(&fixture("multi-page.pdf")).unwrap();
+    let before = e.render(&doc, 0, 1.0).unwrap().rgba;
+    let text: Vec<_> = e
+        .text_objects(&doc, 0)
+        .unwrap()
+        .into_iter()
+        .map(|o| o.text)
+        .collect();
+    let signature = signature_image(&[vec![[0.1, 0.2], [0.5, 0.8], [0.9, 0.3]]]).unwrap();
+    let folder = temp("signature-library");
+    fs::create_dir_all(&folder).unwrap();
+    let stored = store_signature(&folder, &signature).unwrap();
+    let loaded = Picture::open(&stored).unwrap();
+    assert_eq!(loaded.rgba, signature.rgba);
+    assert!(signature_files(&folder).unwrap().contains(&stored));
+    e.place_picture(
+        &mut doc,
+        &loaded,
+        Placement {
+            page: 0,
+            left: 30.0,
+            bottom: 40.0,
+            width: 180.0,
+            height: 60.0,
+        },
+    )
+    .unwrap();
+    let after = e.render(&doc, 0, 1.0).unwrap().rgba;
+    assert_ne!(before, after);
+    assert_eq!(
+        text,
+        e.text_objects(&doc, 0)
+            .unwrap()
+            .into_iter()
+            .map(|o| o.text)
+            .collect::<Vec<_>>()
+    );
+    let output = temp("signature-roundtrip.pdf");
+    let _ = fs::remove_file(&output);
+    doc.save_as(&output).unwrap();
+    assert_eq!(
+        after,
+        e.render(&e.open(&output).unwrap(), 0, 1.0).unwrap().rgba
+    );
+    doc.undo();
+    assert_eq!(before, e.render(&doc, 0, 1.0).unwrap().rgba);
+    fs::remove_file(output).unwrap();
+    fs::remove_file(stored).unwrap();
+}

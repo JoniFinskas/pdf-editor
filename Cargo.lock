@@ -1477,6 +1477,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -2220,6 +2222,7 @@ dependencies = [
 name = "pdf-editor-core"
 version = "0.1.0"
 dependencies = [
+ "image",
  "lopdf",
  "pdfium-render",
  "skrifa 0.48.0",

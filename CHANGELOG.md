@@ -74,3 +74,5 @@ First development version.
   substitution setting, undo/redo and Save As.
 - Desktop editor: toolbar, page canvas with zoom, hover and click editing,
   font warning banners, settings modal, light and dark themes.
+
+- Draw, import, save and place reusable transparent signatures.

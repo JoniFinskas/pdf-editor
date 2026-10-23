@@ -20,6 +20,7 @@ const SAMPLE_SPAN: f32 = 1000.0;
 pub enum Request {
     Open(PathBuf),
     Print,
+    PlacePicture(pdf_editor_core::Picture, pdf_editor_core::Placement),
     Find(String),
     Fonts,
     Thumbnail(u16),
@@ -348,6 +349,16 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                         result.warning,
                         result.objects_changed,
                     ))
+                }
+                Err(e) => failed(e),
+            }
+        }
+        Request::PlacePicture(picture, placement) => {
+            let doc = state.doc.as_mut()?;
+            match engine.place_picture(doc, &picture, placement) {
+                Ok(()) => {
+                    state.generation += 1;
+                    Some(changed(state, ChangeKind::Edit, None, 1))
                 }
                 Err(e) => failed(e),
             }

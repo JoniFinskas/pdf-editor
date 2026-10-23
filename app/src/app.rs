@@ -53,6 +53,7 @@ pub struct EditorApp {
     recent_files: Vec<PathBuf>,
     dragging_page: Option<usize>,
     text_tool: TextTool,
+    signatures: crate::signatures::Signatures,
     find: FindState,
     worker: Worker,
     engine_alive: bool,
@@ -323,6 +324,7 @@ impl EditorApp {
                 .map_or_else(Vec::new, |s| s.recent_files),
             dragging_page: None,
             text_tool: TextTool::default(),
+            signatures: Default::default(),
             find: FindState::default(),
             worker,
             engine_alive: true,
@@ -1581,6 +1583,16 @@ impl EditorApp {
             let mut open = None;
             Popup::menu(&recent).show(|ui| {
                 ui.set_min_width(260.0);
+                if Btn::new("Signatures…")
+                    .enabled(idle)
+                    .min_width(260.0)
+                    .align_left()
+                    .show(ui, p)
+                    .clicked()
+                {
+                    self.signatures.open = true;
+                    ui.close();
+                }
                 if Btn::new("Print…")
                     .enabled(idle)
                     .min_width(260.0)
@@ -2164,6 +2176,15 @@ impl EditorApp {
                     }
                 }
 
+                if let Some(objects) = &page.objects {
+                    self.signatures.paint_placement(
+                        &painter,
+                        page_no,
+                        rect.min,
+                        scale,
+                        objects.transform,
+                    );
+                }
                 // Hover and click hit testing against cached object extents.
                 let response = ui.interact(rect, Id::new(("pdf-page", index)), Sense::click());
                 // A line clicked while the previous edit was applied opens
@@ -2839,6 +2860,20 @@ impl eframe::App for EditorApp {
             self.floating_tools(&ctx, central.response.rect, &p);
         }
 
+        let signature_folder = self
+            .config_path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("signatures"));
+        let pages = self.doc.as_ref().map_or(0, |d| d.pages.len());
+        if let Some(request) =
+            self.signatures
+                .show(&ctx, &p, signature_folder.as_deref(), pages, self.busy == 0)
+        {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
         self.banners(&ctx, toolbar_bottom, &p);
         self.confirm_modal(&ctx, &p);
         self.restore_modal(&ctx, &p);
@@ -3505,6 +3540,7 @@ mod tests {
                 recent_files: vec![],
                 dragging_page: None,
                 text_tool: TextTool::default(),
+                signatures: Default::default(),
                 find: FindState::default(),
                 worker,
                 engine_alive: true,

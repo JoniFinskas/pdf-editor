@@ -4,6 +4,7 @@ mod app;
 mod icons;
 mod recovery;
 mod shortcuts;
+mod signatures;
 mod theme;
 mod widgets;
 mod worker;
