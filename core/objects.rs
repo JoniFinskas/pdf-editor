@@ -62,6 +62,7 @@ impl Engine {
         target: u16,
     ) -> Result<()> {
         guarded(|| {
+            let mut wrappers = Vec::new();
             let bytes = {
                 let source = self
                     .pdfium
@@ -70,12 +71,19 @@ impl Engine {
                 let source_page = source.pages().get(i32::from(clipboard.items[0].page))?;
                 let mut page = destination.pages().get(i32::from(target))?;
                 page.set_content_regeneration_strategy(PdfPageContentRegenerationStrategy::Manual);
-                for item in &clipboard.items {
-                    source_page
-                        .objects()
-                        .get(item.index)?
-                        .copy_to_page(&mut page)?
-                        .translate(PdfPoints::new(12.0), PdfPoints::new(-12.0))?;
+                // Form copying temporarily moves/restores native objects. Capture handles
+                // first so restoration order cannot change later selection ordinals.
+                let objects = clipboard
+                    .items
+                    .iter()
+                    .map(|item| source_page.objects().get(item.index))
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                for mut object in objects {
+                    if object.object_type() != PdfPageObjectType::XObjectForm {
+                        wrappers.push(page.objects().len());
+                    }
+                    let mut copied = copy_native_object(&mut object, &source_page, &mut page)?;
+                    copied.translate(PdfPoints::new(12.0), PdfPoints::new(-12.0))?;
                 }
                 page.regenerate_content()?;
                 drop(page);
@@ -84,7 +92,8 @@ impl Engine {
             if bytes.len() > MAX_FILE {
                 return Err(err("Edited PDF exceeds size limit"));
             }
-            let candidate = self.candidate(doc, parse(&bytes)?)?;
+            let mut candidate = self.candidate(doc, parse(&bytes)?)?;
+            self.expand_copy_wrappers(&mut candidate, target, wrappers)?;
             self.page_items(&candidate, target)?;
             doc.accept(candidate.bytes);
             Ok(())
@@ -194,10 +203,10 @@ impl Engine {
             };
             let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
             let source = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
+            let source_page = source.pages().get(i32::from(first.page))?;
             let mut page = pdf.pages().get(i32::from(first.page))?;
             // Regenerate once after the batch, not once per glyph in a paragraph.
             page.set_content_regeneration_strategy(PdfPageContentRegenerationStrategy::Manual);
-            let source_page = source.pages().get(i32::from(first.page))?;
             let mut indices: Vec<_> = items.iter().map(|i| i.index).collect();
             indices.sort_unstable();
             indices.dedup();
@@ -207,6 +216,16 @@ impl Engine {
             if matches!(action, ObjectAction::Delete) {
                 indices.reverse();
             }
+            let mut copies = if matches!(action, ObjectAction::Duplicate { .. }) {
+                indices
+                    .iter()
+                    .map(|index| source_page.objects().get(*index))
+                    .collect::<std::result::Result<Vec<_>, _>>()?
+            } else {
+                Vec::new()
+            }
+            .into_iter();
+            let mut wrappers = Vec::new();
             for index in indices {
                 match action {
                     ObjectAction::Resize { .. } => {
@@ -224,14 +243,18 @@ impl Engine {
                             .translate(PdfPoints::new(dx), PdfPoints::new(dy))?;
                     }
                     ObjectAction::Duplicate { .. } => {
-                        source_page
-                            .objects()
-                            .get(index)?
-                            .copy_to_page(&mut page)?
+                        let mut object = copies
+                            .next()
+                            .ok_or_else(|| err("Object copy selection is incomplete"))?;
+                        if object.object_type() != PdfPageObjectType::XObjectForm {
+                            wrappers.push(page.objects().len());
+                        }
+                        copy_native_object(&mut object, &source_page, &mut page)?
                             .translate(PdfPoints::new(dx), PdfPoints::new(dy))?;
                     }
                 }
             }
+            drop(copies);
             page.regenerate_content()?;
             drop(page);
             let bytes = pdf.save_to_bytes()?;
@@ -241,10 +264,46 @@ impl Engine {
             if bytes.len() > MAX_FILE {
                 return Err(err("Edited PDF exceeds size limit"));
             }
-            let candidate = self.candidate(doc, parse(&bytes)?)?;
+            let mut candidate = self.candidate(doc, parse(&bytes)?)?;
+            self.expand_copy_wrappers(&mut candidate, first.page, wrappers)?;
             self.page_items(&candidate, first.page)?;
             doc.accept(candidate.bytes);
             Ok(())
         })
     }
+
+    fn expand_copy_wrappers(
+        &self,
+        doc: &mut Document,
+        page: u16,
+        indices: Vec<usize>,
+    ) -> Result<()> {
+        // Native copies wrap even individual text/images. Expand only those wrappers
+        // on the candidate so imported objects stay directly editable. Reverse order
+        // keeps earlier object ordinals stable, and the destination receives one undo.
+        for index in indices.into_iter().rev() {
+            let item = self
+                .page_items(doc, page)?
+                .into_iter()
+                .find(|item| item.index == index)
+                .ok_or_else(|| err("Copied object no longer exists"))?;
+            self.ungroup_page_item(doc, &item)?;
+            doc.undo.clear();
+        }
+        Ok(())
+    }
+}
+
+fn copy_native_object<'a>(
+    object: &mut PdfPageObject<'a>,
+    source: &'a PdfPage<'a>,
+    target: &mut PdfPage<'a>,
+) -> Result<PdfPageObject<'a>> {
+    Ok(if object.object_type() == PdfPageObjectType::XObjectForm {
+        let mut group = source.objects().create_empty_group();
+        group.push(object)?;
+        group.copy_to_page(target)?
+    } else {
+        object.copy_to_page(target)?
+    })
 }

@@ -12,6 +12,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ### Added
 
+- Copy and paste PDF objects between tabs with a private in-memory clipboard that survives closing its source tab.
+
 - Eight resize handles for selected text, images, vector paths and grouped artwork, with a drag preview and one undo step.
 
 ### Added

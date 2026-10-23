@@ -2346,8 +2346,23 @@ fn artwork_objects_copy_move_delete_and_paste_snapshot() {
             .find(|i| i.kind == kind)
             .unwrap();
         if kind == "XObjectForm" {
-            continue;
+            let count = e.page_items(&doc, 0).unwrap().len();
+            e.edit_page_items(
+                &mut doc,
+                std::slice::from_ref(&item),
+                ObjectAction::Duplicate { dx: 15.0, dy: 5.0 },
+            )
+            .unwrap();
+            assert_eq!(e.page_items(&doc, 0).unwrap().len(), count + 1);
+            assert!(doc.undo());
+            assert_eq!(doc.bytes, original);
         }
+        let item = e
+            .page_items(&doc, 0)
+            .unwrap()
+            .into_iter()
+            .find(|i| i.kind == kind)
+            .unwrap();
         let clipboard = e
             .copy_page_items(&doc, std::slice::from_ref(&item))
             .unwrap();
@@ -2536,4 +2551,176 @@ fn resize_text_preserves_content_and_undo_on_rotated_pages() {
         assert_eq!(doc.bytes, original);
         assert!(doc.redo());
     }
+}
+
+#[test]
+fn object_clipboard_copies_text_and_images_between_independent_documents() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut source = e.open(&fixture("unicode-cid.pdf")).unwrap();
+    e.place_picture(
+        &mut source,
+        &Picture {
+            width: 2,
+            height: 2,
+            rgba: vec![255; 16],
+        },
+        Placement {
+            page: 0,
+            left: 100.0,
+            bottom: 100.0,
+            width: 25.0,
+            height: 25.0,
+        },
+    )
+    .unwrap();
+    let text = e.text_objects(&source, 0).unwrap()[0].clone();
+    let items: Vec<_> = e
+        .page_items(&source, 0)
+        .unwrap()
+        .into_iter()
+        .filter(|i| i.index == text.index || i.kind == "Image")
+        .collect();
+    assert_eq!(items.len(), 2);
+    let clipboard = e.copy_page_items(&source, &items).unwrap();
+    drop(source);
+    let mut destination = e.open(&fixture("rotated.pdf")).unwrap();
+    let original = destination.bytes.clone();
+    let count = e.page_items(&destination, 0).unwrap().len();
+    assert!(
+        e.paste_page_items(&mut destination, &clipboard, u16::MAX)
+            .is_err()
+    );
+    assert_eq!(destination.bytes, original);
+    e.paste_page_items(&mut destination, &clipboard, 0).unwrap();
+    assert_eq!(e.page_items(&destination, 0).unwrap().len(), count + 2);
+    let pasted_text = e
+        .text_objects(&destination, 0)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.index == count)
+        .unwrap();
+    assert_eq!(pasted_text.text, text.text);
+    assert_eq!(pasted_text.font, text.font);
+    assert_eq!(
+        e.page_items(&destination, 0).unwrap()[count + 1].kind,
+        "Image"
+    );
+    let pasted = destination.bytes.clone();
+    e.edit(&mut destination, &pasted_text, "AB").unwrap();
+    assert_eq!(
+        e.text_objects(&destination, 0)
+            .unwrap()
+            .into_iter()
+            .find(|item| item.index == count)
+            .unwrap()
+            .text,
+        "AB"
+    );
+    assert!(destination.undo());
+    assert_eq!(destination.bytes, pasted);
+    e.render(&destination, 0, 1.0).unwrap();
+    let path = temp("cross-document-paste.pdf");
+    let _ = fs::remove_file(&path);
+    destination.save_as(&path).unwrap();
+    assert_eq!(
+        e.page_items(&e.open(&path).unwrap(), 0).unwrap().len(),
+        count + 2
+    );
+    assert!(destination.undo());
+    assert_eq!(destination.bytes, original);
+    assert!(destination.redo());
+}
+
+#[test]
+fn grouped_clipboard_preserves_shared_forms_clips_and_paint_order() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut pdf = parse(&generated("Unselected", false, 0, 0.0, false, false)).unwrap();
+    let page = *pdf.get_pages().get(&1).unwrap();
+    let form = pdf.add_object(Stream::new(
+        dictionary! {
+            "Type"=>"XObject", "Subtype"=>"Form",
+            "BBox"=>vec![0.into(),0.into(),20.into(),20.into()],
+            "Matrix"=>vec![0.into(),1.into(),(-1).into(),0.into(),20.into(),0.into()],
+            "Resources"=>dictionary! {}
+        },
+        b"0 1 0 rg 0 0 30 20 re f 1 0 0 rg 3 3 8 8 re f".to_vec(),
+    ));
+    let resource = pdf
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Resources")
+        .unwrap()
+        .clone();
+    let mut resources = match resource {
+        Object::Reference(id) => pdf.get_dictionary(id).unwrap().clone(),
+        Object::Dictionary(d) => d,
+        _ => panic!("fixture resources"),
+    };
+    resources.set("XObject", dictionary! { "Shared"=>form });
+    resources.set(
+        "ExtGState",
+        dictionary! { "Half"=>dictionary! { "Type"=>"ExtGState","ca"=>0.5,"CA"=>0.5 } },
+    );
+    pdf.get_dictionary_mut(page)
+        .unwrap()
+        .set("Resources", resources);
+    let selected = b"q 65 65 18 18 re W n /Half gs 1.5 0 0 1.5 60 60 cm /Shared Do Q\nq 0 0 1 rg 68 68 7 7 re f Q\nq 1 0 0 1 110 70 cm /Shared Do Q\n";
+    let mut content = pdf.get_page_content_with_limit(page, MAX_STREAM).unwrap();
+    content.extend_from_slice(selected);
+    content.extend(b"q 1 0 0 1 210 140 cm /Shared Do Q");
+    let stream = pdf.add_object(Stream::new(dictionary! {}, content));
+    pdf.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    let path = temp("grouped-copy-source.pdf");
+    pdf.save(&path).unwrap();
+    let source = e.open(&path).unwrap();
+    let original = source.bytes.clone();
+    let items: Vec<_> = e
+        .page_items(&source, 0)
+        .unwrap()
+        .into_iter()
+        .filter(|item| item.kind != "Text" && item.bounds.left < 180.0)
+        .collect();
+    assert_eq!(items.len(), 3);
+    let clipboard = e.copy_page_items(&source, &items).unwrap();
+    assert_eq!(source.bytes, original);
+    drop(source);
+    let empty = pdf.add_object(Stream::new(dictionary! {}, Vec::new()));
+    pdf.get_dictionary_mut(page).unwrap().set("Contents", empty);
+    pdf.get_dictionary_mut(page).unwrap().set("Rotate", 90);
+    let destination_path = temp("grouped-copy-destination.pdf");
+    pdf.save(&destination_path).unwrap();
+    let mut destination = e.open(&destination_path).unwrap();
+    let before = destination.bytes.clone();
+    e.paste_page_items(&mut destination, &clipboard, 0).unwrap();
+    assert_eq!(e.page_items(&destination, 0).unwrap().len(), 3);
+    let mut expected = b"q 1 0 0 1 12 -12 cm\n".to_vec();
+    expected.extend_from_slice(selected);
+    expected.extend(b"Q");
+    let stream = pdf.add_object(Stream::new(dictionary! {}, expected));
+    pdf.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    let expected_path = temp("grouped-copy-expected.pdf");
+    pdf.save(&expected_path).unwrap();
+    let expected = e.render(&e.open(&expected_path).unwrap(), 0, 2.0).unwrap();
+    let actual = e.render(&destination, 0, 2.0).unwrap();
+    assert_eq!(
+        actual.rgba, expected.rgba,
+        "Form clips, transforms, opacity and ordering must survive copy"
+    );
+    let saved = temp("grouped-copy-saved.pdf");
+    let _ = fs::remove_file(&saved);
+    destination.save_as(&saved).unwrap();
+    assert_eq!(
+        e.render(&e.open(&saved).unwrap(), 0, 2.0).unwrap().rgba,
+        expected.rgba
+    );
+    assert!(destination.undo());
+    assert_eq!(destination.bytes, before);
+    assert!(destination.redo());
+    assert_eq!(fs::read(path).unwrap(), original);
 }

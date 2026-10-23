@@ -46,5 +46,4 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
 Paragraph reflow, forms, annotations, image editing and OCR are implemented.
 Nested Form XObject text and ambiguous text mappings remain unsupported for text
 rewriting. Objects mode moves/deletes top-level grouped artwork as a whole;
-unsupported native copies fail cleanly. Ungrouping, cross-tab object clipboard,
-and arbitrary nested-object editing remain unimplemented.
+unsupported native copies fail cleanly. Ungrouping and arbitrary nested-object editing remain unimplemented.
