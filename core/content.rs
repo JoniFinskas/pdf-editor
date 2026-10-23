@@ -170,7 +170,7 @@ fn type3_covers(doc: &lopdf::Document, font: &Dictionary, text: &str) -> bool {
     };
     check().unwrap_or(false)
 }
-fn resources(doc: &lopdf::Document, page: ObjectId) -> Result<Dictionary> {
+pub(crate) fn resources(doc: &lopdf::Document, page: ObjectId) -> Result<Dictionary> {
     let (local, parents) = doc.get_page_resources(page)?;
     if let Some(local) = local {
         return Ok(local.clone());

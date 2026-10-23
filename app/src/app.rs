@@ -33,6 +33,7 @@ const MAX_RENDER_PIXELS: f32 = 15_500_000.0;
 const KEEP_PAGES: usize = 2;
 
 pub struct EditorApp {
+    text_tool: TextTool,
     find: FindState,
     worker: Worker,
     engine_alive: bool,
@@ -58,6 +59,29 @@ pub struct EditorApp {
     orphans: Vec<Orphan>,
     /// The copy being opened for restore.
     restoring: Option<Orphan>,
+}
+
+struct TextTool {
+    adding: bool,
+    text: String,
+    font: String,
+    fonts: Vec<String>,
+    size: f32,
+    color: [u8; 3],
+    at: Option<(u16, Pos2)>,
+}
+impl Default for TextTool {
+    fn default() -> Self {
+        Self {
+            adding: false,
+            text: "New text".into(),
+            font: "ArialMT".into(),
+            fonts: vec![],
+            size: 16.0,
+            color: [0, 0, 0],
+            at: None,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -217,6 +241,7 @@ impl EditorApp {
         let orphans = recovery::orphans();
         let worker = Worker::spawn(cc.egui_ctx.clone(), library.unwrap_or_default(), policy);
         let mut app = Self {
+            text_tool: TextTool::default(),
             find: FindState::default(),
             worker,
             engine_alive: true,
@@ -468,6 +493,7 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::Fonts(fonts) => self.text_tool.fonts = fonts,
             Reply::Found {
                 generation,
                 query,
@@ -491,6 +517,8 @@ impl EditorApp {
                 pages,
                 suggested,
             } => {
+                self.text_tool.adding = false;
+                self.text_tool.at = None;
                 self.find.matches.clear();
                 self.find.query.clear();
                 self.busy = self.busy.saturating_sub(1);
@@ -768,6 +796,53 @@ impl EditorApp {
         }
     }
 
+    fn text_tools(&mut self, ui: &mut Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Click a page to choose the text baseline.");
+            ui.text_edit_singleline(&mut self.text_tool.text);
+            egui::ComboBox::from_id_salt("system-font")
+                .selected_text(&self.text_tool.font)
+                .show_ui(ui, |ui| {
+                    for name in &self.text_tool.fonts {
+                        ui.selectable_value(&mut self.text_tool.font, name.clone(), name);
+                    }
+                });
+            ui.add(
+                egui::DragValue::new(&mut self.text_tool.size)
+                    .range(1.0..=1000.0)
+                    .suffix(" pt"),
+            );
+            ui.color_edit_button_srgb(&mut self.text_tool.color);
+            if ui
+                .add_enabled(
+                    self.busy == 0 && self.text_tool.at.is_some(),
+                    Button::new("Place text"),
+                )
+                .clicked()
+            {
+                if let Some((page, at)) = self.text_tool.at {
+                    self.busy += 1;
+                    self.send(Request::AddText {
+                        text: pdf_editor_core::NewText {
+                            page,
+                            x: 0.0,
+                            y: 0.0,
+                            text: self.text_tool.text.clone(),
+                            font: self.text_tool.font.clone(),
+                            size: self.text_tool.size,
+                            color: self.text_tool.color,
+                        },
+                        raster: (at.x, at.y),
+                    });
+                    self.text_tool.adding = false;
+                }
+            }
+            if ui.button("Cancel").clicked() {
+                self.text_tool.adding = false;
+            }
+        });
+    }
+
     fn go_match(&mut self) {
         if let Some((page, boxes)) = self.find.matches.get(self.find.active) {
             if let Some(doc) = &mut self.doc {
@@ -934,6 +1009,14 @@ impl EditorApp {
                 self.redo();
             }
             divider(ui, p);
+            if tool_button(ui, "Add text", has_doc && idle, "Place a new text box").clicked() {
+                self.commit_edit();
+                self.text_tool.adding = true;
+                self.text_tool.at = None;
+                if self.text_tool.fonts.is_empty() {
+                    self.send(Request::Fonts);
+                }
+            }
             self.zoom_controls(ui, has_doc);
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1237,7 +1320,19 @@ impl EditorApp {
                         e.page == index && e.line.objects[0].index == line.objects[0].index
                     })
                 };
-                if let Some(line) = hit {
+                if self.text_tool.adding && response.clicked() && !busy {
+                    if let Some(pos) = response.interact_pointer_pos() {
+                        self.text_tool.at = Some((page_no, ((pos - rect.min) / scale).to_pos2()));
+                    }
+                }
+                if let Some((pg, at)) = self.text_tool.at
+                    && pg == page_no
+                    && self.text_tool.adding
+                {
+                    let at = rect.min + at.to_vec2() * scale;
+                    painter.circle_stroke(at, 5.0, Stroke::new(1.5, p.accent));
+                }
+                if let Some(line) = hit.filter(|_| !self.text_tool.adding) {
                     if !editing_this(line) && !busy {
                         let screen = to_screen(line.rect, rect, scale);
                         painter.rect_stroke(
@@ -1749,6 +1844,9 @@ impl eframe::App for EditorApp {
             .exact_size(28.0)
             .show(ui, |ui| self.status_bar(ui, &p));
 
+        if self.text_tool.adding && !self.settings_open {
+            egui::Panel::top("text-tools").show(ui, |ui| self.text_tools(ui));
+        }
         if self.find.open && !self.settings_open {
             egui::Panel::top("find").show(ui, |ui| self.find_bar(ui));
         }

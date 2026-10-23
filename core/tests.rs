@@ -802,3 +802,41 @@ fn search_matches_and_empty_query() {
     assert!(matches.iter().all(|m| !m.bounds.is_empty()));
     assert!(e.find_text(&doc, "\0").is_err());
 }
+
+#[test]
+fn new_text_roundtrip_and_history() {
+    let _lock = PDFIUM.lock().unwrap();
+    let e = engine();
+    let mut doc = e.open(&fixture("rotated.pdf")).unwrap();
+    let before = e.text_objects(&doc, 0).unwrap();
+    let text = NewText {
+        page: 0,
+        x: 80.0,
+        y: 150.0,
+        text: "Added äöå".into(),
+        font: "Arial".into(),
+        size: 22.0,
+        color: [30, 80, 160],
+    };
+    assert!(!e.system_fonts().unwrap().is_empty());
+    e.add_text(&mut doc, &text).unwrap();
+    let after = e.text_objects(&doc, 0).unwrap();
+    assert_eq!(after.len(), before.len() + 1);
+    assert_eq!(after.last().unwrap().text, text.text);
+    assert_eq!(after.last().unwrap().color[..3], text.color);
+    assert!((after.last().unwrap().size - text.size).abs() < 0.01);
+    for (old, new) in before.iter().zip(&after) {
+        assert_eq!(old.text, new.text);
+        assert_eq!(old.matrix, new.matrix);
+    }
+    assert!(doc.undo());
+    assert_eq!(e.text_objects(&doc, 0).unwrap().len(), before.len());
+    assert!(doc.redo());
+    assert_eq!(e.text_objects(&doc, 0).unwrap().len(), before.len() + 1);
+    let mut invalid = text.clone();
+    invalid.size = f32::NAN;
+    assert!(e.add_text(&mut doc, &invalid).is_err());
+    invalid = text;
+    invalid.font = "NonexistentSelectedFontXYZ".into();
+    assert!(e.add_text(&mut doc, &invalid).is_err());
+}

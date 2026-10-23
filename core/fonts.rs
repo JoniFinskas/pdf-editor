@@ -319,3 +319,42 @@ impl Embedded {
             .map(|v| v.into_iter().flat_map(u16::to_be_bytes).collect())
     }
 }
+
+pub(crate) fn system_names() -> Result<Vec<String>> {
+    let mut roots = vec![PathBuf::from(r"C:\Windows\Fonts")];
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        roots.push(PathBuf::from(local).join("Microsoft/Windows/Fonts"));
+    }
+    let mut names = Vec::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for path in entries.flatten().map(|e| e.path()).filter(|p| {
+            p.extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("ttf") || e.eq_ignore_ascii_case("ttc"))
+        }) {
+            let Ok(bytes) = read_limited(&path, MAX_STREAM) else {
+                continue;
+            };
+            let count = if bytes.starts_with(b"ttcf") {
+                read_u32(&bytes, 8).unwrap_or(0).min(128)
+            } else {
+                1
+            };
+            for index in 0..count {
+                if let Ok(face) = FontRef::from_index(&bytes, index) {
+                    if let Some(name) = face
+                        .localized_strings(StringId::POSTSCRIPT_NAME)
+                        .english_or_first()
+                    {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}

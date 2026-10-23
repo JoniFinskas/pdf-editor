@@ -204,3 +204,7 @@ using a fresh isolated profile. Tests treat exported files as read-only.
 ## Part D: Find text
 
 Use PDFium Unicode search across adjacent runs, case-insensitive, with bounded query/result counts. Search runs on the existing worker and highlights precise match rectangles; navigation wraps. Refresh results after document changes.
+
+## Part D: New text
+
+New text uses a clicked baseline and a single-line input, with installed TrueType faces, point size and RGB picker. Font scanning runs on the worker. Unsupported glyphs or embedding permissions fail explicitly instead of silently replacing the chosen face. Content is appended in isolated graphics state; existing streams are preserved.

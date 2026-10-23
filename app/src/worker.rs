@@ -20,6 +20,11 @@ const SAMPLE_SPAN: f32 = 1000.0;
 pub enum Request {
     Open(PathBuf),
     Find(String),
+    Fonts,
+    AddText {
+        text: pdf_editor_core::NewText,
+        raster: (f32, f32),
+    },
     Render {
         page: u16,
         scale: f32,
@@ -53,6 +58,7 @@ impl PageTransform {
 }
 
 pub enum Reply {
+    Fonts(Vec<String>),
     Found {
         generation: u64,
         query: String,
@@ -243,6 +249,32 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
+        Request::Fonts => match engine.system_fonts() {
+            Ok(fonts) => Some(Reply::Fonts(fonts)),
+            Err(e) => failed(e),
+        },
+        Request::AddText { mut text, raster } => {
+            let doc = state.doc.as_mut()?;
+            match engine
+                .pixel_to_page(
+                    doc,
+                    text.page,
+                    4.0,
+                    (raster.0 * 4.0) as i32,
+                    (raster.1 * 4.0) as i32,
+                )
+                .and_then(|(x, y)| {
+                    text.x = x;
+                    text.y = y;
+                    engine.add_text(doc, &text)
+                }) {
+                Ok(()) => {
+                    state.generation += 1;
+                    Some(changed(state, ChangeKind::Edit, None, 1))
+                }
+                Err(e) => failed(e),
+            }
+        }
         Request::Find(query) => {
             let doc = state.doc.as_ref()?;
             let result = (|| -> pdf_editor_core::Result<_> {

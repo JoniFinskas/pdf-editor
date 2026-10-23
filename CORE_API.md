@@ -59,3 +59,6 @@ The README records supported font formats, unsupported mappings and resource
 limits. The core has no UI, dialog, network or telemetry dependencies.
 
 - `Engine::find_text(document, query)` -> case-insensitive literal `SearchMatch` list in page order; each match has page index and PDF-point bounds, empty query returns none.
+
+- `Engine::system_fonts()` -> sorted installed TrueType face names for the picker.
+- `Engine::add_text(document, NewText)` -> atomically append a single run at a PDF-point baseline with selected system font, size and RGB color; undoable, rejects unavailable glyphs/embedding restrictions.
