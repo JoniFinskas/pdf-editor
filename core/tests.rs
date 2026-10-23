@@ -860,3 +860,38 @@ fn delete_object_preserves_neighbors_and_rejects_stale_selection() {
     assert_eq!(doc.bytes, old);
     assert!(doc.redo());
 }
+
+#[test]
+fn style_preserves_text_font_and_neighbors() {
+    let _lock = PDFIUM.lock().unwrap();
+    let e = engine();
+    for name in [
+        "kerning.pdf",
+        "spacing.pdf",
+        "rotated.pdf",
+        "unicode-cid.pdf",
+    ] {
+        let mut doc = e.open(&fixture(name)).unwrap();
+        let before = e.text_objects(&doc, 0).unwrap();
+        let old = doc.bytes.clone();
+        e.style_text(&mut doc, &before[0], 28.0, [50, 90, 140])
+            .unwrap();
+        let after = e.text_objects(&doc, 0).unwrap();
+        assert_eq!(after.len(), before.len());
+        for (i, (a, b)) in before.iter().zip(&after).enumerate() {
+            assert_eq!(a.text, b.text);
+            assert_eq!(a.font, b.font);
+            assert_eq!(a.matrix, b.matrix);
+            if i > 0 {
+                assert_eq!(a.color, b.color);
+                assert_eq!(a.size, b.size);
+            }
+        }
+        assert_eq!(after[0].color[..3], [50, 90, 140]);
+        assert!((after[0].size - 28.0).abs() < 0.01);
+        assert!(e.style_text(&mut doc, &before[0], 10.0, [0, 0, 0]).is_err());
+        assert!(doc.undo());
+        assert_eq!(doc.bytes, old);
+        assert!(doc.redo());
+    }
+}

@@ -190,6 +190,15 @@ pub(crate) fn edit(
     selected: &TextObject,
     targets: &[(usize, String)],
 ) -> Result<(Vec<u8>, EditResult)> {
+    edit_styled(engine, state, selected, targets, None)
+}
+pub(crate) fn edit_styled(
+    engine: &Engine,
+    state: &Document,
+    selected: &TextObject,
+    targets: &[(usize, String)],
+    style: Option<(f32, [u8; 3])>,
+) -> Result<(Vec<u8>, EditResult)> {
     let (ordinal, _) = targets.first().ok_or_else(|| err("Nothing to edit"))?;
     let ordinal = *ordinal;
     let text: String = targets.iter().map(|(_, t)| t.as_str()).collect();
@@ -214,7 +223,8 @@ pub(crate) fn edit(
         .get(ordinal)
         .ok_or_else(|| err("Unsupported text-object mapping"))?;
     let embedded_original = fonts::embedded_font(&pdf, &run.font, text);
-    let reuse = text.is_empty()
+    let reuse = style.is_some()
+        || text.is_empty()
         || (embedded_original.is_some() && encode(&pdf, &run.font, text).is_ok())
         || type3_covers(&pdf, &run.font, text);
     let chosen = if reuse {
@@ -290,7 +300,9 @@ pub(crate) fn edit(
         }
         for (i, replacement) in changes.iter().rev() {
             let r = &records[*i];
-            let bytes = if let Some(f) = &embedded {
+            let bytes = if style.is_some() {
+                vec![]
+            } else if let Some(f) = &embedded {
                 f.encode(replacement)?
             } else {
                 encode(&pdf, &r.font, replacement)?
@@ -328,10 +340,42 @@ pub(crate) fn edit(
                     vec![Object::Name(key.clone()), r.size.into()],
                 ));
             }
-            revised.push(Operation::new(
-                "Tj",
-                vec![Object::String(bytes, lopdf::StringFormat::Hexadecimal)],
-            ));
+            if let Some((size, color)) = style {
+                revised.push(Operation::new("q", vec![]));
+                revised.push(Operation::new(
+                    "Tf",
+                    vec![Object::Name(r.key.clone()), size.into()],
+                ));
+                for operator in ["rg", "RG"] {
+                    revised.push(Operation::new(
+                        operator,
+                        color
+                            .iter()
+                            .map(|c| Object::Real(*c as f32 / 255.0))
+                            .collect(),
+                    ));
+                }
+                revised.push(if original.operator == "'" || original.operator == "\"" {
+                    Operation::new(
+                        "Tj",
+                        vec![
+                            original
+                                .operands
+                                .last()
+                                .ok_or_else(|| err("Invalid text operation"))?
+                                .clone(),
+                        ],
+                    )
+                } else {
+                    original.clone()
+                });
+                revised.push(Operation::new("Q", vec![]));
+            } else {
+                revised.push(Operation::new(
+                    "Tj",
+                    vec![Object::String(bytes, lopdf::StringFormat::Hexadecimal)],
+                ));
+            }
             if new_key.is_some() {
                 revised.push(Operation::new(
                     "Tf",

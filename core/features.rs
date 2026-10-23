@@ -17,6 +17,49 @@ pub struct NewText {
 }
 
 impl Engine {
+    pub fn style_text(
+        &self,
+        doc: &mut Document,
+        selected: &TextObject,
+        size: f32,
+        color: [u8; 3],
+    ) -> Result<()> {
+        guarded(|| {
+            if !size.is_finite() || !(1.0..=1000.0).contains(&size) {
+                return Err(err("Font size must be from 1 to 1000 points"));
+            }
+            if selected.revision != doc.revision {
+                return Err(err("Selection is stale; select the object again"));
+            }
+            let objects = self.text_objects(doc, selected.page)?;
+            let ordinal = objects
+                .iter()
+                .position(|o| o.index == selected.index)
+                .ok_or_else(|| err("Text object no longer exists"))?;
+            let actual = &objects[ordinal];
+            let (bytes, _) = content::edit_styled(
+                self,
+                doc,
+                actual,
+                &[(ordinal, actual.text.clone())],
+                Some((size, color)),
+            )?;
+            let candidate = self.candidate(doc, parse(&bytes)?)?;
+            let after = self.text_objects(&candidate, selected.page)?;
+            let changed = after
+                .get(ordinal)
+                .ok_or_else(|| err("Styled text disappeared"))?;
+            if changed.text != actual.text
+                || (changed.size - size).abs() > 0.01
+                || changed.color[..3] != color
+            {
+                return Err(err("Text style failed round-trip verification"));
+            }
+            doc.accept(candidate.bytes);
+            Ok(())
+        })
+    }
+
     pub fn delete_text(&self, doc: &mut Document, selected: &TextObject) -> Result<EditResult> {
         self.edit(doc, selected, "")
     }

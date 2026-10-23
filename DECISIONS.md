@@ -212,3 +212,7 @@ New text uses a clicked baseline and a single-line input, with installed TrueTyp
 ## Part D: Delete text
 
 The selected-line toolbar exposes its individual PDF runs so deletion targets exactly one object, including glyph-by-glyph browser PDFs. Deletion reuses the verified empty-text edit transaction and cursor correction; stale selections are rejected.
+
+## Part D: Text size and color
+
+Style changes retain the original encoded glyph operators, font resource and spacing. Scoped graphics state restores surrounding style, and existing cursor correction preserves subsequent positions. Size is bounded to 1–1000 points. The individual-run picker identifies the exact object being styled.

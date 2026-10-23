@@ -805,6 +805,7 @@ impl EditorApp {
     fn object_tools(&mut self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             ui.label("Text object");
+            let previous = self.text_tool.selected;
             egui::ComboBox::from_id_salt("selected-run")
                 .selected_text(format!("Run {}", self.text_tool.selected + 1))
                 .show_ui(ui, |ui| {
@@ -816,6 +817,37 @@ impl EditorApp {
                         );
                     }
                 });
+            if previous != self.text_tool.selected
+                && let Some(o) = self.text_tool.selection.get(self.text_tool.selected)
+            {
+                self.text_tool.size = o.size;
+                self.text_tool.color = [o.color[0], o.color[1], o.color[2]];
+            }
+            ui.add(
+                egui::DragValue::new(&mut self.text_tool.size)
+                    .range(1.0..=1000.0)
+                    .suffix(" pt"),
+            );
+            ui.color_edit_button_srgb(&mut self.text_tool.color);
+            if ui
+                .add_enabled(self.busy == 0, Button::new("Apply style"))
+                .clicked()
+            {
+                if let Some(object) = self
+                    .text_tool
+                    .selection
+                    .get(self.text_tool.selected)
+                    .cloned()
+                {
+                    self.cancel_edit();
+                    self.busy += 1;
+                    self.send(Request::StyleText {
+                        object,
+                        size: self.text_tool.size,
+                        color: self.text_tool.color,
+                    });
+                }
+            }
             if ui
                 .add_enabled(self.busy == 0, Button::new("Delete object"))
                 .clicked()
@@ -1427,6 +1459,10 @@ impl EditorApp {
             if let Some(edit) = start_edit.take() {
                 self.text_tool.selection = edit.line.objects.clone();
                 self.text_tool.selected = 0;
+                if let Some(o) = self.text_tool.selection.first() {
+                    self.text_tool.size = o.size;
+                    self.text_tool.color = [o.color[0], o.color[1], o.color[2]];
+                }
                 let changed = doc.edit.as_ref().is_some_and(|e| e.text != e.line.text);
                 if changed {
                     outcome = Some(true);
