@@ -507,3 +507,6 @@ validation. Preserve grouped Form objects as groups and fail unsupported copies
 without accepting partial changes. Copy/paste keeps one private in-memory PDF
 snapshot per tab, never writes the operating-system clipboard or disk, and remains
 valid after the source is edited/deleted. Annotations keep their dedicated tools.
+
+### Image document creation
+Images are decoded one at a time and embedded as JPEG at quality 95 against white, preserving order without retaining all decoded inputs. A4 and Letter center the image without cropping; image-size pages use 96 DPI. HEIC uses the existing Windows imaging API and installed codecs; no engine or codec download occurs. Imports are limited to 100 images, 16 million pixels per image and a 64 MiB resulting PDF. Output uses exclusive creation.

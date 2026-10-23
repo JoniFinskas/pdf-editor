@@ -4,6 +4,10 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+### Added
+
+- Added ordered JPG/PNG/HEIC image import to new PDFs, with reorder/remove controls and A4, Letter or image-sized pages.
+
 ### Performance
 
 - Load page-size metadata without parsing every page, cap page texture storage, and bound background-render replies. Add a generated 1,000-page startup benchmark.

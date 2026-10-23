@@ -206,3 +206,7 @@ Paragraph fallback substitution stays inside the paragraph even when the ordinar
 
 ## Corpus validation executable
 The opt-in corpus-runner binary exercises existing core APIs inside Docker only. It adds no public library functions and suppresses parser diagnostics and panic text.
+
+### Images to PDF
+- `import_picture(path) -> Result<Picture>`: bounded PNG/JPEG decoding; HEIC uses installed Windows image codecs with orientation applied.
+- `Engine::images_to_pdf(paths, ImagePageSize) -> Result<Document>`: creates 1–100 image pages in input order, with A4, Letter or image-size (96 DPI) pages.
