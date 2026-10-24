@@ -8,7 +8,7 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
 - **Manual checks of untested paths.** Test the native Open and Save As
   dialogs, drag and drop from Explorer, and the close confirmation from the
   title bar. Also check display scales other than 150% and a long editing
-  session on real documents.
+  session on generated documents.
 - **Edit latency.** An edit takes about one second on pages with hundreds of
   text objects, because every core call reparses the PDF bytes, including once
   per cursor correction. Profile a release build, then cache the
@@ -38,14 +38,16 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
     once a later release passes the floor.
   - RUSTSEC-2026-0370, -0371 and -0372 are ignored for Linux-only AccessKit
     dependencies; remove the ignores once eframe's AccessKit moves to zbus 6.
-- **First versioned release.** Complete MANUAL_TEST.md and follow VERSIONING.md
-  before changing the version or tagging a release.
+- **Interactive release acceptance.** Portable 0.2.x releases have automated
+  verification. Complete MANUAL_TEST.md before claiming full interactive
+  acceptance or promoting the app to 1.0.0.
 
 ## Out of scope for v1
 
 Paragraph reflow, forms, annotations, image editing and OCR are implemented.
-Nested Form XObject text and ambiguous text mappings remain unsupported for text
-rewriting. Objects mode moves/deletes top-level grouped artwork as a whole;
+Supported nested Form text can be exposed for editing, including supported
+transparency groups with render verification. Ambiguous mappings and unsupported
+compositing still fail safely. Objects mode moves/deletes grouped artwork as a whole;
 unsupported native copies fail cleanly. Ungroup expands supported ordinary Forms
 for individual editing. Transparency groups, optional-content forms and inline
 images remain unsupported by ungrouping. Word/table conversion remains best

@@ -699,3 +699,14 @@ Package versioned portable releases from a clean checkout with a matching CLI
 version, source commit, bundled license notices and SHA-256 manifests. The
 packaging script never overwrites an existing version or opens a GUI. Keep
 packages under ignored dist/; distribution and installation remain separate.
+
+## Save sequencing and cancelled comparison sessions
+
+Defer Save As until pending edits acknowledge success. Cancel the deferred save
+on a blocking operation failure, preserving the edit draft for correction.
+Normal and password-protected saves use the same ordering rule. Each tab owns
+its deferred save; no output request is sent on a rejected edit.
+
+Use the shared cancellable background picker for Compare. Closing the tool
+immediately cancels its session, discards late picker results, clears password
+inputs and releases previews. Reopening cannot adopt a cancelled selection.
