@@ -1,6 +1,107 @@
 // Real worker/PDFium integration driven through egui pointer and keyboard events.
 // All files and configuration belong to generated test sessions.
 #[test]
+fn canvas_snapping_matches_the_committed_move_and_can_be_bypassed() {
+    for kind in ["Text", "Image", "Path"] {
+        for (enabled, alt, expected_dx) in [
+            (true, false, 60.0),
+            (true, true, 57.0),
+            (false, false, 57.0),
+        ] {
+            let ctx = Context::default();
+            theme::install(&ctx);
+            let (mut app, inbox, _) = mock_app();
+            opened(&mut app, &ctx);
+            app.snap_enabled = enabled;
+            app.doc.as_mut().unwrap().object_mode = true;
+            let item = |index, left| pdf_editor_core::PageItem {
+                page: 0,
+                index,
+                revision: 1,
+                kind: kind.into(),
+                bounds: pdf_editor_core::Bounds {
+                    left,
+                    bottom: 20.0,
+                    right: left + 20.0,
+                    top: 60.0,
+                },
+            };
+            app.handle(
+                &ctx,
+                Reply::Objects {
+                    generation: 1,
+                    page: 0,
+                    transform: PageTransform::identity(),
+                    objects: vec![],
+                    items: vec![item(0, 20.0), item(1, 100.0)],
+                },
+            );
+            let modifiers = egui::Modifiers {
+                alt,
+                ..Default::default()
+            };
+            let frame = |app: &mut EditorApp, mut events: Vec<egui::Event>| {
+                events.insert(0, egui::Event::ModifiersChanged(modifiers));
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(600.0, 700.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let p = theme::palette(ui);
+                        egui::CentralPanel::default().show(ui, |ui| app.canvas(ui, &p));
+                    },
+                );
+                output.textures_delta.clear();
+            };
+            frame(&mut app, vec![]);
+            frame(&mut app, vec![]);
+            inbox.try_iter().for_each(drop);
+            let rect = ctx
+                .read_response(Id::new(("pdf-page", 0usize)))
+                .unwrap()
+                .rect;
+            let start = rect.min + vec2(30.0, 40.0) * PT_TO_UI;
+            let end = start + vec2(57.0, 0.0) * PT_TO_UI;
+            let button = |pos, pressed| egui::Event::PointerButton {
+                pos,
+                pressed,
+                modifiers,
+                button: egui::PointerButton::Primary,
+            };
+            frame(
+                &mut app,
+                vec![egui::Event::PointerMoved(start), button(start, true)],
+            );
+            frame(&mut app, vec![egui::Event::PointerMoved(end)]);
+            let preview = app
+                .doc
+                .as_ref()
+                .unwrap()
+                .dragging_item
+                .as_ref()
+                .unwrap()
+                .preview
+                .unwrap();
+            assert!((preview.left() - 20.0 - expected_dx).abs() < 0.01);
+            assert!(inbox.try_recv().is_err(), "Preview must not mutate");
+            frame(&mut app, vec![button(end, false)]);
+            let Request::EditItems(_, pdf_editor_core::ObjectAction::Move { dx, dy }) =
+                inbox.try_recv().unwrap()
+            else {
+                panic!()
+            };
+            assert!(
+                (dx - expected_dx).abs() < 0.01,
+                "{kind} enabled={enabled} alt={alt}: {dx}"
+            );
+            assert!(dy.abs() < 0.01);
+        }
+    }
+}
+
+#[test]
 fn catalog_keyboard_search_categories_and_disabled_actions() {
     let ctx = Context::default();
     theme::install(&ctx);
@@ -145,38 +246,70 @@ fn workflow_line(app: &EditorApp, ctx: &Context, index: usize) -> Pos2 {
 
 #[test]
 fn generated_page_navigation_and_cached_tab_frame_timings() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let ctx = Context::default(); theme::install(&ctx);
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let ctx = Context::default();
+    theme::install(&ctx);
     let shared = crate::worker::SharedClipboard::default();
     let mut tabs = Vec::new();
     for _ in 0..2 {
         let (mut app, _, _) = mock_app();
-        app.worker = Worker::spawn(ctx.clone(),root.join("target/debug/pdfium.dll"),Substitution::Line,shared.clone());
+        app.worker = Worker::spawn(
+            ctx.clone(),
+            root.join("target/debug/pdfium.dll"),
+            Substitution::Line,
+            shared.clone(),
+        );
         tabs.push(app);
     }
     for iteration in 0..3 {
-        for (tab,app) in tabs.iter_mut().enumerate() {
+        for (tab, app) in tabs.iter_mut().enumerate() {
             let start = std::time::Instant::now();
             app.open_path(root.join("tests/fixtures/generated/multi-page.pdf"));
-            workflow_settle(app,&ctx);
-            println!("navigation iteration={iteration} tab={tab} open_ready_us={}",start.elapsed().as_micros());
-            let last = app.doc.as_ref().unwrap().pages.len()-1;
-            assert!(last>0);
+            workflow_settle(app, &ctx);
+            println!(
+                "navigation iteration={iteration} tab={tab} open_ready_us={}",
+                start.elapsed().as_micros()
+            );
+            let last = app.doc.as_ref().unwrap().pages.len() - 1;
+            assert!(last > 0);
             let start = std::time::Instant::now();
             app.go_to_page(last);
-            for _ in 0..4 { workflow_frame(app,&ctx,vec![]); }
-            workflow_settle(app,&ctx);
-            assert_eq!(app.doc.as_ref().unwrap().current_page,last,"offset={:?} viewport={:?} pages={:?}",app.doc.as_ref().unwrap().offset,app.doc.as_ref().unwrap().viewport,app.doc.as_ref().unwrap().pages.iter().map(|p| (p.info.width,p.info.height)).collect::<Vec<_>>());
-            println!("navigation iteration={iteration} tab={tab} page_ready_us={}",start.elapsed().as_micros());
+            for _ in 0..4 {
+                workflow_frame(app, &ctx, vec![]);
+            }
+            workflow_settle(app, &ctx);
+            assert_eq!(
+                app.doc.as_ref().unwrap().current_page,
+                last,
+                "offset={:?} viewport={:?} pages={:?}",
+                app.doc.as_ref().unwrap().offset,
+                app.doc.as_ref().unwrap().viewport,
+                app.doc
+                    .as_ref()
+                    .unwrap()
+                    .pages
+                    .iter()
+                    .map(|p| (p.info.width, p.info.height))
+                    .collect::<Vec<_>>()
+            );
+            println!(
+                "navigation iteration={iteration} tab={tab} page_ready_us={}",
+                start.elapsed().as_micros()
+            );
         }
         // Returning to a tab paints its retained document, without reopening it.
-        for (tab,app) in tabs.iter_mut().enumerate() {
-            let generation=app.doc.as_ref().unwrap().generation;
-            let start=std::time::Instant::now();
-            workflow_frame(app,&ctx,vec![]);
-            println!("navigation iteration={iteration} tab={tab} cached_frame_us={}",start.elapsed().as_micros());
-            assert_eq!(app.doc.as_ref().unwrap().generation,generation);
-            assert_eq!(app.busy,0);
+        for (tab, app) in tabs.iter_mut().enumerate() {
+            let generation = app.doc.as_ref().unwrap().generation;
+            let start = std::time::Instant::now();
+            workflow_frame(app, &ctx, vec![]);
+            println!(
+                "navigation iteration={iteration} tab={tab} cached_frame_us={}",
+                start.elapsed().as_micros()
+            );
+            assert_eq!(app.doc.as_ref().unwrap().generation, generation);
+            assert_eq!(app.busy, 0);
         }
     }
 }

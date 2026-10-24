@@ -484,6 +484,7 @@ pub struct EditorApp {
     tools_focus: bool,
     tools_category: String,
     tools_selected: usize,
+    snap_enabled: bool,
     page_jump: crate::navigation::PageJump,
     picker: crate::dialogs::Picker,
     insert_dialog: crate::dialogs::ToolDialog<Request>,
@@ -725,6 +726,7 @@ struct ItemDrag {
     bounds: Rect,
     delta: Vec2,
     resize_handle: Option<usize>,
+    preview: Option<Rect>,
 }
 
 /// Adjacent text objects that read as one line, edited together. Browser
@@ -836,6 +838,7 @@ impl EditorApp {
             tools_focus: false,
             tools_category: String::new(),
             tools_selected: 0,
+            snap_enabled: true,
             page_jump: crate::navigation::PageJump::default(),
             picker: crate::dialogs::Picker::default(),
             insert_dialog: Default::default(),
@@ -2395,6 +2398,7 @@ impl EditorApp {
                         .look(if moving == enabled { Look::Active } else { Look::Ghost })
                         .enabled(self.busy == 0).show(ui, p).clicked() { self.set_object_mode(enabled); }
                 }
+                ui.checkbox(&mut self.snap_enabled, "Snap").on_hover_text("Align object edges and centers to the page and other objects. Hold Alt to bypass.");
                 widgets::divider(ui, p, 22.0);
                 if Btn::new("Compare PDFs").id("compare-visible").height(30.0).show(ui, p).clicked() { self.open_tool(Tool::Compare); }
                 ui.label(RichText::new(if moving { "Drag to move  /  corner handles resize  /  right-click for actions" } else { "Click text to edit  /  drag empty space to pan" }).small().color(p.muted));
@@ -3363,6 +3367,7 @@ impl EditorApp {
                                 bounds,
                                 delta: Vec2::ZERO,
                                 resize_handle,
+                                preview: None,
                             });
                         }
                     }
@@ -3370,10 +3375,29 @@ impl EditorApp {
                         && drag.page == index
                     {
                         drag.delta += response.drag_delta() / scale;
-                        let preview_bounds = drag.resize_handle.map_or_else(
+                        let mut preview_bounds = drag.resize_handle.map_or_else(
                             || drag.bounds.translate(drag.delta),
                             |handle| resized_rect(drag.bounds, handle, drag.delta),
                         );
+                        if self.snap_enabled && !ctx.input(|i| i.modifiers.alt)
+                            && let Some(objects) = &page.objects
+                        {
+                            let page_bounds = Rect::from_min_size(Pos2::ZERO,vec2(page.info.width,page.info.height));
+                            let targets = std::iter::once(page_bounds).chain(objects.items.iter()
+                                .filter(|item| !drag.items.iter().any(|moving| moving.index == item.index))
+                                .map(|item| bounds_rect(&objects.transform,item.bounds)));
+                            let snapped = crate::snapping::align(preview_bounds,drag.resize_handle,targets,6.0/scale);
+                            preview_bounds = snapped.bounds;
+                            if let Some(x) = snapped.x {
+                                let x = rect.left()+x*scale;
+                                painter.line_segment([pos2(x,rect.top()),pos2(x,rect.bottom())],Stroke::new(1.0,p.accent));
+                            }
+                            if let Some(y) = snapped.y {
+                                let y = rect.top()+y*scale;
+                                painter.line_segment([pos2(rect.left(),y),pos2(rect.right(),y)],Stroke::new(1.0,p.accent));
+                            }
+                        }
+                        drag.preview = Some(preview_bounds);
                         let preview = to_screen(preview_bounds, rect, scale);
                         painter.rect_stroke(
                             preview,
@@ -3388,12 +3412,12 @@ impl EditorApp {
                         if response.drag_stopped() {
                             let drag = doc.dragging_item.take().unwrap();
                             if let Some(objects) = &page.objects
-                                && let Some((dx, dy)) = raster_delta(&objects.transform, drag.delta)
+                                && let Some((dx, dy)) = raster_delta(&objects.transform, if drag.resize_handle.is_some() { drag.delta } else { preview_bounds.min-drag.bounds.min })
                                 && (dx.abs() > 0.01 || dy.abs() > 0.01)
                             {
                                 self.busy += 1;
-                                let action = if let Some(handle) = drag.resize_handle {
-                                    let bounds = resized_rect(drag.bounds, handle, drag.delta);
+                                let action = if drag.resize_handle.is_some() {
+                                    let bounds = preview_bounds;
                                     raster_bounds(&objects.transform, bounds).map(|bounds| {
                                         pdf_editor_core::ObjectAction::Resize { bounds }
                                     })
@@ -3427,10 +3451,7 @@ impl EditorApp {
                             .as_ref()
                             .filter(|drag| drag.page == index)
                             .map(|drag| {
-                                drag.resize_handle.map_or_else(
-                                    || drag.bounds.translate(drag.delta),
-                                    |handle| resized_rect(drag.bounds, handle, drag.delta),
-                                )
+                                drag.preview.unwrap_or_else(|| drag.bounds.translate(drag.delta))
                             })
                             .unwrap_or_else(|| bounds_rect(&objects.transform, item.bounds));
                         let selection = to_screen(preview_bounds, rect, scale);
@@ -5291,6 +5312,7 @@ mod tests {
             tools_focus: false,
             tools_category: String::new(),
             tools_selected: 0,
+            snap_enabled: true,
             page_jump: crate::navigation::PageJump::default(),
             picker: crate::dialogs::Picker::default(),
             insert_dialog: Default::default(),
@@ -5621,6 +5643,7 @@ mod tests {
             let ctx = Context::default();
             theme::install(&ctx);
             let (mut app, inbox, _outbox) = mock_app();
+            app.snap_enabled = false; // Verify raw drag geometry independently of snapping.
             opened(&mut app, &ctx);
             app.doc.as_mut().unwrap().object_mode = object_mode;
             let mut text = glyph("drag", 20.0, 40.0).0;

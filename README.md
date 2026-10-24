@@ -428,3 +428,7 @@ It generates independent lines and continuous text chains, replaces text across
 Tool discovery: Ctrl+K opens All tools. Search names, descriptions or terms such as
 `diff`, `OCR`, `flatten`, `watermark` and `recovery`. Choose a category to browse;
 arrow keys select a result and Enter opens it. Reset clears search and category.
+
+Enable **Snap** above the document for alignment guides while moving or resizing
+text, images and other objects. Edges and centers align with nearby objects and
+the page within six screen points. Hold **Alt** for free placement.

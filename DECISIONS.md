@@ -758,3 +758,12 @@ text selection data before rasters and thumbnails, and preserve every edit/open/
 save boundary. Queue tests reproduce duplicate thumbnails and cross-edit
 cancellation in the previous implementation. Existing in-flight work is not
 interrupted; no document mutation is reordered.
+
+## Object alignment
+
+Compute snapping in displayed page coordinates using a six-screen-point radius.
+Exclude dragged objects, choose the nearest edge/center per axis, and preserve
+fixed resize edges and minimum size. Keep raw pointer displacement separate from
+the snapped preview to prevent sticky accumulation. Apply the preview bounds only
+on release; reuse existing object transforms and undo. Alt and the Snap checkbox
+provide unsnapped placement. No dependency or document format changes are needed.
