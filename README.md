@@ -39,7 +39,7 @@ Implementation requirements and scope are documented in [SPEC.md](SPEC.md).
   a chosen DPI, and print through the Windows print dialog.
 - Compare two saved PDFs with shared scrolling/zoom, text highlights, a visual
   pixel overlay and a page-change sidebar (the **Compare PDFs** toolbar button). Comparison
-  aligns page numbers and bounds raster previews to one megapixel per side.
+  matches unchanged pages around insertions/deletions and bounds previews to one megapixel per side.
 - Use headless commands for batch PDF operations, optional per-user Windows shell
   integration, and single-instance document handoff.
 - Select a table area, correct the detected grid, and export Excel (`.xlsx`) or CSV.
@@ -159,6 +159,10 @@ existing files and the original path are never overwritten.
 match the change list; select a change to bring it into view. Previous/Next changed
 page skips unchanged pages. Text changes and Visual changes switch the overlay;
 Fit both pages resets zoom. The previous preview stays visible while a new mode loads.
+Unchanged pages anchor the automatic page matching, so inserted/deleted pages do
+not shift later matches. The labels show actual Original/Revised page numbers.
+Repeated pages, reordered pages and adjacent modified/inserted pages can be
+ambiguous; use **Match page numbers only** when that is a better fit.
 
 The **All tools** panel opens by default on the home screen and beside documents. Press **Ctrl+K** to search names and descriptions, including subfeatures such as flattening forms, Excel export and Bates numbering. Tools that need an open PDF are visible but disabled until a document is opened. Close the panel for more page space; **All tools** reopens it. The small arrow retains the compact document menu. Its **Edit** section holds
 Find and replace, Fill form, Signatures, Images, Markup and notes, Draw and shapes,

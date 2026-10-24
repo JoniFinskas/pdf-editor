@@ -2,6 +2,87 @@
 use crate::{Bounds, Document, Engine, Image, Result, TextObject, err};
 use pdfium_render::prelude::PdfPoints;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PagePair {
+    pub left: Option<u16>,
+    pub right: Option<u16>,
+}
+
+/// Align unchanged-page fingerprints, then pair modified gaps by position.
+/// LCS storage is capped at four million cells; larger inputs use 64-page lookahead.
+pub fn align_comparison_pages(left: &[u64], right: &[u64]) -> Result<Vec<PagePair>> {
+    if left.len().max(right.len()) > 32_767 {
+        return Err(err("Comparison supports at most 32,767 pages per file"));
+    }
+    let (n, m) = (left.len(), right.len());
+    let mut anchors = Vec::new();
+    if (n + 1).saturating_mul(m + 1) <= 4_000_000 {
+        let stride = m + 1;
+        let mut lengths = vec![0u16; (n + 1) * stride];
+        for i in (0..n).rev() {
+            for j in (0..m).rev() {
+                lengths[i * stride + j] = if left[i] == right[j] {
+                    1 + lengths[(i + 1) * stride + j + 1]
+                } else {
+                    lengths[(i + 1) * stride + j].max(lengths[i * stride + j + 1])
+                };
+            }
+        }
+        let (mut i, mut j) = (0, 0);
+        while i < n && j < m {
+            if left[i] == right[j] {
+                anchors.push((i, j));
+                i += 1;
+                j += 1;
+            } else if lengths[(i + 1) * stride + j] > lengths[i * stride + j + 1] {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
+    } else {
+        let (mut i, mut j) = (0, 0);
+        while i < n && j < m {
+            if left[i] == right[j] {
+                anchors.push((i, j));
+                i += 1;
+                j += 1;
+                continue;
+            }
+            let a = (i + 1..n.min(i + 65)).find(|&k| left[k] == right[j]);
+            let b = (j + 1..m.min(j + 65)).find(|&k| right[k] == left[i]);
+            match (a, b) {
+                (Some(a), Some(b)) if a - i <= b - j => i = a,
+                (_, Some(b)) => j = b,
+                (Some(a), None) => i = a,
+                _ => {
+                    i += 1;
+                    j += 1;
+                }
+            }
+        }
+    }
+    let mut pairs = Vec::with_capacity(n.max(m));
+    let (mut i, mut j) = (0, 0);
+    for (a, b) in anchors.into_iter().chain(std::iter::once((n, m))) {
+        while i < a || j < b {
+            let l = (i < a).then_some(i as u16);
+            let r = (j < b).then_some(j as u16);
+            pairs.push(PagePair { left: l, right: r });
+            i += usize::from(l.is_some());
+            j += usize::from(r.is_some());
+        }
+        if a < n && b < m {
+            pairs.push(PagePair {
+                left: Some(a as u16),
+                right: Some(b as u16),
+            });
+            i = a + 1;
+            j = b + 1;
+        }
+    }
+    Ok(pairs)
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChangeKind {
     Added,
     Removed,
@@ -144,6 +225,34 @@ pub fn compare_pixels(
     Ok(count)
 }
 impl Engine {
+    /// Session-only fingerprint from text and a small raster; never a security hash.
+    pub fn comparison_fingerprint(&self, doc: &Document, page: u16) -> Result<u64> {
+        use std::hash::{Hash, Hasher};
+        crate::guarded(|| {
+            let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
+            let native = pdf.pages().get(i32::from(page))?;
+            let width = native.width().value;
+            let height = native.height().value;
+            if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+                return Err(err("Invalid page size"));
+            }
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            width.to_bits().hash(&mut hasher);
+            height.to_bits().hash(&mut hasher);
+            let image = self.render(doc, page, 64.0 / width.max(height))?;
+            image.rgba.hash(&mut hasher);
+            let objects = self.text_objects(doc, page)?;
+            let mut bytes = 0usize;
+            for object in objects {
+                bytes = bytes.saturating_add(object.text.len());
+                if bytes > 8 * 1024 * 1024 {
+                    return Err(err("Comparison text exceeds limit"));
+                }
+                object.text.hash(&mut hasher);
+            }
+            Ok(hasher.finish())
+        })
+    }
     /// Compare corresponding page indices at a shared, automatically bounded scale.
     pub fn compare_page(
         &self,
@@ -152,20 +261,45 @@ impl Engine {
         page: u16,
         overlay: bool,
     ) -> Result<ComparePage> {
+        let left_page = ((page as usize) < self.pages(left)?.len()).then_some(page);
+        let right_page = ((page as usize) < self.pages(right)?.len()).then_some(page);
+        self.compare_page_pair(
+            left,
+            right,
+            PagePair {
+                left: left_page,
+                right: right_page,
+            },
+            overlay,
+        )
+    }
+
+    /// Compare an aligned pair. A missing side represents an inserted/deleted page.
+    pub fn compare_page_pair(
+        &self,
+        left: &Document,
+        right: &Document,
+        pair: PagePair,
+        overlay: bool,
+    ) -> Result<ComparePage> {
         crate::guarded(|| {
-            let dimensions = |doc: &Document| -> Result<Option<crate::PageInfo>> {
-                let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
-                if i32::from(page) >= pdf.pages().len() {
-                    return Ok(None);
-                }
-                let p = pdf.pages().get(i32::from(page))?;
-                Ok(Some(crate::PageInfo {
-                    width: p.width().value,
-                    height: p.height().value,
-                }))
-            };
-            let a = dimensions(left)?;
-            let b = dimensions(right)?;
+            let dimensions =
+                |doc: &Document, page: Option<u16>| -> Result<Option<crate::PageInfo>> {
+                    let Some(page) = page else {
+                        return Ok(None);
+                    };
+                    let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
+                    if i32::from(page) >= pdf.pages().len() {
+                        return Err(err("Comparison page is out of range"));
+                    }
+                    let p = pdf.pages().get(i32::from(page))?;
+                    Ok(Some(crate::PageInfo {
+                        width: p.width().value,
+                        height: p.height().value,
+                    }))
+                };
+            let a = dimensions(left, pair.left)?;
+            let b = dimensions(right, pair.right)?;
             if a.is_none() && b.is_none() {
                 return Err(err("Comparison page is out of range"));
             }
@@ -179,12 +313,12 @@ impl Engine {
                     .min((1_000_000.0 / area).sqrt())
                     .min(4096.0 / p.width.max(p.height));
             }
-            let l = if a.is_some() {
+            let l = if let Some(page) = pair.left {
                 self.text_objects(left, page)?
             } else {
                 vec![]
             };
-            let r = if b.is_some() {
+            let r = if let Some(page) = pair.right {
                 self.text_objects(right, page)?
             } else {
                 vec![]
@@ -195,6 +329,8 @@ impl Engine {
                     return Ok(vec![]);
                 }
                 let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
+                let page = (if is_left { pair.left } else { pair.right })
+                    .ok_or_else(|| err("Missing comparison side"))?;
                 let native = pdf.pages().get(i32::from(page))?;
                 let config = crate::render_config(&native, scale)?;
                 changes
@@ -225,12 +361,12 @@ impl Engine {
             };
             let left_marks = marks(left, true)?;
             let right_marks = marks(right, false)?;
-            let mut li = if a.is_some() {
+            let mut li = if let Some(page) = pair.left {
                 Some(self.render(left, page, scale)?)
             } else {
                 None
             };
-            let mut ri = if b.is_some() {
+            let mut ri = if let Some(page) = pair.right {
                 Some(self.render(right, page, scale)?)
             } else {
                 None
@@ -250,6 +386,83 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn page_alignment_handles_insert_delete_changes_repeats_and_limits() {
+        let pairs = align_comparison_pages(&[1, 2, 3], &[1, 9, 2, 3]).unwrap();
+        assert_eq!(
+            pairs,
+            vec![
+                PagePair {
+                    left: Some(0),
+                    right: Some(0)
+                },
+                PagePair {
+                    left: None,
+                    right: Some(1)
+                },
+                PagePair {
+                    left: Some(1),
+                    right: Some(2)
+                },
+                PagePair {
+                    left: Some(2),
+                    right: Some(3)
+                },
+            ]
+        );
+        let deleted = align_comparison_pages(&[1, 9, 2, 3], &[1, 2, 3]).unwrap();
+        assert_eq!(
+            deleted[1],
+            PagePair {
+                left: Some(1),
+                right: None
+            }
+        );
+        assert_eq!(
+            align_comparison_pages(&[1, 2, 3], &[1, 8, 3])
+                .unwrap()
+                .len(),
+            3
+        );
+        assert!(align_comparison_pages(&[], &[]).unwrap().is_empty());
+        for seed in 0..80 {
+            let left: Vec<_> = (0..seed % 13)
+                .map(|i| ((i * 3 + seed) % 7) as u64)
+                .collect();
+            let right: Vec<_> = (0..seed % 17)
+                .map(|i| ((i * 5 + seed) % 7) as u64)
+                .collect();
+            let pairs = align_comparison_pages(&left, &right).unwrap();
+            assert_eq!(
+                pairs.iter().filter_map(|p| p.left).collect::<Vec<_>>(),
+                (0..left.len() as u16).collect::<Vec<_>>()
+            );
+            assert_eq!(
+                pairs.iter().filter_map(|p| p.right).collect::<Vec<_>>(),
+                (0..right.len() as u16).collect::<Vec<_>>()
+            );
+            assert!(pairs.iter().all(|p| p.left.is_some() || p.right.is_some()));
+        }
+        let left: Vec<u64> = (0..2200).collect();
+        let mut right = left.clone();
+        right.insert(10, 9999);
+        let pairs = align_comparison_pages(&left, &right).unwrap();
+        assert_eq!(
+            pairs[10],
+            PagePair {
+                left: None,
+                right: Some(10)
+            }
+        );
+        assert_eq!(
+            pairs.last().unwrap(),
+            &PagePair {
+                left: Some(2199),
+                right: Some(2200)
+            }
+        );
+        assert!(align_comparison_pages(&vec![0; 32768], &[]).is_err());
+    }
     fn run(text: &str) -> TextObject {
         TextObject {
             page: 0,

@@ -2203,6 +2203,41 @@ fn compare_generated_pages_is_read_only_and_detects_edits() {
 }
 
 #[test]
+fn aligned_comparison_keeps_unchanged_pages_after_insert_and_delete() {
+    let _lock=PDFIUM.lock().unwrap_or_else(|e|e.into_inner());
+    let e=engine();
+    let mut sources=Vec::new();
+    for (i,text) in ["Alpha","Beta","Gamma","Inserted"].into_iter().enumerate() {
+        let path=temp(&format!("alignment-source-{i}.pdf"));
+        fs::write(&path,generated(text,false,0,0.0,false,false)).unwrap();sources.push(path);
+    }
+    let mut left=e.open(&sources[0]).unwrap();
+    for (i,path) in sources[1..3].iter().enumerate() {e.edit_pages(&mut left,&PageEdit::Insert{path:path.clone(),before:(i+1) as u16}).unwrap();}
+    let original=left.bytes.clone();
+    let base=temp("alignment-base.pdf");let _=fs::remove_file(&base);left.save_as(&base).unwrap();
+    let fingerprints=|doc:&Document| (0..e.pages(doc).unwrap().len()).map(|i|e.comparison_fingerprint(doc,i as u16).unwrap()).collect::<Vec<_>>();
+    let mut right=e.open(&base).unwrap();
+    e.edit_pages(&mut right,&PageEdit::Insert{path:sources[3].clone(),before:1}).unwrap();
+    let pairs=align_comparison_pages(&fingerprints(&left),&fingerprints(&right)).unwrap();
+    assert_eq!(pairs.len(),4);
+    assert_eq!(pairs[1],PagePair{left:None,right:Some(1)});
+    for pair in pairs {
+        let result=e.compare_page_pair(&left,&right,pair,false).unwrap();
+        if pair.left.is_none() {assert!(result.left.is_none());assert!(result.changed_pixels>0);}
+        else {assert_eq!(result.changed_pixels,0);assert!(result.changes.is_empty());}
+    }
+    assert!(right.undo());
+    e.edit_pages(&mut right,&PageEdit::Delete{page:1}).unwrap();
+    let pairs=align_comparison_pages(&fingerprints(&left),&fingerprints(&right)).unwrap();
+    assert_eq!(pairs[1],PagePair{left:Some(1),right:None});
+    assert_eq!(e.compare_page_pair(&left,&right,pairs[2],true).unwrap().changed_pixels,0);
+    assert!(e.compare_page_pair(&left,&right,PagePair{left:Some(99),right:None},false).is_err());
+    assert!(e.compare_page_pair(&left,&right,PagePair{left:None,right:None},false).is_err());
+    assert_eq!(left.bytes,original);
+    for path in sources.into_iter().chain([base]) {fs::remove_file(path).unwrap();}
+}
+
+#[test]
 fn loaded_page_geometry_matches_fast_metadata_for_generated_rotations() {
     let _lock = PDFIUM.lock().unwrap_or_else(|p| p.into_inner());
     let engine = engine();

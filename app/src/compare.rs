@@ -5,7 +5,7 @@ use crate::{
     widgets::{self, Btn, Look, ToolWindow},
 };
 use eframe::egui::{self, Color32, TextureHandle};
-use pdf_editor_core::{ChangeKind, ComparePage, Engine};
+use pdf_editor_core::{ChangeKind, ComparePage, Engine, PagePair};
 use std::{
     path::PathBuf,
     sync::{
@@ -54,13 +54,20 @@ impl Drop for Session {
     }
 }
 enum Event {
-    Count(usize),
+    Aligned(Vec<PagePair>),
+    Aligning(usize, usize),
+    AlignmentNote(String),
     Summary(usize, usize, usize),
     ScanError(usize, String),
     Page(u16, bool, pdf_editor_core::Result<ComparePage>),
     Error(String),
 }
-fn start(paths: [PathBuf; 2], passwords: [String; 2], ctx: egui::Context) -> Session {
+fn start(
+    paths: [PathBuf; 2],
+    passwords: [String; 2],
+    ctx: egui::Context,
+    by_number: bool,
+) -> Session {
     let (tx, commands) = mpsc::sync_channel::<(u16, bool)>(1);
     let (events, rx) = mpsc::sync_channel(2);
     let cancel = Arc::new(AtomicBool::new(false));
@@ -80,19 +87,79 @@ fn start(paths: [PathBuf; 2], passwords: [String; 2], ctx: egui::Context) -> Ses
             let engine = Engine::new(&lib)?;
             let left = engine.open_with_password(&paths[0], &passwords[0])?;
             let right = engine.open_with_password(&paths[1], &passwords[1])?;
-            let count = engine.pages(&left)?.len().max(engine.pages(&right)?.len());
-            Ok((engine, left, right, count))
+            let counts = [engine.pages(&left)?.len(), engine.pages(&right)?.len()];
+            Ok((engine, left, right, counts))
         };
-        let (engine, left, right, count) = match setup() {
+        let (engine, left, right, counts) = match setup() {
             Ok(v) => v,
             Err(e) => {
                 send(Event::Error(e.to_string()));
                 return;
             }
         };
-        if !send(Event::Count(count)) {
+        let numbered = || {
+            (0..counts[0].max(counts[1]))
+                .map(|i| PagePair {
+                    left: (i < counts[0]).then_some(i as u16),
+                    right: (i < counts[1]).then_some(i as u16),
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut fingerprints = [Vec::new(), Vec::new()];
+        let mut failed = false;
+        if !by_number {
+            let total = counts[0] + counts[1];
+            let mut done = 0;
+            for (side, doc) in [&left, &right].into_iter().enumerate() {
+                for page in 0..counts[side] {
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    if done % 16 == 0 && !send(Event::Aligning(done, total)) {
+                        return;
+                    }
+                    match engine.comparison_fingerprint(doc, page as u16) {
+                        Ok(value) => fingerprints[side].push(value),
+                        Err(_) => {
+                            failed = true;
+                            break;
+                        }
+                    }
+                    done += 1;
+                }
+                if failed {
+                    break;
+                }
+            }
+        }
+        let pairs = if by_number || failed {
+            numbered()
+        } else {
+            match pdf_editor_core::align_comparison_pages(&fingerprints[0], &fingerprints[1]) {
+                Ok(pairs) => pairs,
+                Err(_) => {
+                    failed = true;
+                    numbered()
+                }
+            }
+        };
+        if failed
+            && !send(Event::AlignmentNote(
+                "Some pages could not be matched. Comparing by page number.".into(),
+            ))
+        {
             return;
         }
+        let count = pairs.len();
+        if !send(Event::Aligned(pairs.clone())) {
+            return;
+        }
+        let compare = |row: u16, overlay| {
+            let pair = pairs
+                .get(row as usize)
+                .ok_or_else(|| pdf_editor_core::Error("Comparison pair out of range".into()))?;
+            engine.compare_page_pair(&left, &right, *pair, overlay)
+        };
         let mut scan = 0;
         while !stop.load(Ordering::Relaxed) {
             let request = if scan < count {
@@ -103,15 +170,11 @@ fn start(paths: [PathBuf; 2], passwords: [String; 2], ctx: egui::Context) -> Ses
                     .ok()
             };
             if let Some((page, overlay)) = request {
-                if !send(Event::Page(
-                    page,
-                    overlay,
-                    engine.compare_page(&left, &right, page, overlay),
-                )) {
+                if !send(Event::Page(page, overlay, compare(page, overlay))) {
                     break;
                 }
             } else if scan < count {
-                let event = match engine.compare_page(&left, &right, scan as u16, false) {
+                let event = match compare(scan as u16, false) {
                     Ok(page) => Event::Summary(scan, page.changes.len(), page.changed_pixels),
                     Err(e) => Event::ScanError(scan, e.to_string()),
                 };
@@ -133,6 +196,10 @@ pub struct Compare {
     passwords: [String; 2],
     session: Option<Session>,
     summaries: Vec<Option<(usize, usize)>>,
+    pairs: Vec<PagePair>,
+    by_number: bool,
+    alignment_progress: Option<(usize, usize)>,
+    alignment_note: Option<String>,
     errors: Vec<(usize, String)>,
     selected: u16,
     overlay: bool,
@@ -184,7 +251,13 @@ impl Compare {
         if let Some(session) = &self.session {
             while let Ok(event) = session.rx.try_recv() {
                 match event {
-                    Event::Count(n) => self.summaries = vec![None; n],
+                    Event::Aligned(pairs) => {
+                        self.summaries = vec![None; pairs.len()];
+                        self.pairs = pairs;
+                        self.alignment_progress = None;
+                    }
+                    Event::Aligning(done, total) => self.alignment_progress = Some((done, total)),
+                    Event::AlignmentNote(note) => self.alignment_note = Some(note),
                     Event::Summary(i, t, v) => {
                         if let Some(s) = self.summaries.get_mut(i) {
                             *s = Some((t, v));
@@ -243,7 +316,7 @@ impl Compare {
         ToolWindow::new("Compare PDFs", Icon::Layers)
             .width((ctx.content_rect().width() - 80.0).clamp(300.0, 1100.0))
             .centered().show(ctx, p, &mut open, |ui| {
-                widgets::hint(ui, p, "Compare saved PDFs. Original and Revised stay unchanged. Pages match by number; inserted pages are not realigned.");
+                widgets::hint(ui, p, "Compare saved PDFs. Unchanged pages anchor inserted/deleted pages; edited gaps are paired in order. Originals stay unchanged.");
                 ui.horizontal_wrapped(|ui| {
                     for i in 0..2 {
                         let label = if i == 0 { "Choose original" } else { "Choose revised" };
@@ -265,10 +338,11 @@ impl Compare {
                             ui.add(egui::TextEdit::singleline(&mut self.passwords[i]).password(true).desired_width(130.0));
                         }
                     });
+                    ui.checkbox(&mut self.by_number,"Match page numbers only");
                     if Btn::new("Compare").id("compare-start").enabled(!self.picker.pending() && self.paths.iter().all(Option::is_some)).show(ui,p).clicked()
                         && let [Some(a), Some(b)] = &self.paths {
-                        self.session = Some(start([a.clone(), b.clone()], std::mem::take(&mut self.passwords), ctx.clone()));
-                        self.summaries.clear(); self.errors.clear(); self.error = None;
+                        self.session = Some(start([a.clone(), b.clone()], std::mem::take(&mut self.passwords), ctx.clone(), self.by_number));
+                        self.summaries.clear(); self.pairs.clear(); self.alignment_progress=None; self.alignment_note=None; self.errors.clear(); self.error = None;
                         self.selected = 0; self.waiting = false; self.requested = None;
                         self.textures = [None, None]; self.displayed = None;
                         self.regions.clear(); self.focused_region = None;
@@ -281,6 +355,8 @@ impl Compare {
                         if Btn::new("Retry page").enabled(self.session.is_some() && !self.waiting).show(ui,p).clicked() { self.requested = None; }
                     });
                 }
+                if let Some((done,total))=self.alignment_progress {ui.label(format!("Matching pages {done} / {total}…"));}
+                if let Some(note)=&self.alignment_note {ui.colored_label(p.warn_fg,note);}
                 ui.separator();
                 ui.horizontal_wrapped(|ui| {
                     for (label, overlay) in [("Text changes", false), ("Visual changes", true)] {
@@ -299,7 +375,7 @@ impl Compare {
                 let count = self.summaries.len();
                 ui.horizontal_wrapped(|ui| {
                     if Btn::new("‹ Page").enabled(self.selected > 0).show(ui,p).clicked() { self.selected -= 1; }
-                    if count > 0 { ui.strong(format!("Page {} of {count}", self.selected as usize + 1)); }
+                    if count > 0 { ui.strong(format!("Pair {} of {count} · {}", self.selected as usize + 1, self.pair_label(self.selected as usize))); }
                     if Btn::new("Page ›").enabled(self.selected as usize + 1 < count).show(ui,p).clicked() { self.selected += 1; }
                     let previous = self.changed_page(false);
                     let next = self.changed_page(true);
@@ -342,6 +418,21 @@ impl Compare {
         }
     }
 
+    fn pair_label(&self, index: usize) -> String {
+        let pair = self.pairs.get(index).copied().unwrap_or(PagePair {
+            left: Some(index as u16),
+            right: Some(index as u16),
+        });
+        let number = |page: Option<u16>| {
+            page.map_or_else(|| "—".into(), |n| (usize::from(n) + 1).to_string())
+        };
+        format!(
+            "Original {} → Revised {}",
+            number(pair.left),
+            number(pair.right)
+        )
+    }
+
     fn changed_page(&self, forward: bool) -> Option<u16> {
         let changed = |i: usize| {
             self.summaries[i].is_some_and(|(text, pixels)| text > 0 || pixels > 0)
@@ -381,8 +472,8 @@ impl Compare {
                         && (*text > 0 || *pixels > 0)
                     {
                         let label = format!(
-                            "Page {} · {text} text changes{}",
-                            i + 1,
+                            "{} · {text} text changes{}",
+                            self.pair_label(i),
                             if *pixels > 0 { " · visual" } else { "" }
                         );
                         if ui
@@ -397,7 +488,7 @@ impl Compare {
                     if ui
                         .selectable_label(
                             self.selected as usize == *i,
-                            format!("Page {} · Could not compare", i + 1),
+                            format!("{} · Could not compare", self.pair_label(*i)),
                         )
                         .on_hover_text(error)
                         .clicked()
@@ -451,11 +542,19 @@ impl Compare {
                     for side in 0..2 {
                         ui.vertical(|ui| {
                             ui.set_width((sizes[side].x * scale).max(80.0));
-                            ui.strong(if side == 0 {
-                                "ORIGINAL · Before"
-                            } else {
-                                "REVISED · After"
-                            });
+                            let page = self
+                                .pairs
+                                .get(self.selected as usize)
+                                .map(|pair| if side == 0 { pair.left } else { pair.right })
+                                .unwrap_or(Some(self.selected));
+                            ui.strong(format!(
+                                "{} · {}",
+                                if side == 0 { "ORIGINAL" } else { "REVISED" },
+                                page.map_or_else(
+                                    || "No page".into(),
+                                    |n| format!("Page {}", n + 1)
+                                )
+                            ));
                             if current && let Some(texture) = &self.textures[side] {
                                 let response = ui.add(
                                     egui::Image::new(texture)
@@ -543,6 +642,24 @@ impl Compare {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn aligned_labels_show_real_page_numbers_and_missing_sides() {
+        let compare = Compare {
+            pairs: vec![
+                PagePair {
+                    left: None,
+                    right: Some(1),
+                },
+                PagePair {
+                    left: Some(1),
+                    right: Some(2),
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(compare.pair_label(0), "Original — → Revised 2");
+        assert_eq!(compare.pair_label(1), "Original 2 → Revised 3");
+    }
     #[test]
     fn paired_regions_keep_numbers_for_additions_removals_and_changes() {
         let bounds = pdf_editor_core::Bounds {

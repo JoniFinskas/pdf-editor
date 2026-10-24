@@ -4,7 +4,7 @@ mod table_export;
 mod word_export;
 pub use table_export::{TableFormat, TableGrid};
 mod compare;
-pub use compare::{ChangeKind, ComparePage, TextChange, compare_pixels, compare_text};
+pub use compare::{ChangeKind, ComparePage, PagePair, TextChange, align_comparison_pages, compare_pixels, compare_text};
 
 mod paragraph;
 pub use paragraph::{Paragraph, ParagraphAlignment, paragraphs};
