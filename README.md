@@ -424,3 +424,7 @@ For repeated cursor repairs, run
 `cargo run -p pdf-editor-core --example cursor_repair_benchmark --release --locked --offline -j 1`.
 It generates independent lines and continuous text chains, replaces text across
 10, 50 and 150 pairs, and verifies every unchanged run's text and transform.
+
+Tool discovery: Ctrl+K opens All tools. Search names, descriptions or terms such as
+`diff`, `OCR`, `flatten`, `watermark` and `recovery`. Choose a category to browse;
+arrow keys select a result and Enter opens it. Reset clears search and category.

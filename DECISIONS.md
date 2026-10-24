@@ -743,3 +743,10 @@ origin may already include that advance.
 Generated regressions check replacement and deletion, long chains, quotation
 operators, rotated/scaled text, rotated pages and graphics boundaries. A test-only
 pass counter prevents reintroducing one reparse per run in these supported cases.
+
+## Task-oriented tool discovery
+
+Keep the compact document menu and provide seven task categories in All tools.
+Search labels, descriptions and a small explicit alias list. Keyboard selection
+uses the same enabled state as pointer activation; navigation retains search focus.
+Expose existing recovery settings without introducing a second recovery system.

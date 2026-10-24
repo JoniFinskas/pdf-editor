@@ -3,6 +3,7 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Group tools by task, filter categories, search aliases such as diff, and open results with arrow keys and Enter.
 - Exercise editing controls through real PDF workers, including cross-tab paste and save/reopen.
 
 ## [0.2.3] - 2026-10-24

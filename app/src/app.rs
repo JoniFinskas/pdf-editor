@@ -1,6 +1,8 @@
 //! Editor window: toolbar, page canvas, in-place edit box, banners, modals
 //! and the settings page.
 
+#[path = "catalog.rs"]
+mod catalog;
 use crate::icons::Icon;
 use crate::recovery::{self, AutoSave, Orphan, Session};
 use crate::theme::{self, Palette};
@@ -37,7 +39,9 @@ const KEEP_PAGES: usize = 2;
 const THUMB_BOX: Vec2 = vec2(112.0, 140.0);
 const THUMB_ROW: f32 = 186.0;
 /// Shortcut list on the settings page: action, keys and a note.
-const SHORTCUTS: [(&str, &[&str], &str); 9] = [
+const SHORTCUTS: [(&str, &[&str], &str); 11] = [
+    ("Search all tools", &["Ctrl", "K"], "Arrow keys choose; Enter opens."),
+    ("Go to page", &["Ctrl", "G"], ""),
     ("Open a PDF", &["Ctrl", "O"], ""),
     ("Save As", &["Ctrl", "S"], "Ctrl + Shift + S also works."),
     ("Undo", &["Ctrl", "Z"], ""),
@@ -145,7 +149,7 @@ impl Tool {
     }
 
     fn matches(self, label: &str, query: &str) -> bool {
-        let haystack = format!("{label} {}", self.description()).to_lowercase();
+        let haystack = format!("{label} {} {}", self.description(), self.aliases()).to_lowercase();
         query.split_whitespace().all(|word| haystack.contains(&word.to_lowercase()))
     }
 
@@ -478,6 +482,8 @@ pub struct EditorApp {
     tools_open: bool,
     tools_query: String,
     tools_focus: bool,
+    tools_category: String,
+    tools_selected: usize,
     page_jump: crate::navigation::PageJump,
     picker: crate::dialogs::Picker,
     insert_dialog: crate::dialogs::ToolDialog<Request>,
@@ -827,6 +833,8 @@ impl EditorApp {
             tools_open: true,
             tools_query: String::new(),
             tools_focus: false,
+            tools_category: String::new(),
+            tools_selected: 0,
             page_jump: crate::navigation::PageJump::default(),
             picker: crate::dialogs::Picker::default(),
             insert_dialog: Default::default(),
@@ -2390,61 +2398,6 @@ impl EditorApp {
         }
     }
 
-    fn tool_catalog(&mut self, ui: &mut Ui, p: &Palette) {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("All tools").font(theme::semibold(18.0)).color(p.text));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if Btn::new("Close").id("close-tools").height(28.0).show(ui,p).clicked() { self.tools_open = false; }
-            });
-        });
-        let search = ui.add(TextEdit::singleline(&mut self.tools_query).id(Id::new("tool-search"))
-            .hint_text("Search tools... Ctrl+K").desired_width(f32::INFINITY));
-        if self.tools_focus { search.request_focus(); self.tools_focus = false; }
-        if !self.tools_query.is_empty() && ui.small_button("Clear search").clicked() { self.tools_query.clear(); }
-        let ready = self.busy == 0 && self.engine_alive;
-        let document = self.doc.is_some();
-        if !document { widgets::hint(ui, p, "Open a PDF to enable document tools. You can compare saved files or create a PDF from images here."); }
-        let query = self.tools_query.clone();
-        ScrollArea::vertical().id_salt("all-tools-scroll").auto_shrink([false,false]).show(ui, |ui| {
-            let mut found = 0;
-            {
-                menu_caption(ui, p, "Basics");
-                for (label, key) in [("Edit text / spell check", "catalog-edit"), ("Move, resize, copy or delete objects", "catalog-move"), ("Add text box", "catalog-add-text"), ("Find text", "catalog-find"), ("Go to page", "catalog-jump"), ("Pages: rotate, insert, reorder, delete", "catalog-pages"), ("Save As / password options", "catalog-save")] {
-                    if !query.split_whitespace().all(|word| label.to_lowercase().contains(&word.to_lowercase())) { continue; }
-                    found += 1;
-                    if Btn::new(label).id(key).align_left().min_width(ui.available_width()).enabled(document && ready).show(ui,p).clicked() {
-                        match key {
-                            "catalog-edit" => self.set_object_mode(false),
-                            "catalog-move" => self.set_object_mode(true),
-                            "catalog-add-text" => { self.set_object_mode(false); self.text_tool.adding = true; },
-                            "catalog-find" => { self.find.open = true; self.find.focus = true; },
-                            "catalog-jump" => { self.commit_edit(); if let Some(doc) = &self.doc { self.page_jump.open_at(doc.current_page); } },
-                            "catalog-pages" => { self.pages_open = true; self.bookmarks.open = false; self.tools_open = false; },
-                            _ => self.save_as(),
-                        }
-                    }
-                }
-                widgets::hint(ui,p,"Use Edit text or Move / resize objects above the page. Right-click an object for copy, delete and layer ordering. Spell checking is available while editing text.");
-            }
-            for (section, tools) in Tool::MENU {
-                if !tools.iter().any(|(tool,label,_)| tool.matches(label, &query)) { continue; }
-                menu_caption(ui, p, section);
-                for &(tool,label,icon) in tools {
-                    if !tool.matches(label, &query) { continue; }
-                    found += 1;
-                    let enabled = ready && (document || matches!(tool, Tool::ImageCreate | Tool::Compare));
-                    if Btn::new(label).with_icon(icon).id(&format!("catalog-{}",tool.key()))
-                        .align_left().min_width(ui.available_width()).enabled(enabled).show(ui,p).clicked() {
-                        self.open_tool(tool);
-                        if tool == Tool::Bookmarks { self.tools_open = false; }
-                    }
-                    ui.add(egui::Label::new(RichText::new(tool.description()).small().color(p.muted)).wrap());
-                    ui.add_space(10.0);
-                }
-            }
-            if found == 0 { ui.label("No matching tools. Try a shorter search."); }
-        });
-    }
 
     fn document_tools(&mut self, ui: &mut Ui, p: &Palette) {
         let idle = self.busy == 0 && self.engine_alive;
@@ -5317,6 +5270,8 @@ mod tests {
             tools_open: true,
             tools_query: String::new(),
             tools_focus: false,
+            tools_category: String::new(),
+            tools_selected: 0,
             page_jump: crate::navigation::PageJump::default(),
             picker: crate::dialogs::Picker::default(),
             insert_dialog: Default::default(),

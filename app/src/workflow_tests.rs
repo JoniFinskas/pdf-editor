@@ -1,5 +1,68 @@
 // Real worker/PDFium integration driven through egui pointer and keyboard events.
 // All files and configuration belong to generated test sessions.
+#[test]
+fn catalog_keyboard_search_categories_and_disabled_actions() {
+    let ctx = Context::default();
+    theme::install(&ctx);
+    let (mut app, inbox, _) = mock_app();
+    let draw = |app: &mut EditorApp, events| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(360.0, 600.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let p = theme::palette(ui);
+                app.tool_catalog(ui, &p);
+            },
+        );
+        output.textures_delta.clear();
+    };
+    app.tools_focus = true;
+    app.tools_query = "diff".into();
+    draw(&mut app, vec![]);
+    draw(&mut app, vec![]);
+    draw(
+        &mut app,
+        vec![workflow_key(Key::Enter, egui::Modifiers::NONE)],
+    );
+    assert!(app.compare.open);
+    app.tools_query = "forms".into();
+    app.tools_focus = true;
+    draw(&mut app, vec![]);
+    draw(
+        &mut app,
+        vec![workflow_key(Key::Enter, egui::Modifiers::NONE)],
+    );
+    assert!(!app.forms.open);
+    assert!(inbox.try_recv().is_err());
+    app.tools_query = "recovery".into();
+    app.tools_focus = true;
+    draw(&mut app, vec![]);
+    draw(
+        &mut app,
+        vec![workflow_key(Key::Enter, egui::Modifiers::NONE)],
+    );
+    assert!(app.settings_open);
+    opened(&mut app, &ctx);
+    app.tools_query.clear();
+    app.tools_category = "Review & print".into();
+    app.tools_selected = 0;
+    app.tools_focus = true;
+    draw(&mut app, vec![]);
+    draw(
+        &mut app,
+        vec![workflow_key(Key::ArrowDown, egui::Modifiers::NONE)],
+    );
+    assert_eq!(app.tools_selected, 1);
+    draw(
+        &mut app,
+        vec![workflow_key(Key::Enter, egui::Modifiers::NONE)],
+    );
+    assert!(matches!(inbox.try_recv().unwrap(), Request::Print));
+}
+
 fn workflow_frame(app: &mut EditorApp, ctx: &Context, events: Vec<egui::Event>) {
     app.poll(ctx);
     let mut output = ctx.run_ui(
