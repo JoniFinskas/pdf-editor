@@ -683,6 +683,24 @@ struct PageObjects {
     lines: Vec<Line>,
 }
 
+fn selection_items(objects: &PageObjects, item: &pdf_editor_core::PageItem) -> Vec<pdf_editor_core::PageItem> {
+    if item.kind == "Text"
+        && let Some(line)=objects.lines.iter().find(|line|line.objects.iter().any(|o|o.index==item.index)) {
+        return objects.items.iter().filter(|candidate|line.objects.iter().any(|o|o.index==candidate.index)).cloned().collect();
+    }
+    vec![item.clone()]
+}
+fn selection_item(objects: &PageObjects, item: &pdf_editor_core::PageItem) -> pdf_editor_core::PageItem {
+    let mut selected=item.clone();
+    for member in selection_items(objects,item) {
+        selected.bounds.left=selected.bounds.left.min(member.bounds.left);
+        selected.bounds.right=selected.bounds.right.max(member.bounds.right);
+        selected.bounds.bottom=selected.bounds.bottom.min(member.bounds.bottom);
+        selected.bounds.top=selected.bounds.top.max(member.bounds.top);
+    }
+    selected
+}
+
 struct ItemDrag {
     page: usize,
     items: Vec<pdf_editor_core::PageItem>,
@@ -3043,18 +3061,20 @@ impl EditorApp {
                 requests.push(Request::PasteItems(doc.current_page as u16));
                 self.busy += 1;
             } else if let Some(item) = &doc.selected_item {
+                let selected=doc.pages.get(usize::from(item.page)).and_then(|page|page.objects.as_ref())
+                    .map_or_else(||vec![item.clone()],|objects|selection_items(objects,item));
                 let request = if clipboard_event(false)
                     || ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::C))
                 {
-                    Some(Request::CopyItems(vec![item.clone()]))
+                    Some(Request::CopyItems(selected.clone()))
                 } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Delete)) {
                     Some(Request::EditItems(
-                        vec![item.clone()],
+                        selected.clone(),
                         pdf_editor_core::ObjectAction::Delete,
                     ))
                 } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::D)) {
                     Some(Request::EditItems(
-                        vec![item.clone()],
+                        selected.clone(),
                         pdf_editor_core::ObjectAction::Duplicate {
                             dx: 12.0,
                             dy: -12.0,
@@ -3263,7 +3283,7 @@ impl EditorApp {
                 {
                     doc.reopen = None;
                     if doc.object_mode {
-                        doc.selected_item = objects.items.iter().rev().find(|item| bounds_rect(&objects.transform, item.bounds).contains(at)).cloned();
+                        doc.selected_item = objects.items.iter().rev().find(|item| bounds_rect(&objects.transform, item.bounds).contains(at)).map(|item|selection_item(objects,item));
                     } else if let Some(line) = objects.lines.iter().rev().find(|l| l.rect.contains(at)) {
                         start_edit = Some(EditState {
                             rejected_text: None,
@@ -3325,11 +3345,13 @@ impl EditorApp {
                     .map(|pos| ((pos - rect.min) / scale).to_pos2());
                     let item_hit = page.objects.as_ref().and_then(|objects| {
                         at.and_then(|at| {
-                            objects.items.iter().rev().find(|item| {
-                                bounds_rect(&objects.transform, item.bounds)
-                                    .expand(2.0)
-                                    .contains(at)
-                            })
+                            // Whitespace inside a text block must select that block,
+                            // not an empty gap or a page-sized background underneath.
+                            objects.lines.iter().rev().find(|line|line.rect.expand(1.0).contains(at))
+                                .and_then(|line|objects.items.iter().find(|item|line.objects.iter().any(|o|o.index==item.index)))
+                                .or_else(||objects.items.iter().rev().find(|item| {
+                                    bounds_rect(&objects.transform, item.bounds).expand(2.0).contains(at)
+                                }))
                         })
                     });
                     if item_hit.is_some() && doc.edit.is_none() && response.hovered() {
@@ -3352,7 +3374,7 @@ impl EditorApp {
                         && resize_handle.is_none()
                         && (response.clicked() || response.secondary_clicked())
                     {
-                        doc.selected_item = item_hit.cloned();
+                        doc.selected_item = item_hit.zip(page.objects.as_ref()).map(|(item,objects)|selection_item(objects,item));
                         if doc.edit.as_ref().is_none_or(|e| e.text == e.line.text) {
                             doc.edit = None;
                             self.text_tool.selection.clear();
@@ -3361,9 +3383,11 @@ impl EditorApp {
                     let can_drag = doc.edit.is_none();
                     if response.drag_started() && can_drag {
                         let items = if resize_handle.is_some() {
-                            doc.selected_item.clone().into_iter().collect::<Vec<_>>()
+                            doc.selected_item.as_ref().zip(page.objects.as_ref())
+                                .map_or_else(Vec::new,|(item,objects)|selection_items(objects,item))
                         } else if doc.object_mode {
-                            item_hit.cloned().into_iter().collect::<Vec<_>>()
+                            item_hit.zip(page.objects.as_ref())
+                                .map_or_else(Vec::new,|(item,objects)|selection_items(objects,item))
                         } else if let Some(objects) = &page.objects {
                             objects
                                 .lines
@@ -3503,7 +3527,7 @@ impl EditorApp {
                             StrokeKind::Outside,
                         );
                     }
-                    if doc.object_mode {
+                    if doc.object_mode && let Some(objects)=&page.objects {
                         response.context_menu(|ui| {
                             if let Some(item) = doc
                                 .selected_item
@@ -3518,7 +3542,7 @@ impl EditorApp {
                                 }
                                 if ui.button("Copy").clicked() {
                                     self.busy += 1;
-                                    requests.push(Request::CopyItems(vec![item.clone()]));
+                                    requests.push(Request::CopyItems(selection_items(objects,item)));
                                     ui.close();
                                 }
                                 for (label, action) in [
@@ -3536,7 +3560,7 @@ impl EditorApp {
                                     if ui.button(label).clicked() {
                                         self.busy += 1;
                                         requests
-                                            .push(Request::EditItems(vec![item.clone()], action));
+                                            .push(Request::EditItems(selection_items(objects,item), action));
                                         ui.close();
                                     }
                                 }
@@ -4542,7 +4566,7 @@ fn editing_settings(ui: &mut Ui, p: &Palette, policy: &mut Substitution) {
     });
 }
 
-/// Page actions shared by the sidebar menu and a thumbnail's context menu.
+/// Close confirmation remains cancellable while worker operations finish.
 fn close_tabs_prompt(ctx: &Context, p: &Palette, single: bool, busy: bool) -> Option<bool> {
     let mut choice = None;
     let modal = egui::Modal::new(Id::new("close-tabs-confirm"))

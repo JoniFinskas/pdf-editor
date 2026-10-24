@@ -4146,3 +4146,34 @@ fn visible_sanitization_rebuilds_complex_content_without_hidden_payloads() {
     fs::remove_file(path).unwrap();
     let _=page;
 }
+
+#[test]
+fn glyph_selection_resize_and_delete_preserve_atomic_undo() {
+    let _lock=PDFIUM.lock().unwrap_or_else(|e|e.into_inner());
+    let e=engine();
+    let mut doc=e.open(&fixture("glyph-runs.pdf")).unwrap();
+    let original=doc.bytes.clone();
+    let items=e.page_items(&doc,0).unwrap();
+    let selected:Vec<_>=items.into_iter().filter(|i|i.kind=="Text").take(11).collect();
+    assert_eq!(selected.len(),11);
+    let mut old=selected[0].bounds;
+    for item in &selected {
+        old.left=old.left.min(item.bounds.left);old.right=old.right.max(item.bounds.right);
+        old.bottom=old.bottom.min(item.bounds.bottom);old.top=old.top.max(item.bounds.top);
+    }
+    let target=Bounds {left:old.left,bottom:old.bottom,
+        right:old.left+(old.right-old.left)*1.5,top:old.bottom+(old.top-old.bottom)*1.5};
+    let before:Vec<_>=e.text_objects(&doc,0).unwrap().into_iter().map(|o|o.text).collect();
+    e.edit_page_items(&mut doc,&selected,ObjectAction::Resize {bounds:target}).unwrap();
+    let after:Vec<_>=e.text_objects(&doc,0).unwrap().into_iter().map(|o|o.text).collect();
+    assert_eq!(before,after);
+    let resized=e.page_items(&doc,0).unwrap();
+    let right=resized.iter().filter(|item|selected.iter().any(|old|old.index==item.index))
+        .map(|item|item.bounds.right).fold(f32::NEG_INFINITY,f32::max);
+    assert!((right-target.right).abs()<0.5);
+    assert!(doc.undo());assert_eq!(doc.bytes,original);
+    let selected:Vec<_>=e.page_items(&doc,0).unwrap().into_iter().filter(|i|i.kind=="Text").take(11).collect();
+    e.edit_page_items(&mut doc,&selected,ObjectAction::Delete).unwrap();
+    assert_eq!(e.text_objects(&doc,0).unwrap().len(),before.len()-11);
+    assert!(doc.undo());assert_eq!(doc.bytes,original);
+}

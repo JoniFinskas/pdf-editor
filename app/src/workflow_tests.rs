@@ -614,3 +614,30 @@ fn direct_object_selection_exposes_move_cursor_and_delete_key() {
             pdf_editor_core::ObjectAction::Delete) if items.len()==1)),"{kind}");
     }
 }
+
+#[test]
+fn glyph_text_selection_deletes_the_logical_block_and_undo_restores_it() {
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let ctx=Context::default();
+    theme::install(&ctx);
+    let (mut app,_,_)=mock_app();
+    app.worker=Worker::spawn(ctx.clone(),root.join("target/debug/pdfium.dll"),
+        Substitution::Line,Default::default());
+    app.open_path(root.join("tests/fixtures/generated/glyph-runs.pdf"));
+    workflow_settle(&mut app,&ctx);
+    let before=app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().items.len();
+    let line=app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().lines[0].clone();
+    assert!(line.objects.len()>1);
+    let at=workflow_line(&app,&ctx,0);
+    workflow_click(&mut app,&ctx,at);
+    let doc=app.doc.as_ref().unwrap();
+    let selected=selection_items(doc.pages[0].objects.as_ref().unwrap(),doc.selected_item.as_ref().unwrap());
+    assert_eq!(selected.len(),line.objects.len());
+    workflow_frame(&mut app,&ctx,vec![workflow_key(Key::Delete,egui::Modifiers::NONE)]);
+    workflow_settle(&mut app,&ctx);
+    assert_eq!(app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().items.len(),
+        before-selected.len());
+    app.undo();
+    workflow_settle(&mut app,&ctx);
+    assert_eq!(app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().items.len(),before);
+}

@@ -268,6 +268,86 @@ impl CursorShift {
     }
 }
 
+/// Transform selected text shows without regenerating their font resources.
+pub(crate) fn transform_text(engine: &Engine, state: &Document, page_index: u16,
+    selected: &[usize], matrix: [f32;6]) -> Result<Vec<u8>> {
+    fn multiply(a:[f32;6],b:[f32;6])->[f32;6] {
+        [a[0]*b[0]+a[2]*b[1],a[1]*b[0]+a[3]*b[1],
+         a[0]*b[2]+a[2]*b[3],a[1]*b[2]+a[3]*b[3],
+         a[0]*b[4]+a[2]*b[5]+a[4],a[1]*b[4]+a[3]*b[5]+a[5]]
+    }
+    fn inverse(a:[f32;6])->Result<[f32;6]> {
+        let d=a[0]*a[3]-a[1]*a[2];
+        if !d.is_finite() || d.abs()<0.000001 {return Err(err("Text transform is singular"));}
+        Ok([a[3]/d,-a[1]/d,-a[2]/d,a[0]/d,
+            (a[2]*a[5]-a[3]*a[4])/d,(a[1]*a[4]-a[0]*a[5])/d])
+    }
+    let mut pdf=parse(&state.bytes)?;
+    let page=*pdf.get_pages().get(&(u32::from(page_index)+1)).ok_or_else(||err("Invalid page"))?;
+    let content=Content::decode(&pdf.get_page_content_with_limit(page,MAX_STREAM)?)?;
+    let records=runs(&pdf,page,&content)?;
+    let before=engine.text_objects(state,page_index)?;
+    verify_mapping(&records,&before)?;
+    let selected_ops:std::collections::HashSet<_>=selected.iter().map(|ordinal|
+        records.get(*ordinal).map(|r|r.op).ok_or_else(||err("Text selection is stale"))).collect::<Result<_>>()?;
+    let mut ctm=[1.0,0.0,0.0,1.0,0.0,0.0];
+    let mut stack=vec![];
+    let mut output=vec![];
+    for (index,mut op) in content.operations.into_iter().enumerate() {
+        if selected_ops.contains(&index) {
+            // Quote operators also change line position and spacing, which must
+            // remain outside the temporary graphics transform.
+            if op.operator=="\"" {
+                output.push(Operation::new("Tw",vec![op.operands.first().ok_or_else(||err("Invalid quote spacing"))?.clone()]));
+                output.push(Operation::new("Tc",vec![op.operands.get(1).ok_or_else(||err("Invalid quote spacing"))?.clone()]));
+            }
+            if op.operator=="'" || op.operator=="\"" {
+                output.push(Operation::new("T*",vec![]));
+                op=Operation::new("Tj",vec![op.operands.last().ok_or_else(||err("Invalid text show"))?.clone()]);
+            }
+            let local=multiply(multiply(inverse(ctm)?,matrix),ctm);
+            if local.iter().any(|v|!v.is_finite() || v.abs()>1.0e8) {
+                return Err(err("Text transform exceeds limits"));
+            }
+            output.push(Operation::new("cm",local.into_iter().map(Object::Real).collect()));
+            output.push(op);
+            output.push(Operation::new("cm",inverse(local)?.into_iter().map(Object::Real).collect()));
+        } else {
+            match op.operator.as_str() {
+                "q"=>{if stack.len()>128{return Err(err("Excessive graphics nesting"));}stack.push(ctm);},
+                "Q"=>ctm=stack.pop().ok_or_else(||err("Unbalanced graphics state"))?,
+                "cm"=>{
+                    let values=op.operands.iter().map(Object::as_float).collect::<std::result::Result<Vec<_>,_>>()?;
+                    let values:[f32;6]=values.try_into().map_err(|_|err("Invalid graphics transform"))?;
+                    ctm=multiply(ctm,values);
+                },
+                _=>{}
+            }
+            output.push(op);
+        }
+    }
+    pdf.change_page_content(page,Content {operations:output}.encode()?)?;
+    let candidate=engine.candidate(state,pdf)?;
+    let check=parse(&candidate.bytes)?;
+    let check_page=check.get_pages()[&(u32::from(page_index)+1)];
+    let check_content=Content::decode(&check.get_page_content_with_limit(check_page,MAX_STREAM)?)?;
+    let after_runs=runs(&check,check_page,&check_content)?;
+    if records.len()!=after_runs.len() || records.iter().zip(&after_runs).any(|(a,b)|a.text!=b.text) {
+        return Err(err("Text transform changed encoded content"));
+    }
+    let after=engine.text_objects(&candidate,page_index)?;
+    if before.len()!=after.len() {return Err(err("Text transform changed the object structure"));}
+    for (ordinal,(old,new)) in before.iter().zip(&after).enumerate() {
+        let expected=if selected.contains(&ordinal) {multiply(matrix,old.matrix)} else {old.matrix};
+        // Native extraction can suppress overlapping identical glyphs. Verify
+        // encoded text above and every native transform here.
+        if expected.iter().zip(new.matrix).any(|(a,b)|(a-b).abs()>0.05) {
+            return Err(err("Text transform verification failed; document unchanged"));
+        }
+    }
+    Ok(candidate.bytes)
+}
+
 /// Replaces the runs at `targets` (ordinal, replacement) on the page of
 /// `selected`, the first targeted object, in one transaction.
 pub(crate) fn edit(

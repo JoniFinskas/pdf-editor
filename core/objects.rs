@@ -20,7 +20,7 @@ pub enum ObjectAction {
         dx: f32,
         dy: f32,
     },
-    /// Scale a single object to PDF-point bounds without reflowing text.
+    /// Scale a selection to PDF-point bounds without reflowing text.
     Resize {
         bounds: Bounds,
     },
@@ -64,6 +64,10 @@ impl Engine {
         target: u16,
     ) -> Result<()> {
         guarded(|| {
+            let mut expected_text:Vec<_>=self.text_objects(doc,target)?.into_iter().map(|text|text.text).collect();
+            let source_doc=self.candidate(doc,parse(&clipboard.bytes)?)?;
+            expected_text.extend(self.text_objects(&source_doc,clipboard.items[0].page)?.into_iter()
+                .filter(|text|clipboard.items.iter().any(|item|item.index==text.index)).map(|text|text.text));
             let mut wrappers = Vec::new();
             let bytes = {
                 let source = self
@@ -97,6 +101,13 @@ impl Engine {
             let mut candidate = self.candidate(doc, parse(&bytes)?)?;
             self.expand_copy_wrappers(&mut candidate, target, wrappers)?;
             self.page_items(&candidate, target)?;
+            let mut actual:Vec<_>=self.text_objects(&candidate,target)?.into_iter()
+                .map(|text|text.text).filter(|text|!text.is_empty()).collect();
+            expected_text.retain(|text|!text.is_empty());
+            expected_text.sort();actual.sort();
+            if actual!=expected_text {
+                return Err(err("Paste cannot preserve the page text; document unchanged"));
+            }
             doc.accept(candidate.bytes);
             Ok(())
         })
@@ -167,15 +178,15 @@ impl Engine {
                 return Ok(());
             }
             let resize = if let ObjectAction::Resize { bounds } = action {
-                if items.len() != 1 {
-                    return Err(err("Resize requires one object"));
-                }
                 let current = self.page_items(doc, first.page)?;
-                let old = current
-                    .iter()
-                    .find(|i| i.index == first.index)
-                    .ok_or_else(|| err("Object no longer exists"))?
-                    .bounds;
+                let mut bounds_iter=items.iter().map(|item| current.iter().find(|c|c.index==item.index)
+                    .map(|c|c.bounds).ok_or_else(||err("Object no longer exists")));
+                let mut old=bounds_iter.next().ok_or_else(||err("Select an object first"))??;
+                for bound in bounds_iter {
+                    let bound=bound?;
+                    old.left=old.left.min(bound.left);old.right=old.right.max(bound.right);
+                    old.bottom=old.bottom.min(bound.bottom);old.top=old.top.max(bound.top);
+                }
                 let dimensions = [
                     old.right - old.left,
                     old.top - old.bottom,
@@ -203,6 +214,32 @@ impl Engine {
             } else {
                 None
             };
+            if matches!(action,ObjectAction::Move {..}|ObjectAction::Resize {..}|ObjectAction::Delete) {
+                let text=self.text_objects(doc,first.page)?;
+                let ordinals:Option<Vec<_>>=items.iter().map(|item|text.iter().position(|o|o.index==item.index)).collect();
+                if let Some(mut ordinals)=ordinals {
+                    ordinals.sort_unstable();
+                    if ordinals.windows(2).any(|pair|pair[0]==pair[1]) {return Err(err("Duplicate object selection"));}
+                    let bytes=if matches!(action,ObjectAction::Delete) {
+                        let targets:Vec<_>=ordinals.iter().map(|ordinal|(*ordinal,String::new())).collect();
+                        content::edit(self,doc,&text[ordinals[0]],&targets)?.0
+                    } else {
+                        let matrix=resize.map_or([1.0,0.0,0.0,1.0,dx,dy],
+                            |(sx,sy,tx,ty)|[sx,0.0,0.0,sy,tx,ty]);
+                        content::transform_text(self,doc,first.page,&ordinals,matrix)?
+                    };
+                    doc.accept(bytes);
+                    return Ok(());
+                }
+            }
+            let text_before=self.text_objects(doc,first.page)?;
+            let mut expected_text:Vec<_>=text_before.iter()
+                .filter(|text|!matches!(action,ObjectAction::Delete) || !items.iter().any(|item|item.index==text.index))
+                .map(|text|text.text.clone()).collect();
+            if matches!(action,ObjectAction::Duplicate {..}) {
+                expected_text.extend(text_before.iter().filter(|text|items.iter().any(|item|item.index==text.index))
+                    .map(|text|text.text.clone()));
+            }
             let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
             let source = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
             let source_page = source.pages().get(i32::from(first.page))?;
@@ -289,6 +326,13 @@ impl Engine {
             let mut candidate = self.candidate(doc, parse(&bytes)?)?;
             self.expand_copy_wrappers(&mut candidate, first.page, wrappers)?;
             self.page_items(&candidate, first.page)?;
+            let mut actual:Vec<_>=self.text_objects(&candidate,first.page)?.into_iter()
+                .map(|text|text.text).filter(|text|!text.is_empty()).collect();
+            expected_text.retain(|text|!text.is_empty());
+            expected_text.sort();actual.sort();
+            if actual!=expected_text {
+                return Err(err("This object operation cannot preserve the page text; document unchanged"));
+            }
             doc.accept(candidate.bytes);
             Ok(())
         })

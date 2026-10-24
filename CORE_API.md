@@ -327,3 +327,8 @@ bounded rendered images, retaining page dimensions and one undo step. It copies
 no original objects, text layer, scripts or metadata. SanitizeReport.rasterized_pages
 identifies this mode. Editable sanitization remains the default and fails closed
 when visibility cannot be verified.
+
+
+ObjectAction::Resize accepts a selection on one page. Its common bounding box
+maps to the requested bounds; each object's transform uses the same scale and
+translation, preserving relative placement. The operation remains atomic.

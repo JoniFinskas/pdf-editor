@@ -827,3 +827,12 @@ rapid switching between nearby alignments without accumulating snapped deltas.
 Equal-gap alignment uses the nearest non-overlapping neighbors in the same row
 or column. Guide labels distinguish these cases. Alt and the Snap toggle clear
 the current lock. Preview geometry is reused when committing the edit.
+
+### Preserve glyph resources during text geometry edits
+
+Logical text selections use a shared affine transform for all member objects.
+Text movement and resizing modify content-stream graphics state around the
+selected shows, preserving original glyph encodings and font resources.
+Verification checks decoded content and every native object transform. Native
+object operations also check extracted text before accepting a candidate, since
+regenerating Type3 content can lose text. Unsafe results leave the document intact.
