@@ -191,7 +191,7 @@ fn start(
 pub struct Compare {
     pub open: bool,
     paths: [Option<PathBuf>; 2],
-    picker: crate::dialogs::Picker,
+    picker: crate::dialogs::ToolDialog<PathBuf>,
     picker_side: usize,
     passwords: [String; 2],
     session: Option<Session>,
@@ -215,33 +215,35 @@ pub struct Compare {
     error: Option<String>,
 }
 impl Compare {
+    fn clear_results(&mut self) {
+        self.session = None;
+        self.textures = [None, None];
+        self.requested = None;
+        self.waiting = false;
+        self.summaries.clear();
+        self.pairs.clear();
+        self.errors.clear();
+        self.error = None;
+        self.displayed = None;
+        self.regions.clear();
+        self.focused_region = None;
+        self.alignment_progress = None;
+        self.alignment_note = None;
+    }
+
+    fn close_session(&mut self) {
+        self.picker.cancel();
+        self.clear_results();
+        self.passwords = Default::default();
+    }
+
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette) {
-        if let Some(result) = self.picker.poll() {
-            match result {
-                Ok(Some(path)) => {
-                    self.paths[self.picker_side] = Some(path);
-                    self.session = None;
-                    self.textures = [None, None];
-                    self.summaries.clear();
-                    self.errors.clear();
-                    self.requested = None;
-                    self.waiting = false;
-                }
-                Ok(None) => {}
-                Err(error) => self.error = Some(error.into()),
-            }
-        }
-        if self.picker.pending() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        if let Some(path) = self.picker.poll(ctx, self.open, true) {
+            self.paths[self.picker_side] = Some(path);
+            self.clear_results();
         }
         if !self.open {
-            self.session = None;
-            self.textures = [None, None];
-            self.requested = None;
-            self.waiting = false;
-            self.summaries.clear();
-            self.errors.clear();
-            self.passwords = Default::default();
+            self.close_session();
             return;
         }
         if self.zoom == 0. {
@@ -320,16 +322,14 @@ impl Compare {
                 ui.horizontal_wrapped(|ui| {
                     for i in 0..2 {
                         let label = if i == 0 { "Choose original" } else { "Choose revised" };
-                        if Btn::new(label).enabled(!self.picker.pending()).show(ui,p).clicked() {
+                        if Btn::new(label).enabled(!self.picker.busy()).show(ui,p).clicked() {
                             self.picker_side = i;
-                            if let Err(error) = self.picker.start(|| rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file()) {
-                                self.error = Some(format!("Cannot open file picker: {error}"));
-                            }
+                            self.picker.launch(|| rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file());
                         }
                         ui.add(egui::Label::new(self.paths[i].as_ref().and_then(|path| path.file_name())
                             .map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| "No file selected".into())).truncate());
                     }
-                    if self.picker.pending() { ui.spinner(); ui.label("Waiting for file selection…"); }
+                    self.picker.feedback(ui, p);
                 });
                 ui.horizontal_wrapped(|ui| {
                     ui.collapsing("Passwords (optional)", |ui| {
@@ -339,7 +339,7 @@ impl Compare {
                         }
                     });
                     ui.checkbox(&mut self.by_number,"Match page numbers only");
-                    if Btn::new("Compare").id("compare-start").enabled(!self.picker.pending() && self.paths.iter().all(Option::is_some)).show(ui,p).clicked()
+                    if Btn::new("Compare").id("compare-start").enabled(!self.picker.busy() && self.paths.iter().all(Option::is_some)).show(ui,p).clicked()
                         && let [Some(a), Some(b)] = &self.paths {
                         self.session = Some(start([a.clone(), b.clone()], std::mem::take(&mut self.passwords), ctx.clone(), self.by_number));
                         self.summaries.clear(); self.pairs.clear(); self.alignment_progress=None; self.alignment_note=None; self.errors.clear(); self.error = None;
@@ -400,6 +400,10 @@ impl Compare {
                 }
             });
         self.open = open;
+        if !open {
+            self.close_session();
+            return;
+        }
         let key = (self.selected, self.overlay);
         if !self.waiting
             && !self.summaries.is_empty()
@@ -784,6 +788,54 @@ mod tests {
         assert!(compare.displayed.is_none());
         assert!(compare.error.is_some());
     }
+    #[test]
+    fn closing_comparison_discards_late_picker_and_worker_results() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut compare = Compare { open: true, ..Default::default() };
+        let render = |compare: &mut Compare| {
+            let mut output = ctx.run_ui(egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1180., 820.))),
+                ..Default::default()
+            }, |ui| compare.show(&ctx, &crate::theme::palette(ui)));
+            output.textures_delta.clear();
+        };
+        let (release, wait) = mpsc::channel();
+        compare.picker.launch(move || { wait.recv().unwrap(); Some(PathBuf::from("late-generated.pdf")) });
+        let (tx, _commands) = mpsc::sync_channel(1);
+        let (events, rx) = mpsc::sync_channel(2);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        compare.session = Some(Session { tx, rx, cancel: cancelled.clone() });
+        compare.summaries.push(Some((1, 12)));
+        compare.alignment_progress = Some((16, 32));
+        compare.passwords = ["generated-secret".into(), String::new()];
+        compare.open = false;
+        render(&mut compare);
+        assert!(cancelled.load(Ordering::Relaxed));
+        assert!(events.send(Event::Summary(0, 99, 99)).is_err());
+        assert!(compare.summaries.is_empty());
+        assert!(compare.alignment_progress.is_none());
+        assert!(compare.passwords.iter().all(String::is_empty));
+        compare.open = true;
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while compare.picker.busy() {
+            render(&mut compare);
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(compare.paths.iter().all(Option::is_none));
+        compare.picker_side = 1;
+        compare.picker.launch(|| Some(PathBuf::from("fresh-generated.pdf")));
+        while compare.picker.busy() {
+            render(&mut compare);
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(compare.paths[0].is_none());
+        assert_eq!(compare.paths[1], Some(PathBuf::from("fresh-generated.pdf")));
+    }
+
     #[test]
     fn comparison_window_draws_without_loading_a_document() {
         let ctx = egui::Context::default();
