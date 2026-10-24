@@ -31,7 +31,7 @@ I/O, lopdf and PDFium errors intentionally discard internal diagnostic details.
 | `Document::suggested_save_path` | Document | Original directory plus `<original-stem>_edited.pdf`. |
 | `Document::save_as` | Document, new PDF path | Flushes a temporary file before publishing the complete PDF; rejects original path, existing files and alternate data-stream names. |
 | `Substitution::config_path` | None | `%APPDATA%/PdfEditor/settings.txt`, or an error if APPDATA is unavailable. |
-| `Substitution::load` | Config path | Line or Document policy; absent file defaults to Line, invalid content returns an error. |
+| `Substitution::load` | Config path | Line or Document policy; absent file defaults to Document, invalid content returns an error. |
 | `Substitution::save` | Policy, config path | Writes a small config through an exclusively created temporary file and rename. |
 
 ## Types and integration rules

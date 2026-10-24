@@ -715,7 +715,7 @@ fn limits_settings_and_hit_testing() {
     if p.exists() {
         fs::remove_file(&p).unwrap();
     }
-    assert_eq!(Substitution::load(&p).unwrap(), Substitution::Line);
+    assert_eq!(Substitution::load(&p).unwrap(), Substitution::Document);
     Substitution::Document.save(&p).unwrap();
     assert_eq!(Substitution::load(&p).unwrap(), Substitution::Document);
     Substitution::Line.save(&p).unwrap();

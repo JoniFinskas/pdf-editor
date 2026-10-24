@@ -7,8 +7,8 @@ use std::{
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Substitution {
-    #[default]
     Line,
+    #[default]
     Document,
 }
 impl Substitution {
