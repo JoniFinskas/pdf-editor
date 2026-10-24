@@ -409,19 +409,35 @@ fn run(
 }
 
 fn coalesce(batch: Vec<Request>) -> Vec<Request> {
-    let mut out: Vec<Request> = Vec::with_capacity(batch.len());
-    for request in batch {
-        match &request {
-            Request::Render { page, .. } => {
-                out.retain(|r| !matches!(r, Request::Render { page: p, .. } if p == page));
-            }
-            Request::Objects { page } => {
-                out.retain(|r| !matches!(r, Request::Objects { page: p } if p == page));
-            }
-            _ => {}
+    fn key(request: &Request) -> Option<(u8,u16)> {
+        match request {
+            Request::Objects { page } => Some((0,*page)),
+            Request::Render { page,.. } => Some((1,*page)),
+            Request::Thumbnail(page) => Some((2,*page)),
+            _ => None,
         }
-        out.push(request);
     }
+    fn flush(pending: &mut Vec<Request>, out: &mut Vec<Request>) {
+        let mut seen = std::collections::HashSet::new();
+        // Keep the latest scale for each page, without cancelling a preview
+        // across an edit, open, save or other ordered operation.
+        pending.reverse();
+        pending.retain(|request| seen.insert(key(request).unwrap()));
+        pending.reverse();
+        pending.sort_by_key(|request| key(request).unwrap().0);
+        out.append(pending);
+    }
+    let mut out = Vec::with_capacity(batch.len());
+    let mut pending = Vec::new();
+    for request in batch {
+        if key(&request).is_some() {
+            pending.push(request);
+        } else {
+            flush(&mut pending,&mut out);
+            out.push(request);
+        }
+    }
+    flush(&mut pending,&mut out);
     out
 }
 
@@ -1422,3 +1438,7 @@ mod clipboard_tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "latency_tests.rs"]
+mod latency_tests;

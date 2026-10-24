@@ -750,3 +750,11 @@ Keep the compact document menu and provide seven task categories in All tools.
 Search labels, descriptions and a small explicit alias list. Keyboard selection
 uses the same enabled state as pointer activation; navigation retains search focus.
 Expose existing recovery settings without introducing a second recovery system.
+
+## Preview scheduling
+
+Coalesce only contiguous preview requests. Keep the newest render scale, load
+text selection data before rasters and thumbnails, and preserve every edit/open/
+save boundary. Queue tests reproduce duplicate thumbnails and cross-edit
+cancellation in the previous implementation. Existing in-flight work is not
+interrupted; no document mutation is reordered.
