@@ -8,9 +8,14 @@ use eframe::egui;
 use pdf_editor_core::ImagePageSize;
 use std::path::PathBuf;
 
+enum Selection {
+    Images(Vec<PathBuf>),
+    Create(Request),
+}
 #[derive(Default)]
 pub struct ImageCreate {
     pub open: bool,
+    dialog: crate::dialogs::ToolDialog<Selection>,
     paths: Vec<PathBuf>,
     size: ImagePageSize,
     error: Option<String>,
@@ -37,8 +42,15 @@ impl ImageCreate {
     }
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, idle: bool) -> Option<Request> {
         let mut request = None;
-        let mut chosen = None;
+        if let Some(selection) = self.dialog.poll(ctx, self.open, idle) {
+            match selection {
+                Selection::Images(paths) => self.add(paths),
+                Selection::Create(value) => request = Some(value),
+            }
+        }
+        let idle = idle && !self.dialog.busy() && request.is_none();
         ToolWindow::new("Images to PDF",Icon::Image).width(480.0).show(ctx,p,&mut self.open,|ui| {
+            self.dialog.feedback(ui,p);
             widgets::hint(ui,p,"Drop JPG, PNG or HEIC images here. One image per page, in listed order. HEIC requires an installed Windows codec.");
             let mut movement=None;
             let mut remove=None;
@@ -55,14 +67,12 @@ impl ImageCreate {
             ui.horizontal(|ui| { ui.label("Page size"); for (value,label) in [(ImagePageSize::A4,"A4"),(ImagePageSize::Letter,"Letter"),(ImagePageSize::Image,"Image at 96 DPI")] { ui.selectable_value(&mut self.size,value,label); } });
             if let Some(error)=&self.error { ui.label(error); }
             widgets::actions(ui,|ui| {
-                if Btn::new("Add images…").enabled(idle).show(ui,p).clicked() { chosen=rfd::FileDialog::new().add_filter("Images",&["jpg","jpeg","png","heic","heif"]).pick_files(); }
-                if Btn::new("Create PDF…").look(Look::Primary).enabled(idle && !self.paths.is_empty()).show(ui,p).clicked() && let Some(path)=rfd::FileDialog::new().add_filter("PDF",&["pdf"]).set_file_name("images.pdf").save_file() { request=Some(Request::ImagesToPdf(self.paths.clone(),self.size,path)); }
+                if Btn::new("Add images…").enabled(idle).show(ui,p).clicked() { self.dialog.launch(|| rfd::FileDialog::new().add_filter("Images",&["jpg","jpeg","png","heic","heif"]).pick_files().map(Selection::Images)); }
+                if Btn::new("Create PDF…").look(Look::Primary).enabled(idle && !self.paths.is_empty()).show(ui,p).clicked() { let (paths,size)=(self.paths.clone(),self.size); self.dialog.launch(move || rfd::FileDialog::new().add_filter("PDF",&["pdf"]).set_file_name("images.pdf").save_file().map(|path| Selection::Create(Request::ImagesToPdf(paths,size,path)))); }
             });
             widgets::hint(ui,p,"Photos are encoded at JPEG quality 95 on white. Existing files are never overwritten.");
         });
-        if let Some(paths) = chosen {
-            self.add(paths);
-        }
+        if !self.open { self.dialog.cancel(); return None; }
         request
     }
 }
@@ -72,13 +82,22 @@ mod tests {
     use super::*;
     #[test]
     fn image_queue_accepts_multiple_formats_and_is_bounded() {
-        let mut queue=ImageCreate::default();
-        queue.add(vec!["one.JPG".into(),"two.heic".into(),"three.png".into(),"ignore.pdf".into()]);
-        assert_eq!(queue.paths.len(),3);
-        queue.paths.swap(0,2);
-        assert_eq!(queue.paths[0],PathBuf::from("three.png"));
-        queue.add((0..101).map(|i|PathBuf::from(format!("{i}.jpg"))).collect());
-        assert_eq!(queue.paths.len(),100);
+        let mut queue = ImageCreate::default();
+        queue.add(vec![
+            "one.JPG".into(),
+            "two.heic".into(),
+            "three.png".into(),
+            "ignore.pdf".into(),
+        ]);
+        assert_eq!(queue.paths.len(), 3);
+        queue.paths.swap(0, 2);
+        assert_eq!(queue.paths[0], PathBuf::from("three.png"));
+        queue.add(
+            (0..101)
+                .map(|i| PathBuf::from(format!("{i}.jpg")))
+                .collect(),
+        );
+        assert_eq!(queue.paths.len(), 100);
         assert!(queue.error.is_some());
     }
 }

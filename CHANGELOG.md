@@ -3,6 +3,7 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Run all import/export and page-insertion file pickers in background jobs; capture input options, prevent duplicate jobs, and discard cancelled or closed-tool results.
 - Keep tool windows within the viewport, with scrollable content and an always-accessible close button on smaller screens.
 - Fit comparison pages side by side, label Original/Revised, number matching changes, add changed-page navigation, and retain the preview while switching comparison modes.
 - Apply text edits on click-away, including empty canvas, and retain the draft if applying fails so it can be corrected or retried.

@@ -480,6 +480,7 @@ pub struct EditorApp {
     tools_focus: bool,
     page_jump: crate::navigation::PageJump,
     picker: crate::dialogs::Picker,
+    insert_dialog: crate::dialogs::ToolDialog<Request>,
     picker_save: bool,
     recent_files: Vec<PathBuf>,
     dragging_page: Option<usize>,
@@ -827,6 +828,7 @@ impl EditorApp {
             tools_focus: false,
             page_jump: crate::navigation::PageJump::default(),
             picker: crate::dialogs::Picker::default(),
+            insert_dialog: Default::default(),
             picker_save: false,
             recent_files: config_path
                 .as_deref()
@@ -1628,10 +1630,12 @@ impl EditorApp {
 
     fn thumbnails(&mut self, ui: &mut Ui, p: &Palette) {
         let Some(doc) = &self.doc else { return };
-        let idle = self.busy == 0;
+        let idle = self.busy == 0 && !self.insert_dialog.busy();
         let count = doc.pages.len();
         let current = u16::try_from(doc.current_page).unwrap_or(0);
         let mut action = None;
+        let mut insert = None;
+        self.insert_dialog.feedback(ui,p);
         Frame::new()
             .inner_margin(Margin {
                 left: 16,
@@ -1650,7 +1654,7 @@ impl EditorApp {
                             .tip("Page actions")
                             .show(ui, p);
                         Popup::menu(&more).show(|ui| {
-                            if let Some(edit) = page_menu(ui, p, current, count, idle) {
+                            if let Some(edit) = page_menu(ui, p, current, count, idle, &mut insert) {
                                 action = Some(edit);
                             }
                         });
@@ -1662,7 +1666,7 @@ impl EditorApp {
                             .show(ui, p)
                             .clicked()
                         {
-                            action = pick_insert(current);
+                            insert = Some(current);
                         }
                         if Btn::icon(Icon::ChevronLeft)
                             .id("hide-pages")
@@ -1757,7 +1761,7 @@ impl EditorApp {
                         }
                         Popup::context_menu(&response).show(|ui| {
                             if let Ok(page) = u16::try_from(index)
-                                && let Some(edit) = page_menu(ui, p, page, count, idle)
+                                && let Some(edit) = page_menu(ui, p, page, count, idle, &mut insert)
                             {
                                 action = Some(edit);
                             }
@@ -1807,6 +1811,11 @@ impl EditorApp {
         }
         if ui.input(|i| i.pointer.any_released()) {
             self.dragging_page = None;
+        }
+        if let Some(before) = insert {
+            self.insert_dialog.launch(move || rfd::FileDialog::new().set_title("Insert pages from PDF")
+                .add_filter("PDF document", &["pdf"]).pick_file()
+                .map(|path| Request::Pages(pdf_editor_core::PageEdit::Insert { path,before })));
         }
         if let Some(action) = action {
             self.commit_edit();
@@ -4120,6 +4129,12 @@ impl eframe::App for EditorApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let p = theme::palette(ui);
+        if let Some(request) = self.insert_dialog.poll(&ctx,self.doc.is_some(),self.busy == 0) {
+            self.commit_edit();
+            self.busy += 1;
+            self.send(request);
+        }
+
         self.poll(&ctx);
         self.autosave_tick(&ctx);
         self.close_guard(&ctx);
@@ -4473,6 +4488,7 @@ fn page_menu(
     page: u16,
     count: usize,
     idle: bool,
+    insert: &mut Option<u16>,
 ) -> Option<pdf_editor_core::PageEdit> {
     use pdf_editor_core::PageEdit;
     let item = |ui: &mut Ui, icon: Icon, label: &str, enabled: bool| {
@@ -4497,17 +4513,9 @@ fn page_menu(
         action = Some(PageEdit::Delete { page });
     }
     if item(ui, Icon::FilePlus, "Insert pages from PDF\u{2026}", idle) {
-        action = pick_insert(page);
+        *insert = Some(page);
     }
     action
-}
-
-fn pick_insert(before: u16) -> Option<pdf_editor_core::PageEdit> {
-    let path = rfd::FileDialog::new()
-        .set_title("Insert pages from PDF")
-        .add_filter("PDF document", &["pdf"])
-        .pick_file()?;
-    Some(pdf_editor_core::PageEdit::Insert { path, before })
 }
 
 fn paint_thumbnail(ui: &Ui, rect: Rect, page: &PageView, p: &Palette) {
@@ -5284,6 +5292,7 @@ mod tests {
             tools_focus: false,
             page_jump: crate::navigation::PageJump::default(),
             picker: crate::dialogs::Picker::default(),
+            insert_dialog: Default::default(),
             picker_save: false,
                 recent_files: vec![],
                 dragging_page: None,

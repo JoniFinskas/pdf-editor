@@ -5,9 +5,14 @@ use crate::{
     worker::Request,
 };
 use eframe::egui;
+enum Selection {
+    Paths(Vec<std::path::PathBuf>),
+    Export(Request),
+}
 #[derive(Default)]
 pub struct Organize {
     pub open: bool,
+    dialog: crate::dialogs::ToolDialog<Selection>,
     range: String,
     groups: String,
     paths: Vec<std::path::PathBuf>,
@@ -35,9 +40,17 @@ impl Organize {
     }
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, idle: bool) -> Option<Request> {
         let mut request = None;
+        if let Some(selection) = self.dialog.poll(ctx, self.open, idle) {
+            match selection {
+                Selection::Paths(paths) => self.paths = paths.into_iter().take(100).collect(),
+                Selection::Export(value) => request = Some(value),
+            }
+        }
+        let idle = idle && !self.dialog.busy() && request.is_none();
         ToolWindow::new("Merge, split and extract", Icon::Layers)
             .width(420.0)
             .show(ctx, p, &mut self.open, |ui| {
+                self.dialog.feedback(ui,p);
                 let width = ui.available_width();
                 widgets::subheading(ui, p, "Merge");
                 if self.shell_collecting { widgets::hint(ui, p, "Pending Explorer selection. Additional selections join this list until Merge or Close. Review the order below."); }
@@ -99,11 +112,8 @@ impl Organize {
                         .enabled(idle)
                         .show(ui, p)
                         .clicked()
-                        && let Some(paths) = rfd::FileDialog::new()
-                            .add_filter("PDF", &["pdf"])
-                            .pick_files()
                     {
-                        self.paths = paths;
+                        self.dialog.launch(|| rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_files().map(Selection::Paths));
                     }
                 });
                 ui.add_space(4.0);
@@ -119,12 +129,10 @@ impl Organize {
                         .enabled(idle && !self.range.is_empty())
                         .show(ui, p)
                         .clicked()
-                        && let Some(path) = rfd::FileDialog::new()
-                            .add_filter("PDF", &["pdf"])
-                            .set_file_name("extracted.pdf")
-                            .save_file()
                     {
-                        request = Some(Request::Extract(self.range.clone(), path));
+                        let range=self.range.clone();
+                        self.dialog.launch(move || rfd::FileDialog::new().add_filter("PDF", &["pdf"]).set_file_name("extracted.pdf").save_file()
+                            .map(|path| Selection::Export(Request::Extract(range,path))));
                     }
                 });
                 ui.add_space(4.0);
@@ -140,9 +148,10 @@ impl Organize {
                         .enabled(idle && !self.groups.is_empty())
                         .show(ui, p)
                         .clicked()
-                        && let Some(folder) = rfd::FileDialog::new().pick_folder()
                     {
-                        request = Some(Request::Split(self.groups.clone(), folder));
+                        let groups=self.groups.clone();
+                        self.dialog.launch(move || rfd::FileDialog::new().pick_folder()
+                            .map(|folder| Selection::Export(Request::Split(groups,folder))));
                     }
                 });
                 widgets::hint(
@@ -154,6 +163,7 @@ impl Organize {
         if !self.open {
             self.shell_collecting = false;
         }
+        if !self.open { self.dialog.cancel(); return None; }
         request
     }
 }

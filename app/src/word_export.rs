@@ -8,15 +8,19 @@ use eframe::egui;
 #[derive(Default)]
 pub struct WordExport {
     pub open: bool,
+    dialog: crate::dialogs::ToolDialog<Request>,
 }
 impl WordExport {
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, idle: bool) -> Option<Request> {
-        let mut request = None;
+        let request = self.dialog.poll(ctx, self.open, idle);
+        let idle = idle && !self.dialog.busy() && request.is_none();
         ToolWindow::new("Export to Word",Icon::Export).width(430.).show(ctx,p,&mut self.open,|ui|{
+   self.dialog.feedback(ui,p);
    widgets::hint(ui,p,"Export paragraphs, font names, sizes, bold/italic, images and simple ruled tables to an editable Word document. Layout is best effort; review the exported document before sharing.");
    widgets::hint(ui,p,"Images are limited to 2048 pixels per side. Ordinary groups are expanded automatically; unsupported transparency groups return an error. Complex layouts and merged table cells may need corrections in Word.");
-   if Btn::new("Export Word document...").look(Look::Primary).enabled(idle).show(ui,p).clicked()&&let Some(path)=rfd::FileDialog::new().add_filter("Word document",&["docx"]).set_file_name("document.docx").save_file(){request=Some(Request::ExportWord(path));}
+   if Btn::new("Export Word document...").look(Look::Primary).enabled(idle).show(ui,p).clicked() {self.dialog.launch(|| rfd::FileDialog::new().add_filter("Word document",&["docx"]).set_file_name("document.docx").save_file().map(Request::ExportWord));}
   });
+        if !self.open { self.dialog.cancel(); return None; }
         request
     }
 }

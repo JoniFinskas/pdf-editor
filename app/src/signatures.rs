@@ -10,6 +10,7 @@ use std::path::Path;
 
 pub struct Signatures {
     pub open: bool,
+    dialog: crate::dialogs::ToolDialog<pdf_editor_core::Result<Picture>>,
     strokes: Vec<Vec<[f32; 2]>>,
     picture: Option<Picture>,
     preview: Option<egui::TextureHandle>,
@@ -20,6 +21,7 @@ impl Default for Signatures {
     fn default() -> Self {
         Self {
             open: false,
+            dialog: Default::default(),
             strokes: vec![],
             picture: None,
             preview: None,
@@ -87,11 +89,19 @@ impl Signatures {
         pages: usize,
         idle: bool,
     ) -> Option<Request> {
+        if let Some(result) = self.dialog.poll(ctx, self.open, idle) {
+            match result {
+                Ok(pic) => self.set_picture(ctx, pic),
+                Err(error) => self.failed(error),
+            }
+        }
+        let idle = idle && !self.dialog.busy();
         let mut request = None;
         let mut open = self.open;
         ToolWindow::new("Signatures", Icon::Signature)
             .width(440.0)
             .show(ctx, p, &mut open, |ui| {
+                self.dialog.feedback(ui, p);
                 widgets::hint(ui, p, "Draw a signature, or import a PNG or JPG.");
                 let size = Vec2::new(ui.available_width(), 140.0);
                 let (response, painter) = ui.allocate_painter(size, Sense::drag());
@@ -156,16 +166,16 @@ impl Signatures {
                     if Btn::new("Import…")
                         .with_icon(Icon::Image)
                         .look(Look::Outline)
+                        .enabled(idle)
                         .show(ui, p)
                         .clicked()
-                        && let Some(path) = rfd::FileDialog::new()
-                            .add_filter("Images", &["png", "jpg", "jpeg"])
-                            .pick_file()
                     {
-                        match Picture::open(&path) {
-                            Ok(pic) => self.set_picture(ctx, pic),
-                            Err(e) => self.failed(e),
-                        }
+                        self.dialog.launch(|| {
+                            rfd::FileDialog::new()
+                                .add_filter("Images", &["png", "jpg", "jpeg"])
+                                .pick_file()
+                                .map(|path| Picture::open(&path))
+                        });
                     }
                 });
                 widgets::subheading(ui, p, "Saved signatures");
@@ -283,6 +293,7 @@ impl Signatures {
                 });
             });
         self.open = open;
+        if !self.open { self.dialog.cancel(); return None; }
         request
     }
 }

@@ -8,6 +8,7 @@ use eframe::egui;
 use pdf_editor_core::{Picture, PlacedPicture, Placement};
 pub struct Pictures {
     pub open: bool,
+    dialog: crate::dialogs::ToolDialog<pdf_editor_core::Result<Picture>>,
     pub items: Vec<PlacedPicture>,
     pub selected: Option<usize>,
     image: Option<Picture>,
@@ -18,6 +19,7 @@ impl Default for Pictures {
     fn default() -> Self {
         Self {
             open: false,
+            dialog: Default::default(),
             items: vec![],
             selected: None,
             image: None,
@@ -41,9 +43,22 @@ impl Pictures {
         pages: usize,
     ) -> Option<Request> {
         let mut request = None;
+        if let Some(result) = self.dialog.poll(ctx, self.open, idle) {
+            match result {
+                Ok(image) => {
+                    self.at.height = self.at.width * image.height as f32 / image.width as f32;
+                    self.image = Some(image);
+                    self.selected = None;
+                    self.error.clear();
+                }
+                Err(error) => self.error = error.to_string(),
+            }
+        }
+        let idle = idle && !self.dialog.busy();
         ToolWindow::new("Images", Icon::Image)
             .width(420.0)
             .show(ctx, p, &mut self.open, |ui| {
+                self.dialog.feedback(ui, p);
                 ui.horizontal(|ui| {
                     widgets::subheading(ui, p, "Images in this document");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -146,25 +161,20 @@ impl Pictures {
                     if Btn::new("Import PNG or JPG…")
                         .with_icon(Icon::FilePlus)
                         .look(Look::Outline)
+                        .enabled(idle)
                         .show(ui, p)
                         .clicked()
-                        && let Some(path) = rfd::FileDialog::new()
-                            .add_filter("Images", &["png", "jpg", "jpeg"])
-                            .pick_file()
                     {
-                        match Picture::open(&path) {
-                            Ok(image) => {
-                                self.at.height =
-                                    self.at.width * image.height as f32 / image.width as f32;
-                                self.image = Some(image);
-                                self.selected = None;
-                                self.error.clear();
-                            }
-                            Err(e) => self.error = e.to_string(),
-                        }
+                        self.dialog.launch(|| {
+                            rfd::FileDialog::new()
+                                .add_filter("Images", &["png", "jpg", "jpeg"])
+                                .pick_file()
+                                .map(|path| Picture::open(&path))
+                        });
                     }
                 });
             });
+        if !self.open { self.dialog.cancel(); return None; }
         request
     }
 }

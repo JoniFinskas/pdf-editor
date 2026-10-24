@@ -9,20 +9,23 @@ use pdf_editor_core::{Bounds, TableFormat, TableGrid};
 #[derive(Default)]
 pub struct Tables {
     pub open: bool,
+    dialog: crate::dialogs::ToolDialog<Request>,
     pub selecting: bool,
     start: Option<(u16, egui::Pos2)>,
     pub grid: Option<TableGrid>,
 }
 impl Tables {
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, idle: bool) -> Option<Request> {
-        let mut request = None;
+        let request = self.dialog.poll(ctx, self.open, idle);
+        let idle = idle && !self.dialog.busy() && request.is_none();
         let mut select = false;
         ToolWindow::new("Tables to Excel or CSV",Icon::Export).width(620.).show(ctx,p,&mut self.open,|ui|{
+   self.dialog.feedback(ui,p);
    widgets::hint(ui,p,"Select a table on the page. Check the detected grid before exporting; complex or merged cells may need corrections.");
    if Btn::new("Select area on page").enabled(idle).show(ui,p).clicked(){select=true;}
    if let Some(grid)=&mut self.grid {
     egui::ScrollArea::both().max_height(340.).show(ui,|ui|{egui::Grid::new("table-preview").striped(true).show(ui,|ui|{for row in &mut grid.cells {for cell in row {ui.add(widgets::text_field(cell,110.));}ui.end_row();}});});
-    ui.horizontal(|ui|{for (format,label,ext) in [(TableFormat::Xlsx,"Export Excel…","xlsx"),(TableFormat::Csv,"Export CSV…","csv")] {if Btn::new(label).look(Look::Primary).enabled(idle).show(ui,p).clicked()&& let Some(path)=rfd::FileDialog::new().add_filter(label,&[ext]).set_file_name(format!("table.{ext}")).save_file(){request=Some(Request::ExportTable(grid.clone(),format,path));}}});
+    ui.horizontal(|ui|{for (format,label,ext) in [(TableFormat::Xlsx,"Export Excel…","xlsx"),(TableFormat::Csv,"Export CSV…","csv")] {if Btn::new(label).look(Look::Primary).enabled(idle).show(ui,p).clicked() {let grid=grid.clone(); self.dialog.launch(move || rfd::FileDialog::new().add_filter(label,&[ext]).set_file_name(format!("table.{ext}")).save_file().map(|path| Request::ExportTable(grid,format,path)));}}});
    }
   });
         if select {
@@ -30,6 +33,7 @@ impl Tables {
             self.open = false;
             self.grid = None;
         }
+        if !self.open { self.dialog.cancel(); return None; }
         request
     }
     pub fn on_page(
