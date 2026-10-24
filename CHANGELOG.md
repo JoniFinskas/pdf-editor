@@ -3,6 +3,7 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Batch predictable text cursor repairs and anchor eligible text chains to avoid repeated whole-page reparsing.
 
 ## [0.2.2] - 2026-10-24
 - Speed up dense-page text extraction and editing with one-pass character indexing, reused font decoding and selected-page data.

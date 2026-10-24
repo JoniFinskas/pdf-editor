@@ -203,6 +203,71 @@ pub(crate) fn resources(doc: &lopdf::Document, page: ObjectId) -> Result<Diction
     }
     Ok(Dictionary::new())
 }
+// Test-only work counter: guards against reparsing once per corrected run.
+#[cfg(test)]
+thread_local! { pub(crate) static REPAIR_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+enum CursorRepair {
+    Shift(f32),
+    Anchor([f32; 6]),
+}
+
+// Absolute anchors avoid accumulated floating-point cursor drift. They are
+// equivalent only when no operation later consumes the text line matrix, the
+// graphics transform is untouched, and horizontal scale/rise are neutral.
+fn can_anchor_cursors(ops: &Content<Vec<Operation>>, records: &[Run]) -> bool {
+    records.iter().all(|r| {
+        matches!(
+            r.font.get(b"Subtype").and_then(Object::as_name),
+            Ok(b"Type0" | b"TrueType")
+        )
+    }) && ops.operations.iter().all(|op| match op.operator.as_str() {
+        "BT" | "ET" | "Tf" | "Tm" | "Tj" | "Tc" | "Tw" | "Tr" | "TL" | "g" | "G" | "rg" | "RG"
+        | "k" | "K" => true,
+        "TJ" => {
+            op.operands
+                .first()
+                .and_then(|value| value.as_array().ok())
+                .is_some_and(|items| {
+                    // A leading TJ adjustment may already be included in the native
+                    // object's origin. Do not apply it again after an absolute anchor.
+                    match items.iter().position(
+                        |item| matches!(item,Object::String(bytes,_) if !bytes.is_empty()),
+                    ) {
+                        None => true,
+                        Some(first) => items[..first].iter().all(|item| match item {
+                            Object::String(bytes, _) => bytes.is_empty(),
+                            value => value.as_float().ok() == Some(0.0),
+                        }),
+                    }
+                })
+        }
+        "Tz" => op.operands.first().and_then(|v| v.as_float().ok()) == Some(100.0),
+        "Ts" => op.operands.first().and_then(|v| v.as_float().ok()) == Some(0.0),
+        _ => false,
+    })
+}
+
+/// Propagation of planned TJ translations. Glyph advances need not be modeled:
+/// a TJ adjustment translates subsequent text positions until a line reset.
+#[derive(Default)]
+struct CursorShift {
+    offset: [f32; 2],
+    uncertain: bool,
+}
+impl CursorShift {
+    fn advance(&mut self, operator: &str) {
+        match operator {
+            "BT" | "Tm" => *self = Self::default(),
+            "Td" | "TD" | "T*" | "'" | "\"" if !self.uncertain => self.offset = [0.0; 2],
+            // Keep the sequential fallback across graphics transformations or
+            // saved state; a later absolute text reset makes batching safe again.
+            "cm" | "q" | "Q" if self.offset != [0.0; 2] => self.uncertain = true,
+            _ => {}
+        }
+    }
+}
+
 /// Replaces the runs at `targets` (ordinal, replacement) on the page of
 /// `selected`, the first targeted object, in one transaction.
 pub(crate) fn edit(
@@ -220,6 +285,8 @@ pub(crate) fn edit_styled(
     targets: &[(usize, String)],
     style: Option<(f32, [u8; 3])>,
 ) -> Result<(Vec<u8>, EditResult)> {
+    #[cfg(test)]
+    REPAIR_PASSES.with(|count| count.set(0));
     let (ordinal, _) = targets.first().ok_or_else(|| err("Nothing to edit"))?;
     let ordinal = *ordinal;
     let text: String = targets.iter().map(|(_, t)| t.as_str()).collect();
@@ -266,9 +333,12 @@ pub(crate) fn edit_styled(
             continue;
         }
         let (operations, records, before) = if number == selected.page as u32 + 1 {
-            selected_data.take().ok_or_else(|| err("Duplicate selected page"))?
+            selected_data
+                .take()
+                .ok_or_else(|| err("Duplicate selected page"))?
         } else {
-            let operations = Content::decode(&pdf.get_page_content_with_limit(page_id, MAX_STREAM)?)?;
+            let operations =
+                Content::decode(&pdf.get_page_content_with_limit(page_id, MAX_STREAM)?)?;
             let records = runs(&pdf, page_id, &operations)?;
             let before = engine.text_objects(state, (number - 1) as u16)?;
             (operations, records, before)
@@ -419,10 +489,10 @@ pub(crate) fn edit_styled(
     }
     let mut bytes = vec![];
     pdf.save_to(&mut bytes)?;
-    // PDFium regeneration drops Tc/Tw. Keep content streams and repair only the
-    // text cursor with numeric TJ adjustments, measured by the independent parser.
-    // reparsing per correction is O(runs * corrections); use a fully
-    // validated text-state interpreter if large documents require lower latency.
+    // PDFium regeneration drops Tc/Tw. Keep content streams and repair text
+    // positions with TJ shifts or eligible Tm anchors, measured independently.
+    // Batch predictable cursor translations, then independently verify the whole
+    // page. Unsupported graphics-state propagation retains sequential repairs.
     for (number, page_id, _, _, before, changes) in &plans {
         let expected: Vec<_> = before
             .iter()
@@ -431,6 +501,8 @@ pub(crate) fn edit_styled(
             .collect();
         let mut settled = false;
         for _ in 0..=expected.len().min(1024) {
+            #[cfg(test)]
+            REPAIR_PASSES.with(|count| count.set(count.get() + 1));
             let candidate = Document {
                 bytes: bytes.clone(),
                 original: state.original.clone(),
@@ -444,8 +516,8 @@ pub(crate) fn edit_styled(
             if expected.len() != after.len() {
                 return Err(err("Text-object structure changed unexpectedly"));
             }
-            let mut correction = None;
-            for (position, ((ordinal, old), new)) in expected.iter().zip(&after).enumerate() {
+            // Validate text and transforms before skipping unnecessary repair decoding.
+            for ((ordinal, old), new) in expected.iter().zip(&after) {
                 let wanted = changes
                     .iter()
                     .find(|(i, _)| i == ordinal)
@@ -461,8 +533,40 @@ pub(crate) fn edit_styled(
                 {
                     return Err(err("Text transform changed unexpectedly"));
                 }
-                let dx = old.matrix[4] - new.matrix[4];
-                let dy = old.matrix[5] - new.matrix[5];
+            }
+            let needs_repair = expected.iter().zip(&after).any(|((_, old), new)| {
+                (old.matrix[4] - new.matrix[4]).abs() > 0.0001
+                    || (old.matrix[5] - new.matrix[5]).abs() > 0.0001
+            });
+            if !needs_repair {
+                settled = true;
+                break;
+            }
+            let mut ops = Content::decode(&pdf.get_page_content_with_limit(*page_id, MAX_STREAM)?)?;
+            let records = runs(&pdf, *page_id, &ops)?;
+            if records.len() != after.len() {
+                return Err(err("Text mapping changed"));
+            }
+            let anchor = can_anchor_cursors(&ops, &records);
+            let mut corrections = Vec::new();
+            let mut cursor = CursorShift::default();
+            let mut operation = 0;
+            for (position, ((_, old), new)) in expected.iter().zip(&after).enumerate() {
+                if anchor {
+                    corrections.push((position, CursorRepair::Anchor(old.matrix)));
+                    continue;
+                }
+                let op_index = records[position].op;
+                for op in &ops.operations[operation..=op_index] {
+                    cursor.advance(&op.operator);
+                }
+                operation = op_index + 1;
+                if cursor.uncertain {
+                    continue;
+                }
+                let drift = [old.matrix[4] - new.matrix[4], old.matrix[5] - new.matrix[5]];
+                let dx = drift[0] - cursor.offset[0];
+                let dy = drift[1] - cursor.offset[1];
                 if dx.abs() > 0.0001 || dy.abs() > 0.0001 {
                     let a = old.matrix[0];
                     let b = old.matrix[1];
@@ -471,68 +575,86 @@ pub(crate) fn edit_styled(
                         || old.size.abs() < 0.000001
                         || (dx * b - dy * a).abs() > 0.001
                     {
+                        if !corrections.is_empty() {
+                            break;
+                        }
                         return Err(err("Cannot safely restore text cursor"));
                     }
-                    correction = Some((position, -1000.0 * (dx * a + dy * b) / norm / old.size));
-                    break;
+                    let amount = -1000.0 * (dx * a + dy * b) / norm / old.size;
+                    if !amount.is_finite() {
+                        return Err(err("Invalid text cursor correction"));
+                    }
+                    corrections.push((position, CursorRepair::Shift(amount)));
+                    cursor.offset = drift;
                 }
             }
-            let Some((position, amount)) = correction else {
+            if corrections.is_empty() {
                 settled = true;
                 break;
-            };
-            let mut ops = Content::decode(&pdf.get_page_content_with_limit(*page_id, MAX_STREAM)?)?;
-            let records = runs(&pdf, *page_id, &ops)?;
-            let op_index = records
-                .get(position)
-                .ok_or_else(|| err("Text mapping changed"))?
-                .op;
-            let original = ops.operations[op_index].clone();
-            let mut prefix = vec![];
-            if original.operator == "\"" {
-                prefix.push(Operation::new(
-                    "Tw",
-                    vec![
-                        original
-                            .operands
-                            .first()
-                            .ok_or_else(|| err("Invalid quote"))?
-                            .clone(),
-                    ],
-                ));
-                prefix.push(Operation::new(
-                    "Tc",
-                    vec![
-                        original
-                            .operands
-                            .get(1)
-                            .ok_or_else(|| err("Invalid quote"))?
-                            .clone(),
-                    ],
-                ));
             }
-            if original.operator == "'" || original.operator == "\"" {
-                prefix.push(Operation::new("T*", vec![]));
+            // Reverse insertion preserves operation indices for every correction.
+            for (position, repair) in corrections.into_iter().rev() {
+                let op_index = records
+                    .get(position)
+                    .ok_or_else(|| err("Text mapping changed"))?
+                    .op;
+                let amount = match repair {
+                    CursorRepair::Anchor(matrix) => {
+                        ops.operations.insert(
+                            op_index,
+                            Operation::new("Tm", matrix.into_iter().map(Object::Real).collect()),
+                        );
+                        continue;
+                    }
+                    CursorRepair::Shift(amount) => amount,
+                };
+                let original = ops.operations[op_index].clone();
+                let mut prefix = vec![];
+                if original.operator == "\"" {
+                    prefix.push(Operation::new(
+                        "Tw",
+                        vec![
+                            original
+                                .operands
+                                .first()
+                                .ok_or_else(|| err("Invalid quote"))?
+                                .clone(),
+                        ],
+                    ));
+                    prefix.push(Operation::new(
+                        "Tc",
+                        vec![
+                            original
+                                .operands
+                                .get(1)
+                                .ok_or_else(|| err("Invalid quote"))?
+                                .clone(),
+                        ],
+                    ));
+                }
+                if original.operator == "'" || original.operator == "\"" {
+                    prefix.push(Operation::new("T*", vec![]));
+                }
+                prefix.push(Operation::new(
+                    "TJ",
+                    vec![Object::Array(vec![amount.into()])],
+                ));
+                prefix.push(if original.operator == "'" || original.operator == "\"" {
+                    Operation::new(
+                        "Tj",
+                        vec![
+                            original
+                                .operands
+                                .last()
+                                .ok_or_else(|| err("Invalid text operation"))?
+                                .clone(),
+                        ],
+                    )
+                } else {
+                    original
+                });
+                ops.operations.splice(op_index..=op_index, prefix);
             }
-            prefix.push(Operation::new(
-                "TJ",
-                vec![Object::Array(vec![amount.into()])],
-            ));
-            prefix.push(if original.operator == "'" || original.operator == "\"" {
-                Operation::new(
-                    "Tj",
-                    vec![
-                        original
-                            .operands
-                            .last()
-                            .ok_or_else(|| err("Invalid text operation"))?
-                            .clone(),
-                    ],
-                )
-            } else {
-                original
-            });
-            ops.operations.splice(op_index..=op_index, prefix);
             let stream = pdf.add_object(Stream::new(Dictionary::new(), ops.encode()?));
             pdf.get_object_mut(*page_id)?
                 .as_dict_mut()?
@@ -631,5 +753,28 @@ mod tests {
         assert!(verify_mapping(&runs, &objects).is_ok());
         assert!(verify_mapping(&runs, &[object("B"), object(""), object("x")]).is_err());
         assert!(verify_mapping(&runs[..2], &objects[..1]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+    #[test]
+    fn graphics_boundaries_defer_propagation_until_an_absolute_reset() {
+        for boundary in ["q", "Q", "cm"] {
+            let mut cursor = CursorShift {
+                offset: [12.0, 0.0],
+                uncertain: false,
+            };
+            cursor.advance(boundary);
+            assert!(cursor.uncertain);
+            for relative in ["Td", "TD", "T*", "'", "\""] {
+                cursor.advance(relative);
+                assert!(cursor.uncertain);
+            }
+            cursor.advance("Tm");
+            assert!(!cursor.uncertain);
+            assert_eq!(cursor.offset, [0.0; 2]);
+        }
     }
 }

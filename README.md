@@ -419,3 +419,8 @@ after preparing the pinned PDFium DLL. It creates only generated 100-, 500- and
 and verifies unchanged neighboring text and transforms. No input PDFs or GUI
 are used. Timings depend on hardware and workload; cursor-dependent layouts may
 still require repeated verification passes.
+
+For repeated cursor repairs, run
+`cargo run -p pdf-editor-core --example cursor_repair_benchmark --release --locked --offline -j 1`.
+It generates independent lines and continuous text chains, replaces text across
+10, 50 and 150 pairs, and verifies every unchanged run's text and transform.

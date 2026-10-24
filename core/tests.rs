@@ -3886,3 +3886,206 @@ fn dense_edit_preserves_neighbors_pixels_history_and_saved_text() {
     fs::remove_file(path).unwrap();
     fs::remove_file(output).unwrap();
 }
+
+#[path = "examples/support/cursor_fixture.rs"]
+mod cursor_fixture;
+
+#[test]
+fn batched_cursor_repairs_preserve_layout_pixels_and_history() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    for layout in [
+        "lines",
+        "chain",
+        "long-chain",
+        "quote",
+        "double-quote",
+        "scaled",
+        "rotated",
+        "page-rotated",
+        "leading-adjustment",
+        "graphics",
+    ] {
+        for replacement in ["AB", ""] {
+            let seed = fs::read(fixture("unicode-cid.pdf")).unwrap();
+            let pair_count = if layout == "long-chain" { 150 } else { 12 };
+            let bytes = cursor_fixture::cursor_page(
+                &seed,
+                pair_count,
+                !matches!(layout, "lines" | "graphics"),
+            );
+            let mut pdf = parse(&bytes).unwrap();
+            let page = pdf.get_pages()[&1];
+            if layout == "page-rotated" {
+                pdf.get_dictionary_mut(page).unwrap().set("Rotate", 90);
+            }
+            let mut ops = Content::decode(&pdf.get_page_content(page)).unwrap();
+            let mut revised = Vec::new();
+            let mut run = 0;
+            for mut op in ops.operations {
+                if layout == "graphics" && op.operator == "BT" {
+                    revised.push(Operation::new("q", vec![]));
+                    revised.push(Operation::new(
+                        "cm",
+                        vec![1.into(), 0.into(), 0.into(), 1.into(), 0.2.into(), 0.into()],
+                    ));
+                }
+                if layout == "graphics" && op.operator == "ET" {
+                    revised.push(op);
+                    revised.push(Operation::new("Q", vec![]));
+                    continue;
+                }
+                if op.operator == "Tf" {
+                    revised.push(op);
+                    revised.push(Operation::new("TL", vec![8.into()]));
+                    continue;
+                }
+                if op.operator == "Tm" && matches!(layout, "scaled" | "rotated") {
+                    op.operands = vec![
+                        0.8660254.into(),
+                        0.5.into(),
+                        (-0.5).into(),
+                        0.8660254.into(),
+                        20.into(),
+                        200.into(),
+                    ];
+                }
+                if op.operator == "Tj" {
+                    if run % 2 == 0 {
+                        match layout {
+                            "quote" => op.operator = "'".into(),
+                            "double-quote" => {
+                                op.operator = "\"".into();
+                                op.operands.insert(0, 0.2.into());
+                                op.operands.insert(0, 0.3.into());
+                            }
+                            "scaled" => revised.push(Operation::new(
+                                "Tz",
+                                vec![if run % 4 == 0 { 80.into() } else { 110.into() }],
+                            )),
+                            _ => {}
+                        }
+                    }
+                    if layout == "leading-adjustment" && run % 2 == 1 {
+                        op.operator = "TJ".into();
+                        op.operands = vec![Object::Array(vec![17.into(), op.operands[0].clone()])];
+                    }
+                    run += 1;
+                    revised.push(op);
+                } else {
+                    revised.push(op);
+                }
+            }
+            ops = Content {
+                operations: revised,
+            };
+            let stream = pdf.add_object(Stream::new(dictionary! {}, ops.encode().unwrap()));
+            pdf.get_dictionary_mut(page)
+                .unwrap()
+                .set("Contents", stream);
+            let path = temp(&format!("cursor-{layout}.pdf"));
+            let mut bytes = Vec::new();
+            pdf.save_to(&mut bytes).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            let original = e.open(&path).unwrap();
+            let mut doc = e.open(&path).unwrap();
+            let before = e.text_objects(&doc, 0).unwrap();
+            assert_eq!(before.len(), pair_count * 2);
+            let image_before = e.render(&doc, 0, 1.0).unwrap();
+            assert_eq!(
+                e.replace_text(&mut doc, &before[0].text, replacement, None)
+                    .unwrap_or_else(|err| panic!(
+                        "{layout} deleted={}: {err}",
+                        replacement.is_empty()
+                    )),
+                pair_count
+            );
+            let passes = content::REPAIR_PASSES.with(|count| count.get());
+            eprintln!(
+                "layout={layout} deleted={} repair_passes={passes}",
+                replacement.is_empty()
+            );
+            if layout != "graphics" {
+                assert!(passes <= 4, "{layout}: {passes} reparses");
+            }
+            let after = e.text_objects(&doc, 0).unwrap();
+            assert_eq!(
+                after.len(),
+                if replacement.is_empty() {
+                    pair_count
+                } else {
+                    pair_count * 2
+                }
+            );
+            for i in 0..pair_count {
+                let old = &before[i * 2 + 1];
+                let new = &after[if replacement.is_empty() { i } else { i * 2 + 1 }];
+                assert_eq!(old.text, new.text);
+                assert_eq!(old.font, new.font);
+                assert!(
+                    old.matrix
+                        .iter()
+                        .zip(new.matrix)
+                        .all(|(a, b)| (a - b).abs() < 0.001),
+                    "{layout}: neighbor moved"
+                );
+            }
+            let regions: Vec<_> = before
+                .iter()
+                .step_by(2)
+                .map(|o| {
+                    let a = e
+                        .page_to_pixel(&original, 0, 1.0, o.bounds.left, o.bounds.top)
+                        .unwrap();
+                    let b = e
+                        .page_to_pixel(&original, 0, 1.0, o.bounds.right, o.bounds.bottom)
+                        .unwrap();
+                    (
+                        a.0.min(b.0) - 4,
+                        a.1.min(b.1) - 4,
+                        a.0.max(b.0) + 4,
+                        a.1.max(b.1) + 4,
+                    )
+                })
+                .collect();
+            let image_after = e.render(&doc, 0, 1.0).unwrap();
+            assert_eq!(image_before.rgba.len(), image_after.rgba.len());
+            let mut changed = 0;
+            for (pixel, (a, b)) in image_before
+                .rgba
+                .chunks_exact(4)
+                .zip(image_after.rgba.chunks_exact(4))
+                .enumerate()
+            {
+                if a != b {
+                    changed += 1;
+                    let x = (pixel % image_before.width as usize) as i32;
+                    let y = (pixel / image_before.width as usize) as i32;
+                    assert!(
+                        regions
+                            .iter()
+                            .any(|&(l, t, r, b)| x >= l && x <= r && y >= t && y <= b),
+                        "{layout}: outside edit {x},{y}"
+                    );
+                }
+            }
+            assert!(changed > 0);
+            let edited = doc.bytes.clone();
+            assert!(doc.undo());
+            assert_eq!(doc.bytes, bytes);
+            assert!(doc.redo());
+            assert_eq!(doc.bytes, edited);
+            let output = temp("cursor-saved.pdf");
+            let _ = fs::remove_file(&output);
+            doc.save_as(&output).unwrap();
+            let reopened = e.text_objects(&e.open(&output).unwrap(), 0).unwrap();
+            assert_eq!(
+                reopened.iter().map(|o| &o.text).collect::<Vec<_>>(),
+                after.iter().map(|o| &o.text).collect::<Vec<_>>()
+            );
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            fs::remove_file(path).unwrap();
+            fs::remove_file(output).unwrap();
+        }
+    }
+}

@@ -9,11 +9,11 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
   dialogs, drag and drop from Explorer, and the close confirmation from the
   title bar. Also check display scales other than 150% and a long editing
   session on generated documents.
-- **Complex edit latency.** Dense independent-run pages now use one-pass character
-  indexing and per-traversal font decoding. The generated 1,000-object benchmark
-  improved from a 1,236 ms median edit to 41 ms. Cases requiring many sequential
-  cursor repairs still reparse per correction; profile those layouts separately
-  before considering a validated text-state interpreter.
+- **Unusual graphics-state edit latency.** Dense pages use one-pass character
+  indexing; cursor repairs batch predictable translations and anchor eligible
+  text chains. Generated 150-repair cases improved from 456–565 ms median to
+  25–29 ms. Uncertain propagation across graphics-state changes retains a
+  conservative fallback; profile a generated reproducer before extending it.
 
 ## P2: Soon
 

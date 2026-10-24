@@ -723,3 +723,23 @@ handles on success, error and unwinding; no cache crosses document revisions.
 Decode each page font map once per content traversal and reuse selected-page
 operations and text during edit planning. Retain all mapping, cursor, transform
 and independent round-trip verification. Cursor repair itself is unchanged.
+
+## Batched cursor repairs
+
+Plan multiple TJ translations from one independently measured page. Carry the
+planned displacement until a text-line reset; defer propagation across graphics
+state saves/restores and transformations until an absolute text reset. Insert
+repairs in reverse operation order, serialize once and verify every text run.
+Keep the existing transform/origin tolerance and bounded sequential fallback.
+
+For CID/TrueType chains with neutral horizontal scale and rise, no graphics
+transforms and no relative line-position operators, place explicit Tm anchors at
+verified original matrices. No subsequent operation consumes the changed line
+matrix in this restricted grammar. This avoids accumulated relative-position
+rounding without weakening verification. Other layouts use measured TJ repairs.
+Arrays with a leading TJ advance also use measured repairs because their native
+origin may already include that advance.
+
+Generated regressions check replacement and deletion, long chains, quotation
+operators, rotated/scaled text, rotated pages and graphics boundaries. A test-only
+pass counter prevents reintroducing one reparse per run in these supported cases.
