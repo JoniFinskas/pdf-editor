@@ -3,6 +3,7 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Keep tool windows within the viewport, with scrollable content and an always-accessible close button on smaller screens.
 - Fit comparison pages side by side, label Original/Revised, number matching changes, add changed-page navigation, and retain the preview while switching comparison modes.
 - Apply text edits on click-away, including empty canvas, and retain the draft if applying fails so it can be corrected or retried.
 - Add Go to page (Ctrl+G), first/last-page navigation and a clickable page number; reject out-of-range input without changing the PDF.

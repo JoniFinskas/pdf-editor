@@ -168,7 +168,8 @@ images, and Print. Recent files appear below these sections; scroll the menu whe
 needed.
 
 Tool windows have a labeled title row, can be moved beside the page, and close
-with their X button. They stay open while interacting with the page. The password
+with their X button. Long content scrolls within the screen while the close button
+stays visible. They stay open while interacting with the page. The password
 prompt opens centered. Tool positions and dimensions use PDF points (72 per inch);
 page numbers in controls start at one. Drawing uses shape icon toggles, while
 markup type and image export format use segmented selectors.

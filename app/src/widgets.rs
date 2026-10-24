@@ -5,6 +5,7 @@
 use crate::icons::{self, Icon};
 use crate::theme::{self, Palette};
 use eframe::egui::{
+    self,
     Align, Align2, Color32, Context, CornerRadius, CursorIcon, DragValue, FontId, Frame, Id, Label,
     Layout, Margin, Painter, Rect, Response, Sense, Shadow, Shape, Slider, Stroke, StrokeKind,
     TextEdit, TextFormat, Ui, WidgetInfo, WidgetType, Window, pos2,
@@ -548,9 +549,10 @@ impl<'a> ToolWindow<'a> {
             .resizable(false)
             .pivot(pivot)
             .default_pos(at)
+            .constrain_to(screen.shrink(8.0))
             .frame(frame)
             .show(ctx, |ui| {
-                ui.set_width(self.width);
+                ui.set_width(self.width.min((screen.width() - 72.0).max(120.0)));
                 ui.spacing_mut().item_spacing.y = 6.0;
                 ui.horizontal(|ui| {
                     icon(ui, self.icon, 20.0, p.accent_strong);
@@ -558,6 +560,7 @@ impl<'a> ToolWindow<'a> {
                     ui.label(egui_text(self.title, theme::semibold(16.0), p.text));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if Btn::icon(Icon::Close)
+                            .id(&format!("close-tool-{}", self.title))
                             .height(28.0)
                             .tip("Close")
                             .show(ui, p)
@@ -570,7 +573,11 @@ impl<'a> ToolWindow<'a> {
                 ui.add_space(6.0);
                 rule(ui, p);
                 ui.add_space(8.0);
-                add(ui);
+                egui::ScrollArea::both()
+                    .id_salt(("tool-content", self.title))
+                    .auto_shrink([false, true])
+                    .max_height((screen.height() - 112.0).max(80.0))
+                    .show(ui, add);
             });
         if close {
             *open = false;
@@ -608,6 +615,36 @@ pub fn field<R>(ui: &mut Ui, p: &Palette, label: &str, add: impl FnOnce(&mut Ui)
 /// line up across rows.
 pub fn column_width(ui: &Ui) -> f32 {
     ((ui.available_width() - 3.0 * COLUMN_GAP) / 4.0).floor()
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+    #[test]
+    fn long_tools_keep_close_visible_and_scroll_to_last_control() {
+        for size in [vec2(640.0,420.0),vec2(1180.0,820.0)] {
+            let ctx = Context::default();
+            theme::install(&ctx);
+            let screen = Rect::from_min_size(pos2(0.0,0.0),size);
+            let mut last_visible = false;
+            for _ in 0..5 {
+                let mut open = true;
+                let mut output = ctx.run_ui(egui::RawInput { screen_rect:Some(screen), ..Default::default() }, |ui| {
+                    let p = theme::palette(ui);
+                    ToolWindow::new("Long test tool",Icon::File).width(900.0).show(&ctx,&p,&mut open,|ui| {
+                        for i in 0..70 { ui.label(format!("Generated control {i}")); }
+                        let response = Btn::new("Final action").id("long-final-action").show(ui,&p);
+                        last_visible = ui.is_rect_visible(response.rect) && screen.contains_rect(response.rect);
+                        ui.scroll_to_rect_animation(response.rect,None,egui::style::ScrollAnimation::none());
+                    });
+                });
+                output.textures_delta.clear();
+            }
+            let close = ctx.read_response(tool_id("close-tool-Long test tool")).unwrap();
+            assert!(screen.contains_rect(close.rect), "Close is outside {size:?}: {:?}",close.rect);
+            assert!(last_visible,"Last action cannot be reached at {size:?}");
+        }
+    }
 }
 
 const COLUMN_GAP: f32 = 10.0;
