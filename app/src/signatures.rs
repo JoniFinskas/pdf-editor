@@ -272,8 +272,9 @@ impl Signatures {
                         ),
                     ],
                 );
-                if let Some((tone, text)) = &self.note {
-                    widgets::notice(ui, p, *tone, text);
+                if let Some((tone, text)) = &self.note
+                    && widgets::dismissible_notice(ui, p, *tone, text, "dismiss-signature-note") {
+                    self.note = None;
                 }
                 widgets::hint(
                     ui,

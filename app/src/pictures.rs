@@ -131,8 +131,8 @@ impl Pictures {
                         ),
                     ],
                 );
-                if !self.error.is_empty() {
-                    widgets::notice(ui, p, Tone::Error, &self.error);
+                if !self.error.is_empty() && widgets::dismissible_notice(ui, p, Tone::Error, &self.error, "dismiss-picture-error") {
+                    self.error.clear();
                 }
                 widgets::hint(
                     ui,

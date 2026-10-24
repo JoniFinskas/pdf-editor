@@ -621,6 +621,26 @@ pub fn column_width(ui: &Ui) -> f32 {
 mod window_tests {
     use super::*;
     #[test]
+    fn tool_notice_dismisses_with_wrapped_text() {
+        let ctx=Context::default();theme::install(&ctx);
+        let mut visible=true;
+        let mut frame=|events| {
+            let mut output=ctx.run_ui(egui::RawInput {
+                screen_rect:Some(Rect::from_min_size(pos2(0.0,0.0),vec2(640.0,420.0))),events,..Default::default()
+            },|ui| {
+                let p=theme::palette(ui);ui.set_width(300.0);
+                if visible && dismissible_notice(ui,&p,Tone::Error,
+                    "Generated test error with enough words to wrap across multiple lines without shifting the dismiss control.","notice-test") {visible=false;}
+            });
+            output.textures_delta.clear();
+        };
+        frame(vec![]);frame(vec![]);
+        let at=ctx.read_response(tool_id("notice-test")).unwrap().rect.center();
+        let button=|pressed|egui::Event::PointerButton {pos:at,pressed,button:egui::PointerButton::Primary,modifiers:egui::Modifiers::NONE};
+        frame(vec![egui::Event::PointerMoved(at),button(true)]);frame(vec![button(false)]);
+        assert!(!visible);
+    }
+    #[test]
     fn long_tools_keep_close_visible_and_scroll_to_last_control() {
         for size in [vec2(640.0,420.0),vec2(1180.0,820.0)] {
             let ctx = Context::default();
@@ -723,6 +743,12 @@ pub fn notice(ui: &mut Ui, p: &Palette, tone: Tone, text: &str) {
                 ui.add(Label::new(egui_text(text, FontId::proportional(13.0), fg)).wrap());
             });
         });
+}
+
+/// Tool message with a stable, explicit dismissal control.
+pub fn dismissible_notice(ui: &mut Ui, p: &Palette, tone: Tone, text: &str, key: &str) -> bool {
+    notice(ui,p,tone,text);
+    Btn::new("Dismiss").id(key).show(ui,p).clicked()
 }
 
 /// Row of buttons aligned to the right edge; add the main action first.

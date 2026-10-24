@@ -65,7 +65,7 @@ impl ImageCreate {
             if let Some((a,b))=movement { self.paths.swap(a,b); }
             if let Some(i)=remove { self.paths.remove(i); }
             ui.horizontal(|ui| { ui.label("Page size"); for (value,label) in [(ImagePageSize::A4,"A4"),(ImagePageSize::Letter,"Letter"),(ImagePageSize::Image,"Image at 96 DPI")] { ui.selectable_value(&mut self.size,value,label); } });
-            if let Some(error)=&self.error { ui.label(error); }
+            if let Some(error)=&self.error && widgets::dismissible_notice(ui,p,widgets::Tone::Error,error,"dismiss-image-queue-error") { self.error=None; }
             widgets::actions(ui,|ui| {
                 if Btn::new("Add images…").enabled(idle).show(ui,p).clicked() { self.dialog.launch(|| rfd::FileDialog::new().add_filter("Images",&["jpg","jpeg","png","heic","heif"]).pick_files().map(Selection::Images)); }
                 if Btn::new("Create PDF…").look(Look::Primary).enabled(idle && !self.paths.is_empty()).show(ui,p).clicked() { let (paths,size)=(self.paths.clone(),self.size); self.dialog.launch(move || rfd::FileDialog::new().add_filter("PDF",&["pdf"]).set_file_name("images.pdf").save_file().map(|path| Selection::Create(Request::ImagesToPdf(paths,size,path)))); }
