@@ -3,6 +3,8 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+
+## [0.2.1] - 2026-10-24
 - Discard late Compare picker results after closing and clear cancelled comparison previews immediately.
 - Wait for pending text edits before saving; cancel the save and retain the draft when an edit fails.
 
