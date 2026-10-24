@@ -209,7 +209,8 @@ fn catalog_keyboard_search_categories_and_disabled_actions() {
         vec![workflow_key(Key::Enter, egui::Modifiers::NONE)],
     );
     assert!(app.compare.open);
-    app.tools_query = "forms".into();
+    assert!(!app.tools_open);
+    app.tools_query = "checkbox".into();
     app.tools_focus = true;
     draw(&mut app, vec![]);
     draw(

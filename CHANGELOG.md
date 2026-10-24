@@ -5,6 +5,7 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 ## [Unreleased]
 
 - Publish Save As and recovery PDFs only after their contents have been written and flushed.
+- Find tools by familiar terms such as checkbox, JPEG, spreadsheet and DOCX; close the catalog after choosing a tool.
 
 ## [0.3.1] - 2026-10-24
 - Remap compiler paths in portable builds.

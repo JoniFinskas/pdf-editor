@@ -37,6 +37,12 @@ impl Tool {
             Self::Stamps => "watermark numbering pagination",
             Self::Pictures => "photo picture jpg jpeg png",
             Self::Sanitize => "privacy remove metadata javascript attachments",
+            Self::Forms => "checkbox radio dropdown date field designer flatten fill",
+            Self::Drawing => "circle ellipse rectangle arrow pen freehand",
+            Self::Export => "png jpg jpeg dpi resolution",
+            Self::Word => "docx microsoft word document",
+            Self::Tables => "xlsx spreadsheet excel csv rows columns",
+            Self::Signatures => "autograph sign reusable",
             _ => "",
         }
     }
@@ -216,6 +222,7 @@ impl EditorApp {
                         .min_width(ui.available_width())
                         .look(if selected { Look::Active } else { Look::Ghost })
                         .enabled(entry.enabled)
+                        .tip(if entry.enabled { entry.description } else if !document { "Open a PDF to use this tool" } else { "Available when the current operation finishes" })
                         .show(ui, p);
                     if selected && (up || down || search.changed()) {
                         response.scroll_to_me(Some(Align::Center));
@@ -238,6 +245,8 @@ impl EditorApp {
                 }
             });
         if let Some(index) = chosen {
+            // Reveal the page or selected tool instead of leaving the catalog over it.
+            self.tools_open = false;
             let entry = &entries[index];
             if let Some(tool) = entry.tool {
                 self.open_tool(tool);

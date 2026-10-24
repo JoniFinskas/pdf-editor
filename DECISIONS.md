@@ -783,3 +783,9 @@ flush them, then publish without replacing existing files. Windows uses a
 same-directory move without replacement; other platforms use an exclusive hard
 link. Failed writes remove their temporary file. Interrupted writes cannot appear
 as completed recovery snapshots, and the previous snapshot remains available.
+
+## Tool search handoff
+
+Include common file formats and control names in tool searches. Close the
+catalog when a command is selected so its document or tool window is visible.
+Disabled entries explain whether a document or a completed operation is needed.
