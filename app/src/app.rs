@@ -3001,6 +3001,9 @@ impl EditorApp {
             self.set_zoom(zoom * zoom_delta, pointer);
         }
 
+        if self.signatures.placing && ctx.input_mut(|i|i.consume_key(egui::Modifiers::NONE,Key::Escape)) {
+            self.signatures.placing = false;
+        }
         let busy = self.busy > 0;
         self.tool_anchor = None;
         let Some(doc) = &mut self.doc else { return };
@@ -3185,7 +3188,7 @@ impl EditorApp {
                     }
                 }
 
-                if let Some(objects) = &page.objects {
+                if !self.signatures.placing && let Some(objects) = &page.objects {
                     self.signatures.paint_placement(
                         &painter,
                         page_no,
@@ -3197,6 +3200,16 @@ impl EditorApp {
                 // Hover and click hit testing against cached object extents.
                 let mut response =
                     ui.interact(rect, Id::new(("pdf-page", index)), Sense::click_and_drag());
+                if self.signatures.placing && !busy {
+                    if let Some(objects) = &page.objects {
+                        if let Some(request) = self.signatures.place_at_pointer(&response,page_no,rect.min,scale,objects.transform) {
+                            requests.push(request);
+                            self.busy += 1;
+                        }
+                        self.signatures.paint_placement(&painter,page_no,rect.min,scale,objects.transform);
+                    }
+                    continue;
+                }
                 if response.clicked() || response.dragged() {
                     doc.explicit_page = Some(index);
                     doc.current_page = index;

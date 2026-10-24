@@ -10,6 +10,7 @@ use std::path::Path;
 
 pub struct Signatures {
     pub open: bool,
+    pub placing: bool,
     dialog: crate::dialogs::ToolDialog<pdf_editor_core::Result<Picture>>,
     strokes: Vec<Vec<[f32; 2]>>,
     picture: Option<Picture>,
@@ -21,6 +22,7 @@ impl Default for Signatures {
     fn default() -> Self {
         Self {
             open: false,
+            placing: false,
             dialog: Default::default(),
             strokes: vec![],
             picture: None,
@@ -61,7 +63,7 @@ impl Signatures {
         scale: f32,
         transform: crate::worker::PageTransform,
     ) {
-        if !self.open || page != self.at.page {
+        if (!self.open && !self.placing) || page != self.at.page {
             return;
         }
         if let Some(texture) = &self.preview {
@@ -81,6 +83,29 @@ impl Signatures {
             widgets::dashed_rect_on(painter, rect.expand(2.0), Stroke::new(1.5, accent));
         }
     }
+    pub fn place_at_pointer(
+        &mut self, response: &egui::Response, page: u16, origin: egui::Pos2,
+        scale: f32, transform: crate::worker::PageTransform,
+    ) -> Option<Request> {
+        if !self.placing { return None; }
+        if response.ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.placing = false;
+            return None;
+        }
+        let pointer = response.hover_pos()?;
+        let at = (pointer-origin)/scale;
+        let (x,y) = transform.inverse(at.x,at.y)?;
+        self.at.page = page;
+        self.at.left = x-self.at.width*0.5;
+        self.at.bottom = y-self.at.height*0.5;
+        response.ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+        response.ctx.request_repaint();
+        if response.clicked() {
+            self.placing = false;
+            return self.picture.clone().map(|picture| Request::PlacePicture(picture,self.at));
+        }
+        None
+    }
     pub fn show(
         &mut self,
         ctx: &egui::Context,
@@ -96,7 +121,7 @@ impl Signatures {
             }
         }
         let idle = idle && !self.dialog.busy();
-        let mut request = None;
+        let mut start_placing = false;
         let mut open = self.open;
         ToolWindow::new("Signatures", Icon::Signature)
             .width(440.0)
@@ -279,7 +304,7 @@ impl Signatures {
                 widgets::hint(
                     ui,
                     p,
-                    "Signatures become page content. Undo removes the last placement.",
+                    "Choose Place signature, then click the page to position it. Escape cancels. After placement, select it to move or resize; Undo removes it.",
                 );
                 widgets::actions(ui, |ui| {
                     if Btn::new("Place signature")
@@ -289,12 +314,51 @@ impl Signatures {
                         .clicked()
                         && let Some(picture) = &self.picture
                     {
-                        request = Some(Request::PlacePicture(picture.clone(), self.at));
+                        let _ = picture;
+                        start_placing = true;
                     }
                 });
             });
-        self.open = open;
-        if !self.open { self.dialog.cancel(); return None; }
-        request
+        self.open = open && !start_placing;
+        if start_placing { self.placing = true; }
+        if !self.open { self.dialog.cancel(); }
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn signature_preview_tracks_pointer_and_places_once_on_the_chosen_page() {
+        let ctx=egui::Context::default();
+        let mut signatures=Signatures::default();
+        signatures.set_picture(&ctx,Picture {width:2,height:1,rgba:vec![255;8]});
+        signatures.placing=true;
+        let transform=crate::worker::PageTransform::for_test([1.0,0.0,0.0,-1.0,0.0,400.0]);
+        let mut requests=vec![];
+        let at=egui::pos2(100.0,120.0);
+        for events in [vec![egui::Event::PointerMoved(at)],vec![egui::Event::PointerButton {
+            pos:at,button:egui::PointerButton::Primary,pressed:true,modifiers:Default::default()
+        }],vec![egui::Event::PointerButton {
+            pos:at,button:egui::PointerButton::Primary,pressed:false,modifiers:Default::default()
+        }],vec![]] {
+            let mut output=ctx.run_ui(egui::RawInput {events,
+                screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(600.0,500.0))),
+                ..Default::default()},|ui| {
+                let response=ui.interact(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(300.0,400.0)),
+                    egui::Id::new("signature-page-test"),Sense::click());
+                if let Some(request)=signatures.place_at_pointer(&response,2,egui::Pos2::ZERO,1.0,transform) {
+                    requests.push(request);
+                }
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(requests.len(),1);
+        let Request::PlacePicture(_,placement)=requests.remove(0) else {panic!()};
+        assert_eq!(placement.page,2);
+        assert_eq!(placement.left+placement.width*0.5,100.0);
+        assert_eq!(placement.bottom+placement.height*0.5,280.0);
+        assert!(!signatures.placing);
     }
 }
