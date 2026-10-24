@@ -93,7 +93,11 @@ pub struct TextChange {
     pub kind: ChangeKind,
     pub left: Option<Bounds>,
     pub right: Option<Bounds>,
+    /// In-memory excerpts, limited to 160 characters per side.
+    pub before: Option<String>,
+    pub after: Option<String>,
 }
+#[derive(Clone)]
 pub struct ComparePage {
     pub left: Option<Image>,
     pub right: Option<Image>,
@@ -161,9 +165,17 @@ pub fn compare_text(left: &[TextObject], right: &[TextObject]) -> Result<Vec<Tex
             kind,
             left: l,
             right: r,
+            before: l.map(|_| excerpt(&left[i - 1].text)),
+            after: r.map(|_| excerpt(&right[j - 1].text)),
         });
     }
     Ok(out)
+}
+fn excerpt(text: &str) -> String {
+    let mut chars = text.chars();
+    let mut value: String = chars.by_ref().take(160).collect();
+    if chars.next().is_some() { value.push('…'); }
+    value
 }
 /// Tint changed pixels magenta in both rasters, comparing missing pixels as absent.
 pub fn compare_pixels(
@@ -489,6 +501,10 @@ mod tests {
         assert_eq!(d.len(), 2);
         assert_eq!(d[0].kind, ChangeKind::Added);
         assert_eq!(d[1].kind, ChangeKind::Changed);
+        assert_eq!(d[0].before, None);
+        assert_eq!(d[0].after.as_deref(), Some("new"));
+        assert_eq!(d[1].before.as_deref(), Some("c"));
+        assert_eq!(d[1].after.as_deref(), Some("changed"));
         assert_eq!(compare_text(&a, &[]).unwrap().len(), 3);
         assert!(compare_text(&a, &a).unwrap().is_empty());
     }
@@ -502,6 +518,10 @@ mod tests {
         let reverse = compare_text(&right, &left).unwrap();
         assert_eq!(reverse.len(), 1);
         assert_eq!(reverse[0].kind, ChangeKind::Removed);
+        assert_eq!(reverse[0].before.as_deref(), Some("新增"));
+        assert_eq!(reverse[0].after, None);
+        let long = compare_text(&[run(&"ä".repeat(200))], &[]).unwrap();
+        assert_eq!(long[0].before.as_ref().unwrap().chars().count(), 161);
         assert!(compare_text(&vec![run("x"); 20_001], &[]).is_err());
         assert!(compare_text(&[run(&"x".repeat(8 * 1024 * 1024 + 1))], &[]).is_err());
     }

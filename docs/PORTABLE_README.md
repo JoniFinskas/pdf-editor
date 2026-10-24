@@ -23,6 +23,17 @@ sanitize; merge, split and extract; crop; add headers, footers and page numbers;
 compress images; export images, tables and Word documents; clean up scans;
 recognize text with installed Windows OCR languages; print.
 
+## Compare two versions
+
+Choose **Compare PDFs** in the toolbar, select the original and revised saved
+files, then select **Compare**. Save pending edits before comparing.
+Use the changed-page list to move through the document. Within a page, click a
+numbered highlight or use **‹ Change / Change ›**. The list shows removed text
+with **−** and added text with **+**; long excerpts end with an ellipsis.
+**Visual changes** highlights changed pixels in magenta, including image and
+layout changes. **Fit both pages** resets the zoom. Matching inserted or removed
+pages is automatic; **Match page numbers only** is available when needed.
+
 Recovery copies protect applied, unsaved edits after an unexpected exit.
 The recovery button shows their status and opens interval settings. Password-
 protected documents do not create recovery copies. A draft still being typed

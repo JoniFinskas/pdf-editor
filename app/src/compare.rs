@@ -23,6 +23,8 @@ struct Session {
 struct Region {
     kind: ChangeKind,
     bounds: [Option<[f32; 4]>; 2],
+    before: Option<String>,
+    after: Option<String>,
 }
 fn change_style(kind: ChangeKind) -> (&'static str, Color32) {
     match kind {
@@ -38,6 +40,8 @@ fn regions(page: &ComparePage) -> Vec<Region> {
         .iter()
         .map(|change| Region {
             kind: change.kind,
+            before: change.before.clone(),
+            after: change.after.clone(),
             bounds: [
                 change.left.and_then(|_| left.next().map(|(_, b)| *b)),
                 change.right.and_then(|_| right.next().map(|(_, b)| *b)),
@@ -61,6 +65,22 @@ enum Event {
     ScanError(usize, String),
     Page(u16, bool, pdf_editor_core::Result<ComparePage>),
     Error(String),
+}
+
+#[derive(Default)]
+struct PreviewCache(Option<(u16, ComparePage)>);
+
+impl PreviewCache {
+    fn page(&mut self, row: u16, overlay: bool, load: impl FnOnce() -> pdf_editor_core::Result<ComparePage>) -> pdf_editor_core::Result<ComparePage> {
+        if self.0.as_ref().is_none_or(|(cached, _)| *cached != row) {
+            self.0 = Some((row, load()?));
+        }
+        let mut page = self.0.as_ref().unwrap().1.clone();
+        if overlay {
+            pdf_editor_core::compare_pixels(&mut page.left, &mut page.right, true)?;
+        }
+        Ok(page)
+    }
 }
 fn start(
     paths: [PathBuf; 2],
@@ -161,6 +181,7 @@ fn start(
             engine.compare_page_pair(&left, &right, *pair, overlay)
         };
         let mut scan = 0;
+        let mut preview = PreviewCache::default();
         while !stop.load(Ordering::Relaxed) {
             let request = if scan < count {
                 commands.try_recv().ok()
@@ -170,7 +191,8 @@ fn start(
                     .ok()
             };
             if let Some((page, overlay)) = request {
-                if !send(Event::Page(page, overlay, compare(page, overlay))) {
+                let result = preview.page(page, overlay, || compare(page, false));
+                if !send(Event::Page(page, overlay, result)) {
                     break;
                 }
             } else if scan < count {
@@ -212,6 +234,7 @@ pub struct Compare {
     jump_region: bool,
     displayed: Option<(u16, bool)>,
     changed_pixels: usize,
+    show_all_pages: bool,
     error: Option<String>,
 }
 impl Compare {
@@ -290,6 +313,10 @@ impl Compare {
                             }
                             Ok(page) => {
                                 self.error = None;
+                                if let Some(summary) = self.summaries.get_mut(self.selected as usize) {
+                                    *summary = Some((page.changes.len(), page.changed_pixels));
+                                }
+                                self.errors.retain(|(index, _)| *index != self.selected as usize);
                                 self.regions = regions(&page);
                                 self.changed_pixels = page.changed_pixels;
                                 self.displayed = Some((self.selected, overlay));
@@ -318,7 +345,7 @@ impl Compare {
         ToolWindow::new("Compare PDFs", Icon::Layers)
             .width((ctx.content_rect().width() - 80.0).clamp(300.0, 1100.0))
             .centered().show(ctx, p, &mut open, |ui| {
-                widgets::hint(ui, p, "Compare saved PDFs. Unchanged pages anchor inserted/deleted pages; edited gaps are paired in order. Originals stay unchanged.");
+                widgets::hint(ui, p, "Choose two saved PDFs. Review changes side by side; neither file is modified. Save any edits before comparing.");
                 ui.horizontal_wrapped(|ui| {
                     for i in 0..2 {
                         let label = if i == 0 { "Choose original" } else { "Choose revised" };
@@ -338,7 +365,7 @@ impl Compare {
                             ui.add(egui::TextEdit::singleline(&mut self.passwords[i]).password(true).desired_width(130.0));
                         }
                     });
-                    ui.checkbox(&mut self.by_number,"Match page numbers only");
+                    ui.checkbox(&mut self.by_number,"Match page numbers only").on_hover_text("Leave off to match unchanged pages around inserted or removed pages. Modified gaps are paired in order.");
                     if Btn::new("Compare").id("compare-start").enabled(!self.picker.busy() && self.paths.iter().all(Option::is_some)).show(ui,p).clicked()
                         && let [Some(a), Some(b)] = &self.paths {
                         self.session = Some(start([a.clone(), b.clone()], std::mem::take(&mut self.passwords), ctx.clone(), self.by_number));
@@ -383,6 +410,14 @@ impl Compare {
                     if Btn::new("Next changed page").enabled(next.is_some()).show(ui,p).clicked() { self.selected = next.unwrap(); }
                     if self.waiting { ui.spinner(); ui.label("Updating preview…"); }
                 });
+                if self.displayed.is_some_and(|(page, _)| page == self.selected) && !self.regions.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        if Btn::new("‹ Change").id("compare-change-prev").show(ui,p).clicked() { self.step_change(false); }
+                        ui.strong(self.focused_region.map_or_else(|| format!("{} text changes", self.regions.len()), |i| format!("Change {} of {}", i + 1, self.regions.len())));
+                        if Btn::new("Change ›").id("compare-change-next").show(ui,p).clicked() { self.step_change(true); }
+                        ui.label("Click a highlight or a change below to inspect it.");
+                    });
+                }
                 if count == 0 {
                     widgets::hint(ui,p, if self.session.is_some() { "Opening documents…" } else { "Choose an original and revised PDF, then select Compare." });
                     return;
@@ -437,6 +472,18 @@ impl Compare {
         )
     }
 
+    fn step_change(&mut self, forward: bool) {
+        let count = self.regions.len();
+        if count == 0 { return; }
+        self.focused_region = Some(match self.focused_region.filter(|i| *i < count) {
+            Some(i) if forward => (i + 1) % count,
+            Some(i) => (i + count - 1) % count,
+            None if forward => 0,
+            None => count - 1,
+        });
+        self.jump_region = true;
+    }
+
     fn changed_page(&self, forward: bool) -> Option<u16> {
         let changed = |i: usize| {
             self.summaries[i].is_some_and(|(text, pixels)| text > 0 || pixels > 0)
@@ -464,6 +511,10 @@ impl Compare {
             .count();
         ui.strong(format!("{changed} changed pages"));
         ui.label(format!("Checked {scanned} / {}", self.summaries.len()));
+        if !self.errors.is_empty() {
+            ui.colored_label(p.error_fg, format!("{} pages could not be checked", self.errors.len()));
+        }
+        ui.checkbox(&mut self.show_all_pages, "Include unchanged pages");
         if scanned == self.summaries.len() && changed == 0 && self.errors.is_empty() {
             ui.colored_label(p.ok_fg, "No differences found");
         }
@@ -473,7 +524,8 @@ impl Compare {
             .show(ui, |ui| {
                 for (i, summary) in self.summaries.iter().enumerate() {
                     if let Some((text, pixels)) = summary
-                        && (*text > 0 || *pixels > 0)
+                        && (self.show_all_pages || *text > 0 || *pixels > 0)
+                        && !self.errors.iter().any(|(page, _)| *page == i)
                     {
                         let label = format!(
                             "{} · {text} text changes{}",
@@ -522,6 +574,13 @@ impl Compare {
                             self.focused_region = Some(i);
                             self.jump_region = true;
                         }
+                        if let Some(before) = &region.before {
+                            ui.add(egui::Label::new(egui::RichText::new(format!("− {before}")).color(change_style(ChangeKind::Removed).1)).wrap());
+                        }
+                        if let Some(after) = &region.after {
+                            ui.add(egui::Label::new(egui::RichText::new(format!("+ {after}")).color(change_style(ChangeKind::Added).1)).wrap());
+                        }
+                        ui.add_space(8.0);
                     }
                 }
             });
@@ -578,6 +637,11 @@ impl Compare {
                                         )
                                         .expand(2.0);
                                         let active = self.focused_region == Some(i);
+                                        if ui.interact(rect, egui::Id::new(("compare-region", self.selected, side, i)), egui::Sense::click())
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                            self.focused_region = Some(i);
+                                            self.jump_region = true;
+                                        }
                                         let (_, color) = change_style(region.kind);
                                         if !visual || active {
                                             ui.painter().rect_filled(
@@ -647,6 +711,64 @@ impl Compare {
 mod tests {
     use super::*;
     #[test]
+    fn preview_mode_switches_reuse_pristine_rasters_and_retry_failed_loads() {
+        let make = || ComparePage {
+            left: Some(pdf_editor_core::Image { width: 1, height: 1, rgba: vec![255; 4] }),
+            right: Some(pdf_editor_core::Image { width: 1, height: 1, rgba: vec![0, 0, 0, 255] }),
+            changes: vec![], changed_pixels: 1, left_marks: vec![], right_marks: vec![],
+        };
+        let mut cache = PreviewCache::default();
+        let plain = cache.page(0, false, || Ok(make())).unwrap();
+        let overlay = cache.page(0, true, || panic!("must reuse cached page")).unwrap();
+        assert_ne!(plain.left.as_ref().unwrap().rgba, overlay.left.unwrap().rgba);
+        let again = cache.page(0, false, || panic!("must reuse pristine page")).unwrap();
+        assert_eq!(plain.left.unwrap().rgba, again.left.unwrap().rgba);
+        assert!(cache.page(1, false, || Err(pdf_editor_core::Error("generated failure".into()))).is_err());
+        assert!(cache.page(1, false, || Ok(make())).is_ok());
+        assert_eq!(cache.0.as_ref().unwrap().0, 1);
+    }
+    #[test]
+    fn change_buttons_and_page_highlights_select_the_same_change() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let texture = ctx.load_texture("generated", egui::ColorImage::filled([600, 800], Color32::WHITE), egui::TextureOptions::LINEAR);
+        let mut compare = Compare {
+            open: true, displayed: Some((0, false)), summaries: vec![Some((2, 20))],
+            textures: [Some(texture.clone()), Some(texture)],
+            regions: (0..2).map(|i| Region {
+                kind: ChangeKind::Changed,
+                bounds: [Some([40.0, 40.0 + i as f32 * 80.0, 200.0, 60.0 + i as f32 * 80.0]); 2],
+                before: Some(format!("Original line {i}")), after: Some(format!("Revised line {i}")),
+            }).collect(),
+            ..Default::default()
+        };
+        let frame = |compare: &mut Compare, events| {
+            let mut output = ctx.run_ui(egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 1000.0))),
+                events, ..Default::default()
+            }, |ui| compare.show(&ctx, &crate::theme::palette(ui)));
+            output.textures_delta.clear();
+        };
+        let click = |compare: &mut Compare, id| {
+            let at = ctx.read_response(id).unwrap().rect.center();
+            for pressed in [true, false] {
+                frame(compare, vec![egui::Event::PointerMoved(at), egui::Event::PointerButton {
+                    pos: at, pressed, button: egui::PointerButton::Primary, modifiers: egui::Modifiers::NONE,
+                }]);
+            }
+        };
+        for _ in 0..3 { frame(&mut compare, vec![]); }
+        click(&mut compare, widgets::tool_id("compare-change-next"));
+        assert_eq!(compare.focused_region, Some(0));
+        click(&mut compare, widgets::tool_id("compare-change-prev"));
+        assert_eq!(compare.focused_region, Some(1));
+        frame(&mut compare, vec![]);
+        click(&mut compare, egui::Id::new(("compare-region", 0u16, 1usize, 0usize)));
+        assert_eq!(compare.focused_region, Some(0));
+        compare.regions.clear();
+        compare.step_change(true);
+    }
+    #[test]
     fn aligned_labels_show_real_page_numbers_and_missing_sides() {
         let compare = Compare {
             pairs: vec![
@@ -681,16 +803,19 @@ mod tests {
                     kind: ChangeKind::Removed,
                     left: Some(bounds),
                     right: None,
+                    before: Some("removed".into()), after: None,
                 },
                 pdf_editor_core::TextChange {
                     kind: ChangeKind::Added,
                     left: None,
                     right: Some(bounds),
+                    before: None, after: Some("added".into()),
                 },
                 pdf_editor_core::TextChange {
                     kind: ChangeKind::Changed,
                     left: Some(bounds),
                     right: Some(bounds),
+                    before: Some("before".into()), after: Some("after".into()),
                 },
             ],
             left_marks: vec![

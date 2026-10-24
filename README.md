@@ -156,9 +156,11 @@ existing files and the original path are never overwritten.
 ## Daily and extra tools
 
 **Compare PDFs** fits Original and Revised side by side. Numbered text outlines
-match the change list; select a change to bring it into view. Previous/Next changed
+match the change list. Read the original (−) and revised (+) excerpts, click a
+highlight on either page, or use Previous/Next change to bring it into view.
+Include unchanged pages when reviewing the whole document. Previous/Next changed
 page skips unchanged pages. Text changes and Visual changes switch the overlay;
-Fit both pages resets zoom. The previous preview stays visible while a new mode loads.
+Fit both pages resets zoom. Switching modes reuses the current page render.
 Unchanged pages anchor the automatic page matching, so inserted/deleted pages do
 not shift later matches. The labels show actual Original/Revised page numbers.
 Repeated pages, reordered pages and adjacent modified/inserted pages can be

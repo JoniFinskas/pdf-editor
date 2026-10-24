@@ -789,3 +789,10 @@ as completed recovery snapshots, and the previous snapshot remains available.
 Include common file formats and control names in tool searches. Close the
 catalog when a command is selected so its document or tool window is visible.
 Disabled entries explain whether a document or a completed operation is needed.
+
+## Comparison review controls
+
+Pair numbered page highlights with short before/after text excerpts and cyclic
+change navigation. Retain one pristine page pair in the worker so changing
+overlay mode avoids PDF parsing and rendering. Keep summaries numeric and do not
+persist extracted text. Show comparison failures separately from unchanged pages.
