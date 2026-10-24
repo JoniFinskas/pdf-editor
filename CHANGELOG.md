@@ -3,6 +3,8 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+
+## [0.2.2] - 2026-10-24
 - Speed up dense-page text extraction and editing with one-pass character indexing, reused font decoding and selected-page data.
 
 ## [0.2.1] - 2026-10-24

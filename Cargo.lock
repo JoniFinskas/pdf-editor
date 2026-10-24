@@ -2211,7 +2211,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-editor"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "eframe",
  "pdf-editor-core",
@@ -2220,7 +2220,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-editor-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "image",
  "lopdf",
