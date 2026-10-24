@@ -482,6 +482,7 @@ pub struct EditorApp {
     picker: crate::dialogs::Picker,
     insert_dialog: crate::dialogs::ToolDialog<Request>,
     picker_save: bool,
+    pending_save: Option<Request>,
     recent_files: Vec<PathBuf>,
     dragging_page: Option<usize>,
     text_tool: TextTool,
@@ -830,6 +831,7 @@ impl EditorApp {
             picker: crate::dialogs::Picker::default(),
             insert_dialog: Default::default(),
             picker_save: false,
+            pending_save: None,
             recent_files: config_path
                 .as_deref()
                 .and_then(|p| pdf_editor_core::Settings::load(p).ok())
@@ -903,6 +905,7 @@ impl EditorApp {
     fn engine_stopped(&mut self) {
         if self.engine_alive {
             self.engine_alive = false;
+            self.pending_save = None;
             self.busy = 0;
             self.opening = false;
             self.banner(
@@ -985,6 +988,24 @@ impl EditorApp {
         }) {
             self.banner(BannerKind::Error, format!("Cannot open file picker: {error}"));
         }
+    }
+
+    /// Save only after all preceding edits have succeeded. A rejected edit
+    /// cancels this intent instead of writing an older document version.
+    fn password_action(&mut self, request: Request) {
+        if matches!(request, Request::SaveAs(_) | Request::SavePassword(..)) {
+            if self.doc.is_none() || !self.engine_alive || self.pending_save.is_some() {
+                return;
+            }
+            self.commit_edit();
+            if self.busy > 0 {
+                self.pending_save = Some(request);
+                return;
+            }
+        }
+        self.opening = matches!(request, Request::OpenPassword(..));
+        self.busy += 1;
+        self.send(request);
     }
 
     fn undo(&mut self) {
@@ -1131,6 +1152,9 @@ impl EditorApp {
         };
         for reply in replies {
             self.handle(ctx, reply);
+        }
+        if self.busy == 0 && let Some(request) = self.pending_save.take() {
+            self.password_action(request);
         }
     }
 
@@ -1606,6 +1630,10 @@ impl EditorApp {
                     return;
                 }
                 self.busy = self.busy.saturating_sub(1);
+                if self.pending_save.take().is_some() {
+                    self.banner(BannerKind::Warning,
+                        "Save cancelled because a pending change failed. Correct the edit and save again.");
+                }
                 self.restoring = None;
                 let message = if std::mem::take(&mut self.opening) {
                     format!(
@@ -4352,9 +4380,7 @@ impl eframe::App for EditorApp {
             self.send(request);
         }
         if let Some(request) = self.password.show(&ctx, &p, self.busy == 0) {
-            self.opening = matches!(request, Request::OpenPassword(..));
-            self.busy += 1;
-            self.send(request);
+            self.password_action(request);
         }
         if let Some(request) = self.replace.show(&ctx, &p, self.busy == 0) {
             self.commit_edit();
@@ -5294,6 +5320,7 @@ mod tests {
             picker: crate::dialogs::Picker::default(),
             insert_dialog: Default::default(),
             picker_save: false,
+            pending_save: None,
                 recent_files: vec![],
                 dragging_page: None,
                 text_tool: TextTool::default(),
@@ -6343,6 +6370,59 @@ mod tests {
         assert_eq!(escape, Some(false));
         app.cancel_edit();
         assert!(!app.commit_edit());
+    }
+
+    #[test]
+    fn save_waits_for_edit_success_and_failure_preserves_the_draft() {
+        for encrypted in [false, true] {
+            for succeeds in [false, true] {
+                let ctx = Context::default();
+                let (mut app, inbox, outbox) = mock_app();
+                opened(&mut app, &ctx);
+                inbox.try_iter().for_each(drop);
+                let (object, rect) = glyph("original", 30.0, 40.0);
+                app.doc.as_mut().unwrap().edit = Some(EditState {
+                    page: 0, text: "new draft".into(), focus: true,
+                    line: Line { paragraph: None, fallback: None, objects: vec![object], rect, text: "original".into() },
+                });
+                let request = if encrypted {
+                    Request::SavePassword("generated-copy.pdf".into(), "generated-password".into())
+                } else {
+                    Request::SaveAs("generated-copy.pdf".into())
+                };
+                app.password_action(request);
+                assert!(matches!(inbox.try_recv().unwrap(), Request::Edit { .. }));
+                assert!(inbox.try_recv().is_err(), "Save must wait for the edit reply");
+                assert!(app.pending_save.is_some());
+                app.poll(&ctx);
+                assert!(inbox.try_recv().is_err());
+                let reply = if succeeds {
+                    Reply::Changed {
+                        pages: vec![PageInfo { width: 300.0, height: 400.0 }],
+                        generation: 2, kind: ChangeKind::Edit, can_undo: true,
+                        can_redo: false, warning: None, objects_changed: 1,
+                    }
+                } else {
+                    Reply::Failed { message: "Generated edit rejection".into(), blocking: true, page: None }
+                };
+                outbox.send(reply).unwrap();
+                app.poll(&ctx);
+                assert!(app.pending_save.is_none());
+                if succeeds {
+                    let saved = inbox.try_recv().unwrap();
+                    assert!(if encrypted { matches!(saved, Request::SavePassword(..)) }
+                        else { matches!(saved, Request::SaveAs(_)) });
+                    assert_eq!(app.busy, 1);
+                } else {
+                    assert!(inbox.try_recv().is_err(), "Rejected edits must not write a file");
+                    assert_eq!(app.doc.as_ref().unwrap().edit.as_ref().unwrap().text, "new draft");
+                    assert!(app.banners.iter().any(|b| b.text.starts_with("Save cancelled")));
+                    assert_eq!(app.busy, 0);
+                }
+                app.poll(&ctx);
+                assert!(inbox.try_recv().is_err(), "Save must dispatch only once");
+            }
+        }
     }
 
     #[test]
