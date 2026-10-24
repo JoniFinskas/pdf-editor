@@ -611,7 +611,10 @@ fn fixture_roundtrip_and_render_diff() {
     let _lock = PDFIUM.lock().unwrap_or_else(|p| p.into_inner());
     let engine = engine();
     let mut files = vec![];
-    all_pdfs(&root().join("tests/fixtures"), &mut files);
+    let fixtures = if std::env::var_os("PDF_EDITOR_GENERATED_ONLY").is_some() {
+        "tests/fixtures/generated"
+    } else { "tests/fixtures" };
+    all_pdfs(&root().join(fixtures), &mut files);
     assert!(files.len() >= 9);
     for path in files {
         let name = path.file_name().unwrap().to_string_lossy();
@@ -3775,3 +3778,46 @@ fn object_layer_order_round_trips_and_undo_restores() {
     e.edit_page_items(&mut doc, &[last], ObjectAction::SendToBack).unwrap();
     assert_eq!(e.page_items(&doc, 0).unwrap()[0].bounds.left, 60.0);
 }
+
+#[test]
+fn generated_edit_move_resize_undo_and_reopen_preserve_links_and_sources() {
+    let _lock=PDFIUM.lock().unwrap_or_else(|e|e.into_inner());
+    let e=engine();
+    for rotation in [0,90,180,270] {
+        let path=temp(&format!("workflow-{rotation}.pdf"));
+        let mut pdf=parse(&generated("Workflow",false,rotation,0.0,false,false)).unwrap();
+        let page=pdf.get_pages()[&1];
+        let link=pdf.add_object(dictionary!{
+            "Type"=>"Annot","Subtype"=>"Link","Rect"=>vec![72.into(),700.into(),200.into(),730.into()],
+            "A"=>dictionary!{"S"=>"URI","URI"=>Object::string_literal("https://example.invalid/generated")},
+        });
+        pdf.get_dictionary_mut(page).unwrap().set("Annots",vec![Object::Reference(link)]);
+        pdf.save(&path).unwrap();
+        let source=fs::read(&path).unwrap();
+        let mut doc=e.open(&path).unwrap();
+        let initial=e.render(&doc,0,1.0).unwrap().rgba;
+        let text=e.text_objects(&doc,0).unwrap().remove(0);
+        e.edit(&mut doc,&text,"Updated").unwrap();
+        let item=e.page_items(&doc,0).unwrap().into_iter().find(|i|i.kind=="Text").unwrap();
+        e.edit_page_items(&mut doc,&[item],ObjectAction::Move{dx:12.0,dy:8.0}).unwrap();
+        let item=e.page_items(&doc,0).unwrap().into_iter().find(|i|i.kind=="Text").unwrap();
+        let b=item.bounds;
+        let target=Bounds{right:b.left+(b.right-b.left)*1.2,top:b.bottom+(b.top-b.bottom)*1.1,..b};
+        e.edit_page_items(&mut doc,&[item],ObjectAction::Resize{bounds:target}).unwrap();
+        let final_image=e.render(&doc,0,1.0).unwrap().rgba;
+        for _ in 0..3 {assert!(doc.undo());}
+        assert_eq!(e.render(&doc,0,1.0).unwrap().rgba,initial);
+        for _ in 0..3 {assert!(doc.redo());}
+        assert_eq!(e.render(&doc,0,1.0).unwrap().rgba,final_image);
+        let output=temp(&format!("workflow-{rotation}-saved.pdf"));let _=fs::remove_file(&output);
+        doc.save_as(&output).unwrap();
+        let reopened=e.open(&output).unwrap();
+        assert_eq!(e.text_objects(&reopened,0).unwrap()[0].text,"Updated");
+        assert_eq!(e.render(&reopened,0,1.0).unwrap().rgba,final_image);
+        let saved=parse(&reopened.bytes).unwrap();let page=saved.get_pages()[&1];
+        assert_eq!(saved.get_dictionary(page).unwrap().get(b"Annots").unwrap().as_array().unwrap().len(),1);
+        assert_eq!(fs::read(&path).unwrap(),source);
+        fs::remove_file(path).unwrap();fs::remove_file(output).unwrap();
+    }
+}
+
