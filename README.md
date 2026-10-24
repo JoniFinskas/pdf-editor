@@ -123,14 +123,14 @@ existing files and the original path are never overwritten.
 
 ## Basic editing controls
 
-- Ctrl+F opens Find; all matches are highlighted and Previous/Next wrap through them.
+- Ctrl+F opens Find; Enter advances and Shift+Enter goes back, wrapping through highlighted matches. Escape closes Find.
 - Add text: choose a font, size and color, click a baseline on a page, then Place text.
-- Click existing text to edit it. The text-object toolbar selects individual runs for
+- Double-click existing text to edit it. The text-object toolbar selects individual runs for
   size/color changes or deletion; those operations are undoable.
 - Drag empty page space or the gray canvas to pan. Drag text before entering its
-  editor to move the line/paragraph; finish or cancel an open edit first. A moving
+  editor to move the selected object; finish or cancel an open edit first. A moving
   outline previews placement, and release commits one undoable move.
-- Choose **Move / resize objects** in the toolbar to select and drag individual text runs,
+- Click once to select and drag logical text blocks,
   images, vector icons or grouped artwork. Drag any of the eight selection handles
   to resize; text scales without reflowing, with one undo step on release. Right-click for **Copy**, **Paste on
   this page**, **Duplicate** or **Delete**; Ctrl+C, Ctrl+V, Ctrl+D and Delete also
@@ -192,10 +192,10 @@ The active document tab has an accent line. Unsaved tabs show a dot; hover a tab
 to reveal its close button. Closing a dirty tab asks whether to discard changes.
 
 - Print opens the Windows print dialog and prints rendered pages, including edits.
-- Signatures supports drawing, PNG/JPG import, and a reusable local library. Place
-  and size a signature before adding it; the Images tool can adjust inserted image
-  positions and dimensions. Signatures are flattened page graphics, not digital
-  certificates.
+- Signatures supports drawing, PNG/JPG import, and a reusable local library.
+  Choose Place signature, move its preview onto the desired page, then click.
+  Escape cancels placement. Select the placed signature to drag or resize it.
+  Signatures are flattened page graphics, not digital certificates.
 - Forms lists existing text, checkbox, radio and dropdown fields. Select a field,
   edit its value, and Apply. JavaScript and external form actions are disabled.
 - Replace counts editable matches and replaces one or all while retaining the
@@ -404,7 +404,12 @@ is not a complete visual-concealment audit.
 
 Sanitization also rejects XFA forms, retained annotation appearances, unused retained Form
 streams, Forms without their own resources, and aliased attachment/script/metadata payloads.
-These cases leave the original document unchanged.
+These cases leave the original document unchanged. For complex documents,
+**Rebuild visible pages** creates image-only pages from the current appearance
+(up to 100 pages, at most 2048 pixels per side). No original text layer, metadata,
+scripts, forms or attachments are copied. Page dimensions are preserved, but text
+is no longer searchable or editable and interactive links are removed. This is an
+explicit option; Undo restores the original.
 
 ### Batch headers, footers and Bates numbering
 
@@ -457,3 +462,12 @@ Object interaction: click text, an image or artwork once to select it. Drag the
 selection to move it, use its square handles to resize it, and press Delete to
 remove it. Double-click text to type; Delete then edits characters normally.
 Click outside the text editor to apply changes and dismiss its toolbar.
+
+
+Page ordering: drag a thumbnail by its preview. The floating thumbnail identifies
+the moving page; an insertion line shows whether it will go before or after the
+target. Release commits one undoable move.
+
+Word export keeps supported text, tables and images editable. Complex compositing
+that cannot be expanded safely is preserved as a page image instead of aborting
+the export. Those image-only pages are not text-editable in Word.
