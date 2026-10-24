@@ -4089,3 +4089,25 @@ fn batched_cursor_repairs_preserve_layout_pixels_and_history() {
         }
     }
 }
+
+#[test]
+fn replacement_round_trip_handles_generated_layouts() {
+    let _lock=PDFIUM.lock().unwrap_or_else(|e|e.into_inner());
+    let e=engine();
+    for name in ["unicode-cid.pdf","glyph-runs.pdf","spacing.pdf","kerning.pdf",
+        "transformed.pdf","rotated.pdf","subset.pdf","paragraph-Left.pdf"] {
+        for replacement in ["AB","longer text",""] {
+            let mut doc=e.open(&fixture(name)).unwrap();
+            let objects=e.text_objects(&doc,0).unwrap();
+            let Some(object)=objects.iter().find(|o| !o.text.trim().is_empty()) else {continue;};
+            let query=object.text.trim().to_string();
+            let count=e.replacement_count(&doc,&query).unwrap();
+            if count==0 {continue;}
+            let original=doc.bytes.clone();
+            e.replace_text(&mut doc,&query,replacement,None)
+                .unwrap_or_else(|error|panic!("{name} replacement={replacement:?}: {error}"));
+            assert!(doc.undo());
+            assert_eq!(doc.bytes,original);
+        }
+    }
+}

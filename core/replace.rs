@@ -146,6 +146,7 @@ impl Engine {
                     .text_objects(&candidate, page.page)?
                     .into_iter()
                     .map(|o| o.text)
+                    .filter(|text| !text.is_empty())
                     .collect();
                 let expected: Vec<_> = texts.into_iter().filter(|t| !t.is_empty()).collect();
                 if actual != expected {

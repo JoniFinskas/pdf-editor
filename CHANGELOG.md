@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Verify replacements consistently when PDFs retain empty text objects; cover glyph-by-glyph, spaced, transformed, rotated and paragraph layouts.
+
 - Export safe transparency groups as editable Word content and preserve unsupported complex pages as images instead of aborting the whole document.
 
 - Use direct object selection and movement without a mode toggle; double-click text to type, with clear grab cursors and functional selection handles. Dismiss the text toolbar when editing ends.
