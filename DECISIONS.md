@@ -817,3 +817,13 @@ has been stable for 180 ms; retain existing previews and discard superseded
 render replies. Tests cover repeated scale changes, ignored native requests,
 restore behavior, motion debounce and stale preview responses. Native behavior
 on mixed-DPI hardware requires an interactive acceptance check.
+
+### Stable object alignment
+
+Moving objects align centers to centers and edges to edges. Page centering uses
+the object's center, while resizing may align an active edge to any guide.
+A six-screen-point acquisition radius and a 1.7-times release radius prevent
+rapid switching between nearby alignments without accumulating snapped deltas.
+Equal-gap alignment uses the nearest non-overlapping neighbors in the same row
+or column. Guide labels distinguish these cases. Alt and the Snap toggle clear
+the current lock. Preview geometry is reused when committing the edit.

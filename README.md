@@ -435,8 +435,12 @@ Tool discovery: Ctrl+K opens All tools. Search names, descriptions or terms such
 arrow keys select a result and Enter opens it. Reset clears search and category.
 
 Enable **Snap** above the document for alignment guides while moving or resizing
-text, images and other objects. Edges and centers align with nearby objects and
-the page within six screen points. Hold **Alt** for free placement.
+text, images and other objects. Labeled guides distinguish edges, centers, the
+exact page center and equal gaps between neighboring objects. Centers align to
+centers; moving an edge near the middle of a page does not center the object.
+Snapping starts within six screen points and holds slightly farther to avoid
+jitter between nearby targets. Hold **Alt** for free placement or turn **Snap**
+off. The released object keeps the position shown by its preview.
 
 The recovery button shows whether copies are off, unavailable, pending, writing
 or saved. Unapplied text is marked separately. Click it for interval settings.

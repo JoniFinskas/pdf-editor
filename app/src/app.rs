@@ -735,6 +735,7 @@ struct ItemDrag {
     delta: Vec2,
     resize_handle: Option<usize>,
     preview: Option<Rect>,
+    snap_state: crate::snapping::State,
 }
 
 /// Adjacent text objects that read as one line, edited together. Browser
@@ -2412,7 +2413,7 @@ impl EditorApp {
                         .look(if moving == enabled { Look::Active } else { Look::Ghost })
                         .enabled(self.busy == 0).show(ui, p).clicked() { self.set_object_mode(enabled); }
                 }
-                ui.checkbox(&mut self.snap_enabled, "Snap").on_hover_text("Align object edges and centers to the page and other objects. Hold Alt to bypass.");
+                ui.checkbox(&mut self.snap_enabled, "Snap").on_hover_text("Align edges and centers, center on the page, and match gaps between objects. Hold Alt to move freely; turn Snap off to disable guides and snapping.");
                 widgets::divider(ui, p, 22.0);
                 if Btn::new("Compare PDFs").id("compare-visible").height(30.0).show(ui, p).clicked() { self.open_tool(Tool::Compare); }
                 if Btn::new(self.recovery_status()).id("recovery-status").height(30.0)
@@ -3389,6 +3390,7 @@ impl EditorApp {
                                 delta: Vec2::ZERO,
                                 resize_handle,
                                 preview: None,
+                                snap_state: Default::default(),
                             });
                         }
                     }
@@ -3404,19 +3406,14 @@ impl EditorApp {
                             && let Some(objects) = &page.objects
                         {
                             let page_bounds = Rect::from_min_size(Pos2::ZERO,vec2(page.info.width,page.info.height));
-                            let targets = std::iter::once(page_bounds).chain(objects.items.iter()
+                            let targets = objects.items.iter()
                                 .filter(|item| !drag.items.iter().any(|moving| moving.index == item.index))
-                                .map(|item| bounds_rect(&objects.transform,item.bounds)));
-                            let snapped = crate::snapping::align(preview_bounds,drag.resize_handle,targets,6.0/scale);
+                                .map(|item| bounds_rect(&objects.transform,item.bounds));
+                            let snapped = crate::snapping::align(preview_bounds,drag.resize_handle,page_bounds,targets,6.0/scale,&mut drag.snap_state);
                             preview_bounds = snapped.bounds;
-                            if let Some(x) = snapped.x {
-                                let x = rect.left()+x*scale;
-                                painter.line_segment([pos2(x,rect.top()),pos2(x,rect.bottom())],Stroke::new(1.0,p.accent));
-                            }
-                            if let Some(y) = snapped.y {
-                                let y = rect.top()+y*scale;
-                                painter.line_segment([pos2(rect.left(),y),pos2(rect.right(),y)],Stroke::new(1.0,p.accent));
-                            }
+                            crate::snapping::paint(&painter,&snapped,rect,scale,p.accent);
+                        } else {
+                            drag.snap_state = Default::default();
                         }
                         drag.preview = Some(preview_bounds);
                         let preview = to_screen(preview_bounds, rect, scale);

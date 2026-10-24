@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Add labeled alignment guides, exact page centering, equal-gap snapping and stable drag locks for text, images and page objects.
+
 - Default font substitution to the whole document while preserving saved preferences.
 - Stabilize logical window size across DPI changes, bound native resize retries, and defer PDF redraws while moving or resizing the window.
 - Start comparisons from the open PDF, compare automatically after selecting the other file, and reserve a full-height review area for results.

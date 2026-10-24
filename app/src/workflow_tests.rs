@@ -83,10 +83,11 @@ fn generated_recovery_snapshot_survives_crash_and_restores_unsaved_edits() {
 #[test]
 fn canvas_snapping_matches_the_committed_move_and_can_be_bypassed() {
     for kind in ["Text", "Image", "Path"] {
-        for (enabled, alt, expected_dx) in [
-            (true, false, 60.0),
-            (true, true, 57.0),
-            (false, false, 57.0),
+        for (enabled, alt, requested_dx, expected_dx) in [
+            (true, false, 57.0, 60.0),
+            (true, true, 57.0, 57.0),
+            (false, false, 57.0, 57.0),
+            (true, false, 117.0, 120.0),
         ] {
             let ctx = Context::default();
             theme::install(&ctx);
@@ -143,7 +144,7 @@ fn canvas_snapping_matches_the_committed_move_and_can_be_bypassed() {
                 .unwrap()
                 .rect;
             let start = rect.min + vec2(30.0, 40.0) * PT_TO_UI;
-            let end = start + vec2(57.0, 0.0) * PT_TO_UI;
+            let end = start + vec2(requested_dx, 0.0) * PT_TO_UI;
             let button = |pos, pressed| egui::Event::PointerButton {
                 pos,
                 pressed,
