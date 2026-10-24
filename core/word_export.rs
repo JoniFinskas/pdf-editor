@@ -75,6 +75,8 @@ impl Engine {
     pub fn export_word(&self, doc: &Document, path: &Path) -> Result<()> {
         guarded(|| {
             // Expand ordinary groups in isolation so export never changes editor history.
+            let original = doc;
+            let mut raster_pages = std::collections::BTreeSet::new();
             let mut expanded = self.candidate(doc, parse(&doc.bytes)?)?;
             for page in 0..self.pages(&expanded)?.len() {
                 let mut groups = 0usize;
@@ -87,7 +89,12 @@ impl Engine {
                     if groups > 20000 {
                         return Err(err("Word export contains too many groups"));
                     }
-                    self.ungroup_page_item(&mut expanded, &item)?;
+                    if self.prepare_grouped_text(&mut expanded, &item).is_err() {
+                        // Preserve compositing instead of losing grouped content.
+                        // Only this page falls back to an image; the source is untouched.
+                        raster_pages.insert(page);
+                        break;
+                    }
                     expanded.undo.clear();
                     expanded.redo.clear();
                 }
@@ -107,14 +114,25 @@ impl Engine {
                 if page_index > 0 {
                     body.push_str("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>");
                 }
-                if page
-                    .objects()
-                    .iter()
-                    .any(|o| o.as_x_object_form_object().is_some())
-                {
-                    return Err(err(
-                        "Ungroup page objects before Word export; nested content cannot be exported safely",
-                    ));
+                if raster_pages.contains(&page_index) {
+                    let info = self.pages(original)?[page_index].clone();
+                    let scale = 2.0_f32.min(2048.0 / info.width.max(info.height));
+                    let image = self.render(original, page_index as u16, scale)?;
+                    let mut png = std::io::Cursor::new(vec![]);
+                    image::write_buffer_with_format(&mut png, &image.rgba, image.width,
+                        image.height, image::ExtendedColorType::Rgba8, image::ImageFormat::Png)
+                        .map_err(|_| err("Word page encoding failed"))?;
+                    budget += png.get_ref().len();
+                    if budget + body.len() > MAX_FILE { return Err(err("Word export exceeds 64 MiB")); }
+                    image_id += 1;
+                    let filename = format!("image{image_id}.png");
+                    entries.push((format!("word/media/{filename}"),png.into_inner()));
+                    rels.push_str(&format!("<Relationship Id=\"rId{image_id}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/{filename}\"/>"));
+                    let fit = (451.0 / info.width).min(697.0 / info.height).min(1.0);
+                    let cx = (info.width * fit * 12700.0) as u64;
+                    let cy = (info.height * fit * 12700.0) as u64;
+                    body.push_str(&format!("<w:p><w:r><w:drawing><wp:inline><wp:extent cx=\"{cx}\" cy=\"{cy}\"/><wp:docPr id=\"{image_id}\" name=\"Image {image_id}\"/><a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic><pic:nvPicPr><pic:cNvPr id=\"{image_id}\" name=\"{filename}\"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed=\"rId{image_id}\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"));
+                    continue;
                 }
                 let text = self.text_objects(doc, page_index as u16)?;
                 if page.objects().len() > 20000 {
@@ -347,7 +365,7 @@ mod tests {
         }
     }
     #[test]
-    fn word_export_expands_groups_and_rejects_transparency_without_partial_output() {
+    fn word_export_expands_groups_and_preserves_complex_pages() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let engine = Engine::new(&root.join("target/debug/pdfium.dll")).unwrap();
         let folder = root.join("target/test-output");
@@ -393,8 +411,21 @@ mod tests {
         let unsupported = engine.open(&source).unwrap();
         let rejected = folder.join(format!("{}-word-transparency.docx", std::process::id()));
         let _ = fs::remove_file(&rejected);
-        assert!(engine.export_word(&unsupported, &rejected).is_err());
-        assert!(!rejected.exists());
+        engine.export_word(&unsupported, &rejected).unwrap();
+        assert!(String::from_utf8_lossy(&fs::read(&rejected).unwrap()).contains("Title"));
+        // Knockout compositing cannot be expanded safely, so preserve this page as an image.
+        pdf.get_object_mut(form).unwrap().as_stream_mut().unwrap().dict
+            .set("Group", dictionary! {"S"=>"Transparency","K"=>true});
+        pdf.save(&source).unwrap();
+        let complex = engine.open(&source).unwrap();
+        let original = complex.bytes.clone();
+        fs::remove_file(&rejected).unwrap();
+        engine.export_word(&complex, &rejected).unwrap();
+        let output=fs::read(&rejected).unwrap();
+        assert!(String::from_utf8_lossy(&output).contains("word/media/image1.png"));
+        assert!(String::from_utf8_lossy(&output).contains("<w:drawing>"));
+        assert_eq!(complex.bytes, original);
+        assert!(complex.undo.is_empty());
     }
     #[test]
     fn word_export_preserves_finnish_text_on_rotated_pages() {
