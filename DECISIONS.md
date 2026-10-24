@@ -677,3 +677,25 @@ loading indicator; never present an old page as the newly selected page.
 Constrain shared tool windows to the viewport. Scroll their content independently
 of the title and close button so long forms and export controls remain reachable
 at the minimum supported window size.
+
+## Background actions and comparison page matching
+
+Keep every import/export file dialog in a tool-owned background job, including
+multi-file selection and page insertion. Capture options at launch, queue a
+completed result while another document operation is active, and deliver once.
+Closing or cancelling a tool discards a late result. Cancellation does not write
+an output; the native chooser itself remains under interactive control.
+Decode imported images on the same background job. Pending actions and tool
+errors have explicit cancel/dismiss controls. No dependency changes are needed.
+
+Match unchanged page fingerprints before comparison. Fingerprints include page
+dimensions, text and a small raster so image-only and grouped pages can anchor
+alignment. They are session-only matching hints, not security hashes. Bound LCS
+storage to eight MB and use 64-page lookahead for larger documents. Pair modified
+gaps in order; repeated/reordered pages remain ambiguous. Provide explicit
+page-number mode and report fallback if fingerprints cannot be computed.
+
+Package versioned portable releases from a clean checkout with a matching CLI
+version, source commit, bundled license notices and SHA-256 manifests. The
+packaging script never overwrites an existing version or opens a GUI. Keep
+packages under ignored dist/; distribution and installation remain separate.
