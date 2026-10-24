@@ -184,6 +184,7 @@ impl Tool {
 
 /// Each tab owns a complete editing session, including its worker and recovery lock.
 pub struct TabbedApp {
+    native_guard: Option<Box<dyn FnMut()>>,
     clipboard: crate::worker::SharedClipboard,
     tabs: Vec<(u64, EditorApp)>,
     active: usize,
@@ -194,9 +195,14 @@ pub struct TabbedApp {
     merge_tab: Option<u64>,
 }
 impl TabbedApp {
+    pub fn with_native_guard(mut self, guard: Option<Box<dyn FnMut()>>) -> Self {
+        self.native_guard = guard;
+        self
+    }
     pub fn new(ctx: &Context, initial: pdf_editor_core::Result<Option<PathBuf>>) -> Self {
         let clipboard = crate::worker::SharedClipboard::default();
         Self {
+            native_guard: None,
             tabs: vec![(0, EditorApp::new(ctx, initial, clipboard.clone()))],
             clipboard,
             active: 0,
@@ -299,6 +305,7 @@ impl TabbedApp {
 }
 impl eframe::App for TabbedApp {
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
+        if let Some(guard) = &mut self.native_guard { guard(); }
         let ctx = ui.ctx().clone();
         if let Some(instance) = &self.instance {
             let requests = instance.poll();
@@ -477,6 +484,7 @@ impl eframe::App for TabbedApp {
 }
 
 pub struct EditorApp {
+    surface: crate::window_state::Surface,
     tabbed: bool,
     new_tab_path: Option<PathBuf>,
     tools_open: bool,
@@ -831,6 +839,7 @@ impl EditorApp {
         let orphans = recovery::orphans();
         let worker = Worker::spawn(ctx.clone(), library.unwrap_or_default(), policy, clipboard);
         let mut app = Self {
+            surface: Default::default(),
             tabbed: true,
             new_tab_path: None,
             tools_open: true,
@@ -1413,6 +1422,11 @@ impl EditorApp {
                 let Some(view) = self.page_mut(page) else {
                     return;
                 };
+                // A late render from the previous display must not evict a newer
+                // request's preview or cause another expensive redraw cycle.
+                if view.pending_render.is_some_and(|pending| pending != (scale, generation)) {
+                    return;
+                }
                 if view
                     .pending_render
                     .is_some_and(|(s, g)| s == scale && g == generation)
@@ -2960,6 +2974,7 @@ impl EditorApp {
 
     fn canvas(&mut self, ui: &mut Ui, p: &Palette) {
         let ctx = ui.ctx().clone();
+        let surface_ready = self.surface.ready(&ctx);
         let ppp = ctx.pixels_per_point();
         let canvas_rect = ui.max_rect();
 
@@ -3096,6 +3111,7 @@ impl EditorApp {
                     t.generation != doc.generation || (t.scale - wanted).abs() > wanted * 0.01
                 });
                 if stale
+                    && surface_ready
                     && page.error.is_none()
                     && page.pending_render != Some((wanted, doc.generation))
                 {
@@ -5324,6 +5340,7 @@ mod tests {
         let (worker, inbox, outbox) = crate::worker::test_channel();
         (
             EditorApp {
+                surface: Default::default(),
                 tabbed: false,
                 new_tab_path: None,
             tools_open: true,
@@ -5501,6 +5518,25 @@ mod tests {
         // A larger incoming raster evicts its neighbour before insertion.
         trim_page_cache_to(pages, 0, 128, 128);
         assert!(pages.iter().all(|page| page.texture.is_none()));
+    }
+
+    #[test]
+    fn superseded_display_raster_keeps_the_preview_and_latest_request() {
+        let ctx = Context::default();
+        let (mut app, _, _) = mock_app();
+        opened(&mut app, &ctx);
+        let image = || pdf_editor_core::Image { width: 2, height: 2, rgba: vec![255; 16] };
+        app.handle(&ctx, Reply::Rendered { generation: 1, page: 0, scale: 1.0, image: image() });
+        let original = app.doc.as_ref().unwrap().pages[0].texture.as_ref().unwrap().handle.id();
+        app.doc.as_mut().unwrap().pages[0].pending_render = Some((2.0, 1));
+        app.handle(&ctx, Reply::Rendered { generation: 1, page: 0, scale: 1.5, image: image() });
+        let page = &app.doc.as_ref().unwrap().pages[0];
+        assert_eq!(page.texture.as_ref().unwrap().handle.id(), original);
+        assert_eq!(page.pending_render, Some((2.0, 1)));
+        app.handle(&ctx, Reply::Rendered { generation: 1, page: 0, scale: 2.0, image: image() });
+        let page = &app.doc.as_ref().unwrap().pages[0];
+        assert_eq!(page.pending_render, None);
+        assert_eq!(page.texture.as_ref().unwrap().scale, 2.0);
     }
 
     #[test]
@@ -6306,6 +6342,7 @@ mod tests {
         assert!(first.confirm.is_none());
         assert!(requests.try_recv().is_err());
         let mut tabs = TabbedApp {
+            native_guard: None,
             clipboard: Default::default(),
             tabs: vec![(0, first), (1, second)],
             active: 1,

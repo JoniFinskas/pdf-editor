@@ -804,3 +804,16 @@ file. Keep free selection for both sides and group passwords and page matching
 under options. Use a compact setup view and a full-height results window so the
 page highlights remain reachable. Verify both identical and changed generated
 PDFs through the picker result, worker and rendered UI flow.
+
+## Display transitions
+
+Anchor a normal window's logical dimensions before a DPI transition instead of
+using an already resized physical size as the next baseline. Bound corrections
+to two attempts, constrain them to the destination monitor, and leave maximized,
+fullscreen and minimized states under native control. Do not query monitor
+geometry unless scale changes. Recompute the physical minimum size for the
+destination DPI and available monitor bounds. Delay replacement PDF renders until the surface
+has been stable for 180 ms; retain existing previews and discard superseded
+render replies. Tests cover repeated scale changes, ignored native requests,
+restore behavior, motion debounce and stale preview responses. Native behavior
+on mixed-DPI hardware requires an interactive acceptance check.

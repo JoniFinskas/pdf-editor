@@ -40,6 +40,7 @@ mod widgets;
 mod windows_integration;
 mod word_export;
 mod worker;
+mod window_state;
 
 use eframe::egui;
 
@@ -110,7 +111,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             Ok(Box::new(
-                app::TabbedApp::new(&cc.egui_ctx, initial).with_instance(owner, action),
+                app::TabbedApp::new(&cc.egui_ctx, initial).with_instance(owner, action).with_native_guard(crate::window_state::native_guard(cc)),
             ))
         }),
     )
