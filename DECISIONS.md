@@ -643,3 +643,19 @@ generated edit/save/undo regression.
 - Keep the existing grouped, scrollable Tools menu and expose it with a labelled toolbar control. Put Edit text, Move / resize objects and Compare PDFs beside it so common actions do not depend on discovering a chevron.
 - Object layer ordering preserves the relative order within the selected and unselected sets. Native object removal/reinsertion occurs only in a candidate document and is committed as one undo step.
 - Error banners expire after twelve seconds, warnings after ten and success messages after five; all retain an explicit close button. Top-align the close button so wrapped text cannot shift its hit target between pointer events.
+
+
+## Tool discovery and page navigation
+
+Expose the complete tool catalog in a default-visible, searchable side panel.
+Keep document prerequisites visible, and search descriptions as well as names
+so subfeatures such as form flattening and Excel export can be found. Ctrl+K
+focuses search; closing the panel restores page space.
+
+Go to page uses one-based input and bounds checks, updates only the viewport,
+and preserves horizontal scroll. Ctrl+G and the current page indicator open it.
+
+Native picker acceptance controls only dialogs owned by the test process and
+records numeric timing data without window titles or screenshots. Opening and
+cancellation are covered; automated file selection remains unverified because
+the attempted native button activation did not complete selection.
