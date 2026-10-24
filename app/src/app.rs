@@ -648,6 +648,7 @@ struct DocView {
     reopen: Option<(usize, Pos2)>,
     /// Page, raster rect and object count of an edit being applied.
     applying: Option<(usize, Rect, usize)>,
+    pending_edit: Option<EditState>,
     scroll_to: Option<Vec2>,
     offset: Vec2,
     viewport: Rect,
@@ -729,6 +730,7 @@ struct Line {
     text: String,
 }
 
+#[derive(Clone)]
 struct EditState {
     page: usize,
     line: Line,
@@ -1028,6 +1030,7 @@ impl EditorApp {
             return false;
         }
         doc.applying = Some((edit.page, edit.line.rect, edit.line.objects.len()));
+        doc.pending_edit = Some(edit.clone());
         self.busy += 1;
         self.send(match edit.line.paragraph {
             Some(paragraph) => Request::EditParagraph(paragraph, edit.text),
@@ -1355,6 +1358,7 @@ impl EditorApp {
                     edit: None,
                     reopen: None,
                     applying: None,
+                    pending_edit: None,
                     scroll_to: Some(Vec2::ZERO),
                     offset: Vec2::ZERO,
                     viewport: Rect::NOTHING,
@@ -1447,6 +1451,7 @@ impl EditorApp {
                 self.busy = self.busy.saturating_sub(1);
                 let Some(doc) = &mut self.doc else { return };
                 let selected = doc.applying.take().map_or(1, |(_, _, n)| n);
+                doc.pending_edit = None;
                 doc.can_undo = can_undo;
                 doc.can_redo = can_redo;
                 if objects_changed > 0 {
@@ -1611,6 +1616,10 @@ impl EditorApp {
                 if let Some(doc) = &mut self.doc {
                     doc.applying = None;
                     doc.reopen = None;
+                    if let Some(mut edit) = doc.pending_edit.take() {
+                        edit.focus = true;
+                        doc.edit = Some(edit);
+                    }
                 }
                 self.banner(BannerKind::Error, message);
             }
@@ -4904,7 +4913,12 @@ fn edit_box(
         edit.focus = false;
         return None;
     }
-    if response.lost_focus() && !response.context_menu_opened() {
+    let clicked_away = response.clicked_elsewhere()
+        && ui.input(|i| i.pointer.primary_clicked());
+    if (response.lost_focus() || clicked_away)
+        && !response.context_menu_opened()
+        && !egui::Popup::is_any_open(ui.ctx())
+    {
         let escape = ui.input(|i| i.key_pressed(Key::Escape));
         return Some(!escape);
     }
@@ -6267,6 +6281,59 @@ mod tests {
         app.go_to_page(0);
         assert_eq!(app.doc.as_ref().unwrap().scroll_to.unwrap().y, CANVAS_PAD);
         assert_eq!(app.doc.as_ref().unwrap().dirty(), dirty);
+    }
+
+    #[test]
+    fn click_away_applies_once_and_failed_edit_keeps_the_draft() {
+        let ctx = Context::default();
+        theme::install(&ctx);
+        let (mut app, inbox, _) = mock_app();
+        opened(&mut app, &ctx);
+        let (object, rect) = glyph("original", 30.0, 40.0);
+        app.doc.as_mut().unwrap().edit = Some(EditState {
+            page: 0, text: "original".into(), focus: true,
+            line: Line { paragraph: None, fallback: None, objects: vec![object], rect, text: "original".into() },
+        });
+        let frame = |app: &mut EditorApp, events| {
+            let mut outcome = None;
+            let mut output = ctx.run_ui(egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                events, ..Default::default()
+            }, |ui| {
+                let p = theme::palette(ui);
+                outcome = edit_box(ui, app.doc.as_mut().unwrap(),
+                    &[Rect::from_min_size(pos2(20.0, 20.0), vec2(500.0, 500.0))], 1.0, &p);
+            });
+            output.textures_delta.clear();
+            outcome
+        };
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![egui::Event::Text(" draft".into())]);
+        let draft = app.doc.as_ref().unwrap().edit.as_ref().unwrap().text.clone();
+        assert!(draft.contains("draft"));
+        let at = pos2(650.0, 450.0);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at, pressed, button: egui::PointerButton::Primary, modifiers: egui::Modifiers::NONE,
+        };
+        let down = frame(&mut app, vec![egui::Event::PointerMoved(at), button(true)]);
+        let up = frame(&mut app, vec![button(false)]);
+        assert!(down == Some(true) || up == Some(true));
+        assert!(app.commit_edit());
+        assert!(!app.commit_edit());
+        assert_eq!(inbox.try_iter().filter(|r| matches!(r, Request::Edit { .. })).count(), 1);
+        app.handle(&ctx, Reply::Failed { message: "Unsupported test font".into(), blocking: true, page: None });
+        assert_eq!(app.doc.as_ref().unwrap().edit.as_ref().unwrap().text, draft);
+        assert!(app.doc.as_ref().unwrap().pending_edit.is_none());
+        assert_eq!(app.busy, 0);
+        frame(&mut app, vec![]);
+        let escape = frame(&mut app, vec![egui::Event::Key {
+            key: Key::Escape, physical_key: None, pressed: true, repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        assert_eq!(escape, Some(false));
+        app.cancel_edit();
+        assert!(!app.commit_edit());
     }
 
     #[test]

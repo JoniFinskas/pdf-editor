@@ -3,6 +3,7 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Apply text edits on click-away, including empty canvas, and retain the draft if applying fails so it can be corrected or retried.
 - Add Go to page (Ctrl+G), first/last-page navigation and a clickable page number; reject out-of-range input without changing the PDF.
 - Show a searchable All tools panel by default, including tool descriptions and document prerequisites; Ctrl+K focuses its search.
 - Add Bring to front and Send to back object actions with stable relative order and undo.
