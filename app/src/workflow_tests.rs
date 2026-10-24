@@ -426,6 +426,14 @@ fn generated_workflow_edits_moves_resizes_copies_and_saves_through_real_workers(
     let at = workflow_line(&source, &ctx, 0);
     workflow_edit(&mut source, &ctx, at);
     assert!(source.doc.as_ref().unwrap().edit.is_some());
+    // Clicking empty page space also dismisses an unchanged text draft and toolbar.
+    let outside=ctx.read_response(Id::new(("pdf-page",0usize))).unwrap().rect.min
+        +vec2(10.0,10.0);
+    workflow_click(&mut source,&ctx,outside);
+    assert!(source.doc.as_ref().unwrap().edit.is_none());
+    assert!(source.text_tool.selection.is_empty());
+    workflow_edit(&mut source,&ctx,at);
+    assert!(source.doc.as_ref().unwrap().edit.is_some());
     workflow_frame(
         &mut source,
         &ctx,

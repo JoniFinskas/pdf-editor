@@ -3390,9 +3390,9 @@ impl EditorApp {
                         && (response.clicked() || response.secondary_clicked())
                     {
                         doc.selected_item = item_hit.cloned();
-                        if doc.edit.is_none() { self.text_tool.selection.clear(); }
                         if doc.edit.as_ref().is_none_or(|e| e.text == e.line.text) {
                             doc.edit = None;
+                            self.text_tool.selection.clear();
                         }
                     }
                     let can_drag = doc.edit.is_none();

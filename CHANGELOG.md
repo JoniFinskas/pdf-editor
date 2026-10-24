@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Dismiss the floating text toolbar when clicking away from an unchanged draft.
+
 - Show drag grips, a page preview and animated before/after insertion guides when reordering thumbnails.
 
 - Offer explicit visible-page rebuilding for sanitizing complex PDFs, with clear loss-of-editability warnings, preserved page sizes and atomic undo.
