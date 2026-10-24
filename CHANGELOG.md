@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Navigate Find matches with Enter and Shift+Enter without losing search focus; Escape closes Find.
+
 - Stop failed text drafts from resubmitting on focus changes and trapping document operations in a busy loop.
 
 - Add labeled alignment guides, exact page centering, equal-gap snapping and stable drag locks for text, images and page objects.

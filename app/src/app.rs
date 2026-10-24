@@ -2107,6 +2107,8 @@ impl EditorApp {
         if let Some((page, boxes)) = self.find.matches.get(self.find.active)
             && let Some(doc) = &mut self.doc
         {
+            doc.current_page = usize::from(*page);
+            doc.explicit_page = Some(usize::from(*page));
             let y = CANVAS_PAD
                 + doc
                     .pages
@@ -2125,6 +2127,19 @@ impl EditorApp {
             widgets::icon(ui, Icon::Search, 18.0, p.muted);
             let field_id = Id::new("find-field");
             let focused = ui.memory(|m| m.has_focus(field_id));
+            if focused {
+                let previous = ui.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, Key::Enter));
+                let next = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter));
+                let count = self.find.matches.len();
+                if count > 0 && (previous || next) {
+                    self.find.active = (self.find.active + if previous { count - 1 } else { 1 }) % count;
+                    self.go_match();
+                }
+                if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)) {
+                    self.find.open = false;
+                    ui.memory_mut(|m| m.surrender_focus(field_id));
+                }
+            }
             Frame::new()
                 .fill(p.field)
                 .stroke(Stroke::new(
@@ -2188,7 +2203,7 @@ impl EditorApp {
                 .look(Look::Outline)
                 .height(32.0)
                 .enabled(count > 0)
-                .tip("Previous match")
+                .tip("Previous match (Shift+Enter)")
                 .show(ui, p)
                 .clicked()
             {
@@ -2200,7 +2215,7 @@ impl EditorApp {
                 .look(Look::OutlineAccent)
                 .height(32.0)
                 .enabled(count > 0)
-                .tip("Next match")
+                .tip("Next match (Enter)")
                 .show(ui, p)
                 .clicked()
             {
@@ -6159,6 +6174,31 @@ mod tests {
         let at = tool_center(&ctx, "find-previous");
         tool_frame(&mut app, &ctx, click_at(at), 2);
         assert_eq!(app.find.active, 1);
+    }
+    #[test]
+    fn find_enter_cycles_matches_without_losing_field_focus() {
+        let ctx = Context::default();
+        theme::install(&ctx);
+        let (mut app, _, _) = mock_app();
+        opened(&mut app, &ctx);
+        app.find.open = true;
+        app.find.focus = true;
+        app.find.query = "match".into();
+        app.find.matches = vec![
+            (0, vec![[0.0, 0.0, 10.0, 10.0]]),
+            (1, vec![[0.0, 0.0, 10.0, 10.0]]),
+        ];
+        tool_frame(&mut app, &ctx, vec![], 2);
+        for (shift, expected) in [(false,1),(false,0),(true,1)] {
+            tool_frame(&mut app, &ctx, vec![egui::Event::Key {
+                key: Key::Enter, physical_key: None, pressed: true, repeat: false,
+                modifiers: egui::Modifiers { shift, ..Default::default() },
+            }], 2);
+            assert_eq!(app.find.active, expected);
+            assert!(ctx.memory(|m| m.has_focus(Id::new("find-field"))));
+            assert_eq!(app.doc.as_ref().unwrap().explicit_page, Some(expected));
+            tool_frame(&mut app, &ctx, vec![], 2);
+        }
     }
     #[test]
     fn thumbnail_drag_dispatches_page_move() {
