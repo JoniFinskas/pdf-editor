@@ -437,3 +437,8 @@ The recovery button shows whether copies are off, unavailable, pending, writing
 or saved. Unapplied text is marked separately. Click it for interval settings.
 Recovery is enabled every two minutes by default for unprotected documents; it
 never replaces Save As or writes over the original.
+
+Portable distribution builds use `scripts/build-release.ps1` to remap compiler
+paths. `scripts/package-release.ps1` validates an explicit file set and binary
+strings before promoting a package from staging. The portable README covers
+application usage; development reports and fixtures are not distributed.

@@ -39,11 +39,16 @@ $archive = Join-Path $OutputDirectory "$name.zip"
 if ((Test-Path -LiteralPath $folder) -or (Test-Path -LiteralPath $archive)) {
     throw 'This version is already packaged. Existing artifacts are never overwritten.'
 }
+$finalFolder = $folder
+$stageRoot = [IO.Path]::GetFullPath((Join-Path $repo 'target/package-staging'))
+$staging = Join-Path $stageRoot ([Guid]::NewGuid().ToString('N'))
+$folder = Join-Path $staging $name
 New-Item -ItemType Directory -Path $folder -Force | Out-Null
 foreach ($item in $required) { Copy-Item -LiteralPath (Join-Path $release $item) -Destination $folder -Recurse }
-foreach ($item in @('LICENSE','README.md','MANUAL_TEST.md','TEST_REPORT.md')) {
+foreach ($item in @('LICENSE')) {
     Copy-Item -LiteralPath (Join-Path $repo $item) -Destination $folder
 }
+Copy-Item -LiteralPath (Join-Path $repo 'docs/PORTABLE_README.md') -Destination (Join-Path $folder 'README.md')
 Copy-Item -LiteralPath (Join-Path $repo 'app/assets/fonts/OFL.txt') -Destination (Join-Path $folder 'Inter-OFL.txt')
 [ordered]@{ version=$version; source_commit=$commit; platform='windows-x64'; packaged_utc=[DateTime]::UtcNow.ToString('o') } |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $folder 'build-info.json') -Encoding utf8
@@ -52,6 +57,16 @@ $checksums = Get-ChildItem -LiteralPath $folder -File -Recurse | Sort-Object Ful
     '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(),$relative
 }
 $checksums | Set-Content -LiteralPath (Join-Path $folder 'SHA256SUMS') -Encoding utf8
+# Promote only validated contents from the ignored staging directory.
+$sourcePath = [IO.Path]::GetFullPath($folder)
+$destinationPath = [IO.Path]::GetFullPath($finalFolder)
+if (-not $sourcePath.StartsWith($stageRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+    -not $destinationPath.StartsWith($OutputDirectory.TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Invalid package promotion paths.'
+}
+New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+Move-Item -LiteralPath $sourcePath -Destination $destinationPath
+$folder = $destinationPath
 Compress-Archive -LiteralPath $folder -DestinationPath $archive -CompressionLevel Optimal
 $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 "$hash  $name.zip" | Set-Content -LiteralPath "$archive.sha256" -Encoding utf8

@@ -34,5 +34,7 @@ desktop.ini
 /AGENTS.md
 /CLAUDE.md
 /.claude/
+
+/scripts/__pycache__/
 /TEST_REPORT.md
 /MANUAL_TEST.md
