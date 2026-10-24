@@ -315,6 +315,9 @@ impl eframe::App for TabbedApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
         }
         let p = theme::palette(ui);
+        if self.closing.is_some() && ctx.input_mut(|i|i.consume_key(egui::Modifiers::NONE,Key::Escape)) {
+            self.closing = None;
+        }
         for (index, (_, tab)) in self.tabs.iter_mut().enumerate() {
             if index != self.active {
                 tab.poll(&ctx);
@@ -408,55 +411,7 @@ impl eframe::App for TabbedApp {
                 .tabs
                 .iter()
                 .any(|(id, t)| target.is_none_or(|key| key == *id) && t.busy > 0);
-            let mut choice = None;
-            egui::Modal::new(Id::new("close-tabs-confirm"))
-                .frame(modal_frame(&ctx))
-                .show(&ctx, |ui| {
-                    ui.set_width(360.0);
-                    ui.label(
-                        RichText::new(if target.is_some() {
-                            "Close this tab?"
-                        } else {
-                            "Close all documents?"
-                        })
-                        .font(theme::semibold(17.0)),
-                    );
-                    ui.add_space(2.0);
-                    ui.label(
-                        RichText::new(
-                            "Unsaved changes will be lost. Cancel to save documents first.",
-                        )
-                        .color(p.muted),
-                    );
-                    if busy {
-                        ui.add_space(4.0);
-                        widgets::notice(
-                            ui,
-                            &p,
-                            widgets::Tone::Warn,
-                            "Wait for pending document operations to finish.",
-                        );
-                    }
-                    ui.add_space(12.0);
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if Btn::new("Discard and close")
-                            .look(Look::Danger)
-                            .enabled(!busy)
-                            .show(ui, &p)
-                            .clicked()
-                        {
-                            choice = Some(true);
-                        }
-                        if Btn::new("Cancel")
-                            .look(Look::Outline)
-                            .min_width(84.0)
-                            .show(ui, &p)
-                            .clicked()
-                        {
-                            choice = Some(false);
-                        }
-                    });
-                });
+            let choice = close_tabs_prompt(&ctx,&p,target.is_some(),busy);
             if let Some(discard) = choice {
                 self.closing = None;
                 if discard {
@@ -960,7 +915,7 @@ impl EditorApp {
             return;
         }
         let committed = self.commit_edit();
-        if committed || self.busy > 0 || self.doc.as_ref().is_some_and(DocView::dirty) {
+        if committed || self.busy > 0 || self.doc.as_ref().is_some_and(|d| d.dirty() || d.edit.as_ref().is_some_and(|e|e.text != e.line.text)) {
             self.confirm = Some(Pending::Open(path));
         } else {
             self.open_dialog_or_path(path);
@@ -996,6 +951,10 @@ impl EditorApp {
         // applied before the save.
         let committed = self.commit_edit();
         let Some(doc) = &self.doc else { return };
+        if doc.edit.as_ref().is_some_and(|e|e.text != e.line.text) {
+            self.banner(BannerKind::Warning,"Correct the rejected text edit or press Escape to discard it before saving.");
+            return;
+        }
         if self.busy > u32::from(committed) {
             return;
         }
@@ -1021,6 +980,10 @@ impl EditorApp {
                 return;
             }
             self.commit_edit();
+            if self.doc.as_ref().and_then(|d|d.edit.as_ref()).is_some_and(|e|e.text != e.line.text) {
+                self.banner(BannerKind::Warning,"Correct the rejected text edit or press Escape to discard it before saving.");
+                return;
+            }
             if self.busy > 0 {
                 self.pending_save = Some(request);
                 return;
@@ -2316,7 +2279,7 @@ impl EditorApp {
             return;
         }
         let committed = self.commit_edit();
-        if committed || self.busy > 0 || self.doc.as_ref().is_some_and(DocView::dirty) {
+        if committed || self.busy > 0 || self.doc.as_ref().is_some_and(|d| d.dirty() || d.edit.as_ref().is_some_and(|e|e.text != e.line.text)) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.confirm = Some(Pending::Close);
         }
@@ -4580,6 +4543,62 @@ fn editing_settings(ui: &mut Ui, p: &Palette, policy: &mut Substitution) {
 }
 
 /// Page actions shared by the sidebar menu and a thumbnail's context menu.
+fn close_tabs_prompt(ctx: &Context, p: &Palette, single: bool, busy: bool) -> Option<bool> {
+    let mut choice = None;
+    let modal = egui::Modal::new(Id::new("close-tabs-confirm"))
+        .frame(modal_frame(&ctx))
+        .show(&ctx, |ui| {
+            ui.set_width(360.0);
+            ui.label(
+                RichText::new(if single {
+                    "Close this tab?"
+                } else {
+                    "Close all documents?"
+                })
+                .font(theme::semibold(17.0)),
+            );
+            ui.add_space(2.0);
+            ui.label(
+                RichText::new("Unsaved changes will be lost. Cancel to save documents first.")
+                    .color(p.muted),
+            );
+            if busy {
+                ui.add_space(4.0);
+                widgets::notice(
+                    ui,
+                    &p,
+                    widgets::Tone::Warn,
+                    "Wait for pending document operations to finish.",
+                );
+            }
+            ui.add_space(12.0);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if Btn::new("Discard and close")
+                    .id("close-tabs-discard")
+                    .look(Look::Danger)
+                    .enabled(!busy)
+                    .show(ui, &p)
+                    .clicked()
+                {
+                    choice = Some(true);
+                }
+                if Btn::new("Cancel")
+                    .id("close-tabs-cancel")
+                    .look(Look::Outline)
+                    .min_width(84.0)
+                    .show(ui, &p)
+                    .clicked()
+                {
+                    choice = Some(false);
+                }
+            });
+        });
+    if modal.should_close() && choice.is_none() {
+        choice = Some(false);
+    }
+    choice
+}
+
 fn reorder_destination(from: usize, hovered: usize, after: bool, count: usize) -> usize {
     let slot=hovered+usize::from(after);
     slot.saturating_sub(usize::from(from<slot)).min(count.saturating_sub(1))
@@ -6233,6 +6252,30 @@ mod tests {
         }
     }
     #[test]
+    fn close_confirmation_can_cancel_while_operations_are_pending() {
+        for busy in [false,true] {
+            let ctx=Context::default();
+            theme::install(&ctx);
+            let mut choice=None;
+            let mut frame=|events| {
+                let mut output=ctx.run_ui(egui::RawInput {events,
+                    screen_rect:Some(Rect::from_min_size(Pos2::ZERO,vec2(900.0,700.0))),
+                    ..Default::default()},|ui| {
+                    let p=theme::palette(ui);
+                    choice=close_tabs_prompt(&ctx,&p,false,busy);
+                });
+                output.textures_delta.clear();
+            };
+            for _ in 0..5 {frame(vec![]);}
+            let cancel=ctx.read_response(widgets::tool_id("close-tabs-cancel")).unwrap();
+            assert!(cancel.enabled(), "busy={busy}, sense={:?}, rect={:?}",cancel.sense,cancel.rect);
+            let discard=ctx.read_response(widgets::tool_id("close-tabs-discard")).unwrap();
+            assert_eq!(discard.sense == Sense::click(),!busy);
+            frame(click_at(cancel.rect.center()));
+            assert_eq!(choice,Some(false));
+        }
+    }
+    #[test]
     fn page_insertion_destinations_account_for_removed_source() {
         assert_eq!(reorder_destination(0,2,false,4),1);
         assert_eq!(reorder_destination(0,2,true,4),2);
@@ -6570,6 +6613,9 @@ mod tests {
                     assert_eq!(app.doc.as_ref().unwrap().edit.as_ref().unwrap().text, "new draft");
                     assert!(app.banners.iter().any(|b| b.text.starts_with("Save cancelled")));
                     assert_eq!(app.busy, 0);
+                    app.password_action(Request::SaveAs("retry-copy.pdf".into()));
+                    assert!(inbox.try_recv().is_err(),"Retrying Save must not silently omit a rejected draft");
+                    assert!(app.pending_save.is_none());
                 }
                 app.poll(&ctx);
                 assert!(inbox.try_recv().is_err(), "Save must dispatch only once");

@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Keep close confirmation cancellable during pending work, including Escape before underlying editors consume it.
+
 - Dismiss the floating text toolbar when clicking away from an unchanged draft.
 
 - Show drag grips, a page preview and animated before/after insertion guides when reordering thumbnails.
