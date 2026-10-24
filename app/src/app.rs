@@ -1746,6 +1746,7 @@ impl EditorApp {
                 });
             });
         widgets::rule(ui, p);
+        ui.label(RichText::new("Drag a page to reorder").small().color(p.muted));
 
         let Some(doc) = &mut self.doc else { return };
         let mut requests = Vec::new();
@@ -1813,6 +1814,15 @@ impl EditorApp {
                             );
                         }
                         paint_thumbnail(ui, rect, page, p);
+                        if idle && response.hovered() && self.dragging_page.is_none() {
+                            ui.ctx().set_cursor_icon(CursorIcon::Grab);
+                            // A visible grip makes the thumbnail's drag action discoverable.
+                            for x in [rect.right()-9.0,rect.right()-4.0] {
+                                for y in [rect.top()+5.0,rect.top()+10.0,rect.top()+15.0] {
+                                    ui.painter().circle_filled(pos2(x,y),1.2,p.accent);
+                                }
+                            }
+                        }
                         if (page.thumbnail.is_none()
                             || page.thumbnail_generation != Some(doc.generation))
                             && !page.pending_thumbnail
@@ -1834,22 +1844,32 @@ impl EditorApp {
                         if idle && response.drag_started() {
                             self.dragging_page = Some(index);
                         }
-                        if let Some(from) = self.dragging_page
-                            && response.contains_pointer()
-                        {
-                            if from != index {
-                                ui.painter().rect_stroke(
-                                    rect.expand(4.0),
-                                    CornerRadius::same(4),
-                                    Stroke::new(2.0, p.accent),
-                                    StrokeKind::Outside,
-                                );
+                        if let Some(from) = self.dragging_page {
+                            ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+                            if from == index && let Some(pointer)=ui.input(|i|i.pointer.hover_pos()) {
+                                let painter=ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip,Id::new("page-drag-preview")));
+                                let ghost=Rect::from_min_size(pointer+vec2(18.0,18.0),size*0.55);
+                                painter.rect_filled(ghost.expand(3.0),3.0,p.surface);
+                                if let Some(texture)=&page.thumbnail {
+                                    painter.image(texture.id(),ghost,Rect::from_min_max(Pos2::ZERO,pos2(1.0,1.0)),Color32::WHITE.gamma_multiply(0.8));
+                                }
+                                painter.rect_stroke(ghost.expand(3.0),3.0,Stroke::new(1.5,p.accent),StrokeKind::Outside);
+                                painter.text(ghost.center_bottom()+vec2(0.0,5.0),Align2::CENTER_TOP,
+                                    format!("Page {}",from+1),FontId::proportional(12.0),p.text);
                             }
-                            if ui.input(|i| i.pointer.any_released()) && from != index {
-                                action = Some(pdf_editor_core::PageEdit::Move {
-                                    from: from as u16,
-                                    to: index as u16,
-                                });
+                            if let Some(pointer)=ui.input(|i|i.pointer.hover_pos())
+                                && rect.expand2(vec2(18.0,10.0)).contains(pointer) {
+                                let after=pointer.y>=rect.center().y;
+                                let to=reorder_destination(from,index,after,count);
+                                if from!=to {
+                                    let y=if after {number.rect.bottom()+8.0} else {rect.top()-8.0};
+                                    let y=ui.ctx().animate_value_with_time(Id::new("page-insertion-y"),y,0.10);
+                                    ui.painter().line_segment([pos2(rect.left()-8.0,y),pos2(rect.right()+8.0,y)],Stroke::new(3.0,p.accent));
+                                    ui.painter().circle_filled(pos2(rect.left()-8.0,y),3.0,p.accent);
+                                    if ui.input(|i| i.pointer.any_released()) {
+                                        action=Some(pdf_editor_core::PageEdit::Move {from:from as u16,to:to as u16});
+                                    }
+                                }
                             }
                         }
                     });
@@ -4560,6 +4580,11 @@ fn editing_settings(ui: &mut Ui, p: &Palette, policy: &mut Substitution) {
 }
 
 /// Page actions shared by the sidebar menu and a thumbnail's context menu.
+fn reorder_destination(from: usize, hovered: usize, after: bool, count: usize) -> usize {
+    let slot=hovered+usize::from(after);
+    slot.saturating_sub(usize::from(from<slot)).min(count.saturating_sub(1))
+}
+
 fn page_menu(
     ui: &mut Ui,
     p: &Palette,
@@ -6206,6 +6231,15 @@ mod tests {
             assert_eq!(app.doc.as_ref().unwrap().explicit_page, Some(expected));
             tool_frame(&mut app, &ctx, vec![], 2);
         }
+    }
+    #[test]
+    fn page_insertion_destinations_account_for_removed_source() {
+        assert_eq!(reorder_destination(0,2,false,4),1);
+        assert_eq!(reorder_destination(0,2,true,4),2);
+        assert_eq!(reorder_destination(3,1,false,4),1);
+        assert_eq!(reorder_destination(3,1,true,4),2);
+        assert_eq!(reorder_destination(1,1,false,4),1);
+        assert_eq!(reorder_destination(1,1,true,4),1);
     }
     #[test]
     fn thumbnail_drag_dispatches_page_move() {
