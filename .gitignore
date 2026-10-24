@@ -1,5 +1,6 @@
 # Build
 /target/
+/dist/
 
 # Binaries fetched at build time
 pdfium.dll

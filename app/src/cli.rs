@@ -20,6 +20,7 @@ const COMMANDS: &[&str] = &[
     "stamp",
     "bates",
 ];
+pub const VERSION: &str = concat!("PDF Editor ", env!("CARGO_PKG_VERSION"));
 #[derive(Debug)]
 struct Command {
     name: String,
@@ -170,6 +171,11 @@ fn parse(args: Vec<OsString>) -> Result<Command, String> {
 /// Recognized headless commands bypass all window creation. Bare PDF paths remain GUI inputs.
 pub fn dispatch(args: Vec<OsString>) -> Option<i32> {
     let first = args.first()?.to_str()?;
+    if matches!(first, "--version" | "-V") {
+        if args.len() != 1 { return Some(2); }
+        println!("{VERSION}");
+        return Some(0);
+    }
     if matches!(
         first,
         "shell-open" | "shell-merge" | "shell-compress" | "shell-export"
@@ -203,6 +209,9 @@ pub fn dispatch(args: Vec<OsString>) -> Option<i32> {
     Some(run(args))
 }
 pub fn run(args: Vec<OsString>) -> i32 {
+    if args.first().is_some_and(|a| a == "--version" || a == "-V") {
+        return dispatch(args).unwrap_or(2);
+    }
     if args.first().is_some_and(|a| a == "--help" || a == "-h") {
         println!("{HELP}");
         return 0;
@@ -390,6 +399,13 @@ fn execute(engine: &Engine, c: Command) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn version_dispatch_is_headless_and_rejects_extra_arguments() {
+        assert_eq!(VERSION,format!("PDF Editor {}",env!("CARGO_PKG_VERSION")));
+        assert_eq!(dispatch(vec!["--version".into()]),Some(0));
+        assert_eq!(run(vec!["-V".into()]),0);
+        assert_eq!(dispatch(vec!["--version".into(),"extra".into()]),Some(2));
+    }
     fn args(a: &[&str]) -> Vec<OsString> {
         a.iter().map(OsString::from).collect()
     }

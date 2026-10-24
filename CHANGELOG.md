@@ -3,6 +3,7 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Add headless `--version` output and checked portable release packaging with build details, licenses and SHA-256 checksums.
 - Make image import, image-queue and signature messages dismissible using consistent tool controls.
 - Match unchanged comparison pages around insertions and deletions, show actual original/revised page numbers, and offer explicit page-number matching.
 - Run all import/export and page-insertion file pickers in background jobs; capture input options, prevent duplicate jobs, and discard cancelled or closed-tool results.

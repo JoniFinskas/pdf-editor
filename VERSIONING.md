@@ -46,3 +46,12 @@ as `0.4.0-rc.1`.
 4. Commit only these changes as `chore: release vX.Y.Z`.
 5. Create an annotated tag `vX.Y.Z` on that commit. Publishing the tag or a
    release build is a separate step.
+6. Build with `cargo build --release --workspace --locked --offline -j 1`, then
+   run `./scripts/package-release.ps1` from a clean checkout. It verifies the
+   console binary's version without opening a window, includes licenses and
+   source/build details, and writes a portable folder, ZIP and SHA-256 manifest
+   under ignored `dist/`. Existing versioned packages are never overwritten.
+
+`pdf-editor-cli.exe --version` prints the workspace version. The desktop also
+shows it in Settings and the status bar. Packaging does not install the app,
+change file associations, access documents, download dependencies or publish files.
