@@ -5184,6 +5184,7 @@ fn round_rect(rect: Rect, ppp: f32) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    include!("workflow_tests.rs");
     use super::*;
 
     #[test]

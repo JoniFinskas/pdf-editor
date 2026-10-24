@@ -3,6 +3,7 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Exercise editing controls through real PDF workers, including cross-tab paste and save/reopen.
 
 ## [0.2.3] - 2026-10-24
 - Batch predictable text cursor repairs and anchor eligible text chains to avoid repeated whole-page reparsing.
