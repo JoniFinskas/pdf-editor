@@ -2401,6 +2401,11 @@ impl EditorApp {
                 ui.checkbox(&mut self.snap_enabled, "Snap").on_hover_text("Align object edges and centers to the page and other objects. Hold Alt to bypass.");
                 widgets::divider(ui, p, 22.0);
                 if Btn::new("Compare PDFs").id("compare-visible").height(30.0).show(ui, p).clicked() { self.open_tool(Tool::Compare); }
+                if Btn::new(self.recovery_status()).id("recovery-status").height(30.0)
+                    .tip("Recovery copies protect applied edits after a crash. Open recovery settings.")
+                    .show(ui,p).clicked() {
+                    self.commit_edit(); self.settings_open = true; self.settings_tab = SettingsTab::General;
+                }
                 ui.label(RichText::new(if moving { "Drag to move  /  corner handles resize  /  right-click for actions" } else { "Click text to edit  /  drag empty space to pan" }).small().color(p.muted));
             });
         } else {
@@ -3802,6 +3807,20 @@ impl EditorApp {
                 orphan.discard();
             }
         }
+    }
+
+    /// Distinguishes applied snapshots from drafts still being typed.
+    fn recovery_status(&self) -> &'static str {
+        if self.doc.as_ref().is_some_and(|d| d.protected) { return "Recovery disabled"; }
+        if self.autosave.0.is_none() { return "Recovery off"; }
+        if self.session.is_none() || self.session_error.is_some() { return "Recovery unavailable"; }
+        if let Some(doc) = &self.doc {
+            if doc.edit.as_ref().is_some_and(|e| e.text != e.line.text) { return "Draft not applied"; }
+            if doc.copying { return "Writing recovery…"; }
+            if doc.dirty() && doc.copied_generation == Some(doc.generation) { return "Recovery saved"; }
+            if doc.dirty() { return "Recovery pending"; }
+        }
+        "Recovery on"
     }
 
     /// Writes a recovery copy once unsaved edits are one interval old.

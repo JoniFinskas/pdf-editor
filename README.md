@@ -432,3 +432,8 @@ arrow keys select a result and Enter opens it. Reset clears search and category.
 Enable **Snap** above the document for alignment guides while moving or resizing
 text, images and other objects. Edges and centers align with nearby objects and
 the page within six screen points. Hold **Alt** for free placement.
+
+The recovery button shows whether copies are off, unavailable, pending, writing
+or saved. Unapplied text is marked separately. Click it for interval settings.
+Recovery is enabled every two minutes by default for unprotected documents; it
+never replaces Save As or writes over the original.

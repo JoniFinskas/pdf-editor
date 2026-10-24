@@ -3,6 +3,7 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Show recovery status and link directly to its settings; verify crash restoration with real edited PDFs.
 - Add edge/center snapping and alignment guides for object moves and resize handles, with an Alt bypass.
 - Keep explicitly selected short pages active when scrolling cannot center them.
 - Deduplicate queued thumbnails and prioritize text selection data without crossing document changes.

@@ -39,7 +39,7 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
     once a later release passes the floor.
   - RUSTSEC-2026-0370, -0371 and -0372 are ignored for Linux-only AccessKit
     dependencies; remove the ignores once eframe's AccessKit moves to zbus 6.
-- **Interactive release acceptance.** Portable 0.2.x releases have automated
+- **Interactive release acceptance.** Portable 0.x releases have automated
   verification. Complete MANUAL_TEST.md before claiming full interactive
   acceptance or promoting the app to 1.0.0.
 

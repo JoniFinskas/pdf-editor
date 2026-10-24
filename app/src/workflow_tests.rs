@@ -1,6 +1,86 @@
 // Real worker/PDFium integration driven through egui pointer and keyboard events.
 // All files and configuration belong to generated test sessions.
 #[test]
+fn generated_recovery_snapshot_survives_crash_and_restores_unsaved_edits() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let folder = root.join(format!("target/recovery-workflow-{}", std::process::id()));
+    let fixture = root.join("tests/fixtures/generated/unicode-cid.pdf");
+    let original = std::fs::read(&fixture).unwrap();
+    let ctx = Context::default();
+    theme::install(&ctx);
+    let (mut app, _, _) = mock_app();
+    app.worker = Worker::spawn(
+        ctx.clone(),
+        root.join("target/debug/pdfium.dll"),
+        Substitution::Line,
+        Default::default(),
+    );
+    app.session = Some(Session::start_in(&folder).unwrap());
+    app.autosave = AutoSave(Some(1));
+    app.open_path(fixture.clone());
+    workflow_settle(&mut app, &ctx);
+    assert_eq!(app.recovery_status(), "Recovery on");
+    let at = workflow_line(&app, &ctx, 0);
+    workflow_click(&mut app, &ctx, at);
+    workflow_frame(
+        &mut app,
+        &ctx,
+        vec![workflow_key(Key::A, egui::Modifiers::COMMAND)],
+    );
+    workflow_frame(&mut app, &ctx, vec![egui::Event::Text("AB".into())]);
+    assert_eq!(app.recovery_status(), "Draft not applied");
+    workflow_click(&mut app, &ctx, pos2(950.0, 850.0));
+    workflow_settle(&mut app, &ctx);
+    assert_eq!(app.recovery_status(), "Recovery pending");
+    app.doc.as_mut().unwrap().next_copy = Some(0.0);
+    app.autosave_tick(&ctx);
+    assert_eq!(app.recovery_status(), "Writing recovery…");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app.doc.as_ref().unwrap().copying {
+        app.poll(&ctx);
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert_eq!(app.recovery_status(), "Recovery saved");
+    assert!(
+        recovery::orphans_in(&folder).is_empty(),
+        "Live sessions must not be offered for restoration"
+    );
+    // Dropping the lock without normal close simulates process termination.
+    drop(app.session.take());
+    let mut found = recovery::orphans_in(&folder);
+    assert_eq!(found.len(), 1);
+    let orphan = found.remove(0);
+    let copy = orphan.copy.clone();
+    app.restoring = Some(orphan);
+    app.open_path(copy.clone());
+    workflow_settle(&mut app, &ctx);
+    assert!(app.doc.as_ref().unwrap().dirty());
+    assert_eq!(
+        app.doc.as_ref().unwrap().pages[0]
+            .objects
+            .as_ref()
+            .unwrap()
+            .lines[0]
+            .text,
+        "AB"
+    );
+    let output = folder.join("restored-copy.pdf");
+    app.password_action(Request::SaveAs(output.clone()));
+    workflow_settle(&mut app, &ctx);
+    assert!(
+        !copy.exists(),
+        "Successful Save As cleans the recovered snapshot"
+    );
+    assert_eq!(std::fs::read(&fixture).unwrap(), original);
+    assert!(output.exists());
+    std::fs::remove_file(output).unwrap();
+    std::fs::remove_dir(&folder).unwrap();
+}
+
+#[test]
 fn canvas_snapping_matches_the_committed_move_and_can_be_bypassed() {
     for kind in ["Text", "Image", "Path"] {
         for (enabled, alt, expected_dx) in [

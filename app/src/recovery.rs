@@ -130,6 +130,10 @@ pub struct Session {
 impl Session {
     pub fn start() -> io::Result<Self> {
         let root = root().ok_or_else(|| io::Error::other("LOCALAPPDATA is not available"))?;
+        Self::start_in(&root)
+    }
+
+    pub(crate) fn start_in(root: &Path) -> io::Result<Self> {
         let dir = root.join(format!("{}-{}", std::process::id(), nanos()));
         fs::create_dir_all(&dir)?;
         let lock = open_lock(&dir.join(LOCK), true)?;
@@ -201,7 +205,11 @@ impl Orphan {
 /// finished sessions without a copy are removed.
 pub fn orphans() -> Vec<Orphan> {
     let Some(root) = root() else { return vec![] };
-    let Ok(entries) = fs::read_dir(&root) else {
+    orphans_in(&root)
+}
+
+pub(crate) fn orphans_in(root: &Path) -> Vec<Orphan> {
+    let Ok(entries) = fs::read_dir(root) else {
         return vec![];
     };
     let mut found = vec![];

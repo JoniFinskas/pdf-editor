@@ -767,3 +767,11 @@ fixed resize edges and minimum size. Keep raw pointer displacement separate from
 the snapped preview to prevent sticky accumulation. Apply the preview bounds only
 on release; reuse existing object transforms and undo. Alt and the Snap checkbox
 provide unsnapped placement. No dependency or document format changes are needed.
+
+## Recovery visibility
+
+Reuse the existing locked per-session recovery system and interval preference.
+Show applied-edit snapshot state separately from uncommitted text drafts; avoid
+claiming an active draft is protected by an older snapshot. Provide a direct
+settings entry. Test directory injection avoids accessing installed settings or
+recovery sessions during generated-PDF crash simulation.
