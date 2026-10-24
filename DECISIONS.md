@@ -659,3 +659,21 @@ Native picker acceptance controls only dialogs owned by the test process and
 records numeric timing data without window titles or screenshots. Opening and
 cancellation are covered; automated file selection remains unverified because
 the attempted native button activation did not complete selection.
+
+## Editing and comparison usability
+
+Apply existing-text drafts on a primary click outside the editor, including
+non-focusable canvas space. Keep spelling menus active without applying early.
+Retain the submitted draft until the worker confirms success; restore it after
+a failed edit. These changes affect the open document and undo history. File
+output remains explicit Save As, preserving the original.
+
+Fit the original and revised comparison previews together by default. Pair
+numbered outlines with change-list entries, distinguish added/removed/changed
+text by labels as well as color, and navigate directly between changed pages.
+Keep a same-page preview while a different overlay is being computed, with a
+loading indicator; never present an old page as the newly selected page.
+
+Constrain shared tool windows to the viewport. Scroll their content independently
+of the title and close button so long forms and export controls remain reachable
+at the minimum supported window size.
