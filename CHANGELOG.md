@@ -3,6 +3,8 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+
+## [0.2.0] - 2026-10-24
 - Add headless `--version` output and checked portable release packaging with build details, licenses and SHA-256 checksums.
 - Make image import, image-queue and signature messages dismissible using consistent tool controls.
 - Match unchanged comparison pages around insertions and deletions, show actual original/revised page numbers, and offer explicit page-number matching.
