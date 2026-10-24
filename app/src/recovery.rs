@@ -257,6 +257,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn interrupted_snapshot_keeps_the_previous_complete_recovery_copy() {
+        let root = std::env::temp_dir().join(format!("pdf-recovery-interrupted-{}", nanos()));
+        let mut session = Session::start_in(&root).unwrap();
+        let copy = session.next_path();
+        fs::write(&copy, b"generated complete snapshot").unwrap();
+        session
+            .written(copy.clone(), Path::new("generated.pdf"))
+            .unwrap();
+        fs::write(
+            session.dir.join(".pdf-editor-save-interrupted.tmp"),
+            b"partial",
+        )
+        .unwrap();
+        drop(session);
+        let found = orphans_in(&root);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].copy, copy);
+        assert_eq!(
+            fs::read(&found[0].copy).unwrap(),
+            b"generated complete snapshot"
+        );
+        found[0].discard();
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
     fn autosave_setting_round_trips_and_ignores_garbage() {
         let dir = std::env::temp_dir().join(format!("pdf-editor-autosave-{}", nanos()));
         let path = dir.join("app-settings.txt");

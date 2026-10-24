@@ -29,7 +29,7 @@ I/O, lopdf and PDFium errors intentionally discard internal diagnostic details.
 | `Document::undo` | Mutable document | Restores previous bytes; true on change, false on empty history. |
 | `Document::redo` | Mutable document | Restores next bytes; true on change, false on empty history. |
 | `Document::suggested_save_path` | Document | Original directory plus `<original-stem>_edited.pdf`. |
-| `Document::save_as` | Document, new PDF path | Writes and synchronizes a new file; rejects original path, existing files and alternate data-stream names. |
+| `Document::save_as` | Document, new PDF path | Flushes a temporary file before publishing the complete PDF; rejects original path, existing files and alternate data-stream names. |
 | `Substitution::config_path` | None | `%APPDATA%/PdfEditor/settings.txt`, or an error if APPDATA is unavailable. |
 | `Substitution::load` | Config path | Line or Document policy; absent file defaults to Line, invalid content returns an error. |
 | `Substitution::save` | Policy, config path | Writes a small config through an exclusively created temporary file and rename. |

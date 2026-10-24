@@ -775,3 +775,11 @@ Show applied-edit snapshot state separately from uncommitted text drafts; avoid
 claiming an active draft is protected by an older snapshot. Provide a direct
 settings entry. Test directory injection avoids accessing installed settings or
 recovery sessions during generated-PDF crash simulation.
+
+## Complete save publication
+
+Write PDFs to exclusively created temporary files in the destination directory,
+flush them, then publish without replacing existing files. Windows uses a
+same-directory move without replacement; other platforms use an exclusive hard
+link. Failed writes remove their temporary file. Interrupted writes cannot appear
+as completed recovery snapshots, and the previous snapshot remains available.

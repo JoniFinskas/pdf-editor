@@ -12,6 +12,7 @@ mod bookmarks;
 pub use bookmarks::{Bookmark, BookmarkEdit, BookmarkSet};
 
 mod annotations;
+mod save;
 mod change_state;
 pub use annotations::{Annotation, Markup, MarkupKind};
 mod compression;
@@ -535,16 +536,13 @@ impl Document {
         {
             return Err(err("Save As cannot use the original path"));
         }
-        // Exclusive creation rejects originals, existing files, hard links and symlinks alike.
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .map_err(|_| {
+        save::write_new(path, &self.bytes).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
                 err("Save As requires a new filename; existing files are never overwritten")
-            })?;
-        file.write_all(&self.bytes)?;
-        file.sync_all()?;
+            } else {
+                error.into()
+            }
+        })?;
         Ok(())
     }
 }
