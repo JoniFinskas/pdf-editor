@@ -451,3 +451,9 @@ Portable distribution builds use `scripts/build-release.ps1` to remap compiler
 paths. `scripts/package-release.ps1` validates an explicit file set and binary
 strings before promoting a package from staging. The portable README covers
 application usage; development reports and fixtures are not distributed.
+
+
+Object interaction: click text, an image or artwork once to select it. Drag the
+selection to move it, use its square handles to resize it, and press Delete to
+remove it. Double-click text to type; Delete then edits characters normally.
+Click outside the text editor to apply changes and dismiss its toolbar.

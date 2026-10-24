@@ -1058,6 +1058,7 @@ impl EditorApp {
     }
 
     fn cancel_edit(&mut self) {
+        self.text_tool.selection.clear();
         if let Some(doc) = &mut self.doc {
             doc.edit = None;
         }
@@ -1073,6 +1074,7 @@ impl EditorApp {
             return false;
         };
         if edit.text == edit.line.text {
+            self.text_tool.selection.clear();
             return false;
         }
         // A focus change must not repeatedly submit a draft already rejected.
@@ -1375,7 +1377,7 @@ impl EditorApp {
                 };
                 self.doc = Some(DocView {
                     panning: false,
-                    object_mode: false,
+                    object_mode: true,
                     selected_item: None,
                     dragging_item: None,
                     protected,
@@ -2409,7 +2411,7 @@ impl EditorApp {
         self.tables.selecting = false;
         self.text_tool.selection.clear();
         if let Some(doc) = &mut self.doc {
-            doc.object_mode = enabled;
+            doc.object_mode = true;
             doc.dragging_item = None;
             if enabled { doc.reopen = selection; }
             else { doc.selected_item = None; }
@@ -2429,12 +2431,7 @@ impl EditorApp {
                     self.tools_open = !self.tools_open;
                 }
                 self.document_tools(ui, p);
-                let moving = self.doc.as_ref().is_some_and(|d| d.object_mode);
-                for (label, key, enabled) in [("Edit text", "mode-text", false), ("Move / resize objects", "mode-objects", true)] {
-                    if Btn::new(label).id(key).height(30.0)
-                        .look(if moving == enabled { Look::Active } else { Look::Ghost })
-                        .enabled(self.busy == 0).show(ui, p).clicked() { self.set_object_mode(enabled); }
-                }
+                ui.label(RichText::new("Click to select / Double-click text to edit").small().color(p.muted));
                 ui.checkbox(&mut self.snap_enabled, "Snap").on_hover_text("Align edges and centers, center on the page, and match gaps between objects. Hold Alt to move freely; turn Snap off to disable guides and snapping.");
                 widgets::divider(ui, p, 22.0);
                 if Btn::new("Compare PDFs").id("compare-visible").height(30.0).show(ui, p).clicked() { self.open_tool(Tool::Compare); }
@@ -2443,7 +2440,7 @@ impl EditorApp {
                     .show(ui,p).clicked() {
                     self.commit_edit(); self.settings_open = true; self.settings_tab = SettingsTab::General;
                 }
-                ui.label(RichText::new(if moving { "Drag to move  /  corner handles resize  /  right-click for actions" } else { "Click text to edit  /  drag empty space to pan" }).small().color(p.muted));
+                ui.label(RichText::new("Drag to move / handles resize / Delete removes selection").small().color(p.muted));
             });
         } else {
             self.home_bar(ui, p);
@@ -2813,8 +2810,6 @@ impl EditorApp {
 
     fn status_bar(&mut self, ui: &mut Ui, p: &Palette) {
         let Some(doc) = &self.doc else { return };
-        let mut object_mode = doc.object_mode;
-        let can_switch = self.busy == 0;
         let (current, total) = (doc.current_page + 1, doc.pages.len());
         let hint = if doc.edit.is_some() {
             "Enter or click away applies \u{b7} Esc cancels"
@@ -2826,10 +2821,6 @@ impl EditorApp {
         let zoom = format!("{:.0}%", doc.zoom * 100.0);
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.add_enabled_ui(can_switch, |ui| {
-                ui.toggle_value(&mut object_mode, "Objects")
-                    .on_hover_text("Select and drag text, images or vector artwork; right-click to duplicate or delete");
-            });
             ui.label(RichText::new("Page").color(p.muted));
             if Btn::new(&current.to_string()).id("go-to-page").height(28.0)
                 .tip("Go to page (Ctrl+G)").show(ui,p).clicked() { self.page_jump.open_at(current - 1); }
@@ -2873,9 +2864,6 @@ impl EditorApp {
                     .on_hover_text("PDF Editor version");
             });
         });
-        if self.doc.as_ref().is_some_and(|doc| object_mode != doc.object_mode) {
-            self.set_object_mode(object_mode);
-        }
     }
 
     /// Home page: open card and recent files, or the recent list alone.
@@ -3303,7 +3291,6 @@ impl EditorApp {
                 // Expose the existing lossless ungroup operation at the point
                 // of editing, then reopen the clicked text after the refresh.
                 if hit.is_none()
-                    && !doc.object_mode
                     && doc.edit.is_none()
                     && !self.drawing.active
                     && !self.text_tool.adding
@@ -3325,8 +3312,8 @@ impl EditorApp {
                             Stroke::new(1.0, p.accent),
                             StrokeKind::Outside,
                         );
-                        ctx.set_cursor_icon(CursorIcon::Text);
-                        if response.clicked() {
+                        ctx.set_cursor_icon(CursorIcon::Grab);
+                        if response.double_clicked() || response.triple_clicked() {
                             doc.reopen = Some((index, at));
                             self.busy += 1;
                             requests.push(Request::PrepareGroupedText(item.clone()));
@@ -3337,7 +3324,7 @@ impl EditorApp {
                     let at = (if response.drag_started() {
                         ctx.input(|i| i.pointer.press_origin())
                     } else {
-                        response.interact_pointer_pos()
+                        response.interact_pointer_pos().or_else(|| response.hover_pos())
                     })
                     .map(|pos| ((pos - rect.min) / scale).to_pos2());
                     let item_hit = page.objects.as_ref().and_then(|objects| {
@@ -3349,6 +3336,9 @@ impl EditorApp {
                             })
                         })
                     });
+                    if item_hit.is_some() && doc.edit.is_none() && response.hovered() {
+                        ctx.set_cursor_icon(CursorIcon::Grab);
+                    }
                     let resize_handle = doc
                         .selected_item
                         .as_ref()
@@ -3367,6 +3357,7 @@ impl EditorApp {
                         && (response.clicked() || response.secondary_clicked())
                     {
                         doc.selected_item = item_hit.cloned();
+                        if doc.edit.is_none() { self.text_tool.selection.clear(); }
                         if doc.edit.as_ref().is_none_or(|e| e.text == e.line.text) {
                             doc.edit = None;
                         }
@@ -3482,7 +3473,7 @@ impl EditorApp {
                     if response.drag_stopped() {
                         doc.panning = false;
                     }
-                    if doc.object_mode
+                    if doc.object_mode && doc.edit.is_none()
                         && let Some(item) = &doc.selected_item
                         && item.page == page_no
                         && let Some(objects) = &page.objects
@@ -3584,8 +3575,7 @@ impl EditorApp {
                     self.tool_anchor = Some(Rect::from_center_size(at, vec2(10.0, 10.0)));
                 }
                 if let Some(line) = hit.filter(|_| {
-                    !doc.object_mode
-                        && !self.text_tool.adding
+                    !self.text_tool.adding
                         && !self.drawing.active
                         && !table_selecting
                 }) {
@@ -3597,9 +3587,9 @@ impl EditorApp {
                             Stroke::new(1.0, p.accent),
                             StrokeKind::Outside,
                         );
-                        ctx.set_cursor_icon(CursorIcon::Text);
+                        ctx.set_cursor_icon(if doc.edit.is_some() { CursorIcon::Text } else { CursorIcon::Grab });
                     }
-                    if response.clicked() && !busy && !editing_this(line) {
+                    if (response.double_clicked() || response.triple_clicked() || (!doc.object_mode && response.clicked())) && !busy && !editing_this(line) {
                         let chosen = if ctx.input(|i| i.modifiers.alt) && line.paragraph.is_some() {
                             let items = page
                                 .objects
@@ -4959,9 +4949,6 @@ fn edit_box(
         Stroke::new(1.5, p.accent),
         StrokeKind::Outside,
     );
-    for corner in [rect.left_top(), rect.right_bottom()] {
-        painter.circle(corner, 3.5, Color32::WHITE, Stroke::new(1.5, p.accent));
-    }
 
     if !edit.focus
         && edit.line.paragraph.is_some()
@@ -5771,6 +5758,8 @@ mod tests {
                     vec![egui::Event::PointerMoved(start), button(start, true)],
                 );
                 frame(&mut app, &ctx, vec![button(start, false)]);
+                frame(&mut app, &ctx, vec![button(start, true)]);
+                frame(&mut app, &ctx, vec![button(start, false)]);
                 assert!(
                     inbox
                         .try_iter()
@@ -5798,9 +5787,11 @@ mod tests {
                     vec![egui::Event::PointerMoved(start), button(start, true)],
                 );
                 frame(&mut app, &ctx, vec![button(start, false)]);
+                frame(&mut app, &ctx, vec![button(start, true)]);
+                frame(&mut app, &ctx, vec![button(start, false)]);
                 assert!(
                     app.doc.as_ref().unwrap().edit.is_some(),
-                    "A text click must open the editor"
+                    "A text double-click must open the editor"
                 );
                 frame(&mut app, &ctx, vec![egui::Event::Text("updated".into())]);
                 assert!(
@@ -6155,6 +6146,9 @@ mod tests {
         ));
         app.busy = 0;
         tool_frame(&mut app, &ctx, vec![], 1);
+        app.text_tool.selection = vec![glyph("chosen", 10.0, 50.0).0];
+        tool_frame(&mut app, &ctx, vec![], 1);
+        tool_frame(&mut app, &ctx, vec![], 1);
         let at = tool_center(&ctx, "delete-object");
         tool_frame(&mut app, &ctx, click_at(at), 1);
         assert!(matches!(inbox.try_recv().unwrap(), Request::DeleteText(_)));
@@ -6284,7 +6278,7 @@ mod tests {
                 assert!(rect.min.x >= 0.0 && rect.max.x <= width, "{key}: {rect:?}");
                 assert!(rect.max.y <= 56.0, "{key} wrapped: {rect:?}");
             }
-            for key in ["all-tools", "recent", "mode-text", "mode-objects", "compare-visible"] {
+            for key in ["all-tools", "recent", "compare-visible"] {
                 let rect = ctx.read_response(widgets::tool_id(key)).unwrap().rect;
                 assert!(rect.min.x >= 0.0 && rect.max.x <= width, "{key}: {rect:?}");
             }
@@ -6583,12 +6577,13 @@ mod tests {
             output.textures_delta.clear();
         };
         frame(&mut app, vec![]); frame(&mut app, vec![]);
-        for (key, moving) in [("mode-objects", true), ("mode-text", false)] {
+        for requested in [true, false] {
             app.drawing.active = true;
             app.tables.selecting = true;
             app.text_tool.adding = true;
-            frame(&mut app, click_at(tool_center(&ctx, key)));
-            assert_eq!(app.doc.as_ref().unwrap().object_mode, moving);
+            app.set_object_mode(requested);
+            frame(&mut app, vec![]);
+            assert!(app.doc.as_ref().unwrap().object_mode);
             assert!(!app.drawing.active && !app.tables.selecting && !app.text_tool.adding);
         }
         frame(&mut app, click_at(tool_center(&ctx, "compare-visible")));

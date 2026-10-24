@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Use direct object selection and movement without a mode toggle; double-click text to type, with clear grab cursors and functional selection handles. Dismiss the text toolbar when editing ends.
+
 - Navigate Find matches with Enter and Shift+Enter without losing search focus; Escape closes Find.
 
 - Stop failed text drafts from resubmitting on focus changes and trapping document operations in a busy loop.

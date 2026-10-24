@@ -23,7 +23,7 @@ fn generated_recovery_snapshot_survives_crash_and_restores_unsaved_edits() {
     workflow_settle(&mut app, &ctx);
     assert_eq!(app.recovery_status(), "Recovery on");
     let at = workflow_line(&app, &ctx, 0);
-    workflow_click(&mut app, &ctx, at);
+    workflow_edit(&mut app, &ctx, at);
     workflow_frame(
         &mut app,
         &ctx,
@@ -301,6 +301,10 @@ fn workflow_click(app: &mut EditorApp, ctx: &Context, at: Pos2) {
     workflow_frame(app, ctx, events[..2].to_vec());
     workflow_frame(app, ctx, events[2..].to_vec());
 }
+fn workflow_edit(app: &mut EditorApp, ctx: &Context, at: Pos2) {
+    workflow_click(app,ctx,at);
+    workflow_click(app,ctx,at);
+}
 
 fn workflow_key(key: Key, modifiers: egui::Modifiers) -> egui::Event {
     egui::Event::Key {
@@ -420,7 +424,7 @@ fn generated_workflow_edits_moves_resizes_copies_and_saves_through_real_workers(
     };
     let (mut source, ctx) = create();
     let at = workflow_line(&source, &ctx, 0);
-    workflow_click(&mut source, &ctx, at);
+    workflow_edit(&mut source, &ctx, at);
     assert!(source.doc.as_ref().unwrap().edit.is_some());
     workflow_frame(
         &mut source,
@@ -567,4 +571,38 @@ fn generated_workflow_edits_moves_resizes_copies_and_saves_through_real_workers(
     );
     assert_eq!(std::fs::read(fixture).unwrap(), original);
     std::fs::remove_file(output).unwrap();
+}
+
+#[test]
+fn direct_object_selection_exposes_move_cursor_and_delete_key() {
+    for kind in ["Text","Image","Path","XObjectForm"] {
+        let ctx=Context::default();
+        theme::install(&ctx);
+        let (mut app,inbox,_)=mock_app();
+        opened(&mut app,&ctx);
+        app.handle(&ctx,Reply::Objects { generation:1,page:0,
+            transform:PageTransform::identity(),objects:vec![],
+            items:vec![pdf_editor_core::PageItem {page:0,index:0,revision:1,
+                kind:kind.into(),bounds:pdf_editor_core::Bounds {
+                    left:30.0,bottom:30.0,right:100.0,top:80.0
+                }}] });
+        let frame=|app:&mut EditorApp,events| { let mut output=ctx.run_ui(egui::RawInput {
+            events,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,vec2(600.0,700.0))),
+            ..Default::default()
+        },|ui| {let p=theme::palette(ui);egui::CentralPanel::default().show(ui,|ui|app.canvas(ui,&p));}); output.textures_delta.clear(); output };
+        frame(&mut app,vec![]);
+        frame(&mut app,vec![]);
+        inbox.try_iter().for_each(drop);
+        let at=ctx.read_response(Id::new(("pdf-page",0usize))).unwrap().rect.min
+            +vec2(60.0,50.0)*PT_TO_UI;
+        let hover=frame(&mut app,vec![egui::Event::PointerMoved(at)]);
+        assert_eq!(hover.platform_output.cursor_icon,CursorIcon::Grab,"{kind}");
+        frame(&mut app,click_at(at));
+        frame(&mut app,vec![]);
+        assert!(app.doc.as_ref().unwrap().selected_item.is_some(),"{kind}");
+        assert!(app.doc.as_ref().unwrap().edit.is_none());
+        frame(&mut app,vec![workflow_key(Key::Delete,egui::Modifiers::NONE)]);
+        assert!(inbox.try_iter().any(|r|matches!(r,Request::EditItems(items,
+            pdf_editor_core::ObjectAction::Delete) if items.len()==1)),"{kind}");
+    }
 }
