@@ -155,7 +155,10 @@ existing files and the original path are never overwritten.
 
 ## Daily and extra tools
 
-**Compare PDFs** fits Original and Revised side by side. Numbered text outlines
+**Compare PDFs** preselects the open document as the original and compares
+automatically after a second PDF is chosen. Either file can be changed. Review
+controls appear with the results, showing Original and Revised side by side.
+Numbered text outlines
 match the change list. Read the original (−) and revised (+) excerpts, click a
 highlight on either page, or use Previous/Next change to bring it into view.
 Include unchanged pages when reviewing the whole document. Previous/Next changed

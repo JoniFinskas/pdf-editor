@@ -5,6 +5,7 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 ## [Unreleased]
 
 - Default font substitution to the whole document while preserving saved preferences.
+- Start comparisons from the open PDF, compare automatically after selecting the other file, and reserve a full-height review area for results.
 
 - Publish Save As and recovery PDFs only after their contents have been written and flushed.
 - Find tools by familiar terms such as checkbox, JPEG, spreadsheet and DOCX; close the catalog after choosing a tool.

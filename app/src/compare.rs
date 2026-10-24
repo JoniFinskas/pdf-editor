@@ -99,7 +99,10 @@ fn start(
             delivered
         };
         let setup = || -> pdf_editor_core::Result<_> {
+            #[cfg(not(test))]
             let exe = std::env::current_exe()?;
+            #[cfg(test)]
+            let exe = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/debug/pdf-editor.exe");
             let lib = exe
                 .parent()
                 .ok_or_else(|| pdf_editor_core::Error("Program folder unavailable".into()))?
@@ -238,6 +241,24 @@ pub struct Compare {
     error: Option<String>,
 }
 impl Compare {
+    pub fn open_for(&mut self, source: Option<PathBuf>) {
+        if !self.open && let Some(source) = source {
+            if self.paths[0].as_ref() != Some(&source) {
+                self.clear_results();
+                self.paths = [Some(source), None];
+            }
+        }
+        self.open = true;
+    }
+
+    fn begin(&mut self, ctx: &egui::Context) {
+        let [Some(a), Some(b)] = &self.paths else { return; };
+        let paths = [a.clone(), b.clone()];
+        self.clear_results();
+        self.selected = 0;
+        self.session = Some(start(paths, std::mem::take(&mut self.passwords), ctx.clone(), self.by_number));
+    }
+
     fn clear_results(&mut self) {
         self.session = None;
         self.textures = [None, None];
@@ -264,6 +285,7 @@ impl Compare {
         if let Some(path) = self.picker.poll(ctx, self.open, true) {
             self.paths[self.picker_side] = Some(path);
             self.clear_results();
+            self.begin(ctx);
         }
         if !self.open {
             self.close_session();
@@ -342,37 +364,36 @@ impl Compare {
             self.session = None;
         }
         let mut open = self.open;
-        ToolWindow::new("Compare PDFs", Icon::Layers)
-            .width((ctx.content_rect().width() - 80.0).clamp(300.0, 1100.0))
-            .centered().show(ctx, p, &mut open, |ui| {
-                widgets::hint(ui, p, "Choose two saved PDFs. Review changes side by side; neither file is modified. Save any edits before comparing.");
-                ui.horizontal_wrapped(|ui| {
-                    for i in 0..2 {
-                        let label = if i == 0 { "Choose original" } else { "Choose revised" };
-                        if Btn::new(label).enabled(!self.picker.busy()).show(ui,p).clicked() {
+        let mut window = ToolWindow::new("Compare PDFs", Icon::Layers)
+            .width((ctx.content_rect().width() - 80.0).clamp(300.0, 1100.0));
+        if !self.summaries.is_empty() { window = window.height(ctx.content_rect().height() - 100.0); }
+        window.centered().show(ctx, p, &mut open, |ui| {
+                widgets::hint(ui, p, "Compare two saved versions. The open PDF is selected as the original. Unsaved edits are not included.");
+                for i in 0..2 {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.strong(if i == 0 { "Original" } else { "Compare with" });
+                        ui.add(egui::Label::new(self.paths[i].as_ref().and_then(|path| path.file_name())
+                            .map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| "Choose a PDF".into())).truncate());
+                        let label = if self.paths[i].is_some() { "Change file…" } else { "Choose PDF…" };
+                        if Btn::new(label).id(if i == 0 { "compare-original" } else { "compare-revised" })
+                            .look(if self.paths[i].is_none() { Look::Active } else { Look::Ghost })
+                            .enabled(!self.picker.busy()).show(ui,p).clicked() {
                             self.picker_side = i;
                             self.picker.launch(|| rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file());
                         }
-                        ui.add(egui::Label::new(self.paths[i].as_ref().and_then(|path| path.file_name())
-                            .map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| "No file selected".into())).truncate());
-                    }
-                    self.picker.feedback(ui, p);
-                });
-                ui.horizontal_wrapped(|ui| {
-                    ui.collapsing("Passwords (optional)", |ui| {
-                        for i in 0..2 {
-                            ui.label(if i == 0 { "Original password" } else { "Revised password" });
-                            ui.add(egui::TextEdit::singleline(&mut self.passwords[i]).password(true).desired_width(130.0));
-                        }
                     });
-                    ui.checkbox(&mut self.by_number,"Match page numbers only").on_hover_text("Leave off to match unchanged pages around inserted or removed pages. Modified gaps are paired in order.");
-                    if Btn::new("Compare").id("compare-start").enabled(!self.picker.busy() && self.paths.iter().all(Option::is_some)).show(ui,p).clicked()
-                        && let [Some(a), Some(b)] = &self.paths {
-                        self.session = Some(start([a.clone(), b.clone()], std::mem::take(&mut self.passwords), ctx.clone(), self.by_number));
-                        self.summaries.clear(); self.pairs.clear(); self.alignment_progress=None; self.alignment_note=None; self.errors.clear(); self.error = None;
-                        self.selected = 0; self.waiting = false; self.requested = None;
-                        self.textures = [None, None]; self.displayed = None;
-                        self.regions.clear(); self.focused_region = None;
+                }
+                self.picker.feedback(ui, p);
+                ui.collapsing("Options and passwords", |ui| {
+                    ui.checkbox(&mut self.by_number,"Match page numbers instead of page content");
+                    for i in 0..2 {
+                        ui.horizontal(|ui| {
+                            ui.label(if i == 0 { "Original password" } else { "Other file password" });
+                            ui.add(egui::TextEdit::singleline(&mut self.passwords[i]).password(true).desired_width(150.0));
+                        });
+                    }
+                    if Btn::new("Compare again").id("compare-start").enabled(!self.picker.busy() && self.paths.iter().all(Option::is_some)).show(ui,p).clicked() {
+                        self.begin(ctx);
                     }
                 });
                 if let Some(error) = self.error.clone() {
@@ -384,6 +405,12 @@ impl Compare {
                 }
                 if let Some((done,total))=self.alignment_progress {ui.label(format!("Matching pages {done} / {total}…"));}
                 if let Some(note)=&self.alignment_note {ui.colored_label(p.warn_fg,note);}
+                if self.summaries.is_empty() {
+                    widgets::hint(ui,p, if self.session.is_some() { "Comparing the two PDFs…" }
+                        else if self.paths[0].is_some() { "Choose the other PDF above. Comparison starts automatically." }
+                        else { "Choose the original PDF, then the file to compare it with." });
+                    return;
+                }
                 ui.separator();
                 ui.horizontal_wrapped(|ui| {
                     for (label, overlay) in [("Text changes", false), ("Visual changes", true)] {
@@ -711,6 +738,38 @@ impl Compare {
 mod tests {
     use super::*;
     #[test]
+    fn choosing_other_generated_pdf_starts_comparison_and_displays_results() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+        let fixture = root.join("tests/fixtures/generated/unicode-cid.pdf");
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut compare = Compare::default();
+        compare.open_for(Some(fixture.clone()));
+        assert_eq!(compare.paths[0].as_ref(), Some(&fixture));
+        assert!(compare.paths[1].is_none());
+        for (other, changed) in [(fixture, false), (root.join("tests/fixtures/generated/multi-page.pdf"), true)] {
+          compare.picker_side = 1;
+          compare.picker.launch(move || Some(other));
+          let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+          loop {
+            let mut output = ctx.run_ui(egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0))),
+                ..Default::default()
+            }, |ui| compare.show(&ctx, &crate::theme::palette(ui)));
+            output.textures_delta.clear();
+            assert!(compare.error.is_none(), "Generated comparison failed");
+            if !compare.picker.busy() && compare.displayed.is_some() && compare.summaries.iter().all(Option::is_some) { break; }
+            assert!(std::time::Instant::now() < deadline, "Comparison did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+          }
+          assert!(compare.textures.iter().all(Option::is_some));
+          assert_eq!(compare.changed_pixels > 0, changed);
+          assert_eq!(!compare.regions.is_empty(), changed);
+        }
+        compare.open = false;
+        compare.close_session();
+    }
+    #[test]
     fn preview_mode_switches_reuse_pristine_rasters_and_retry_failed_loads() {
         let make = || ComparePage {
             left: Some(pdf_editor_core::Image { width: 1, height: 1, rgba: vec![255; 4] }),
@@ -750,7 +809,9 @@ mod tests {
             output.textures_delta.clear();
         };
         let click = |compare: &mut Compare, id| {
-            let at = ctx.read_response(id).unwrap().rect.center();
+            let response = ctx.read_response(id).unwrap();
+            assert!(response.interact_rect.is_positive(), "Control clipped: {:?} / {:?}", response.rect, response.interact_rect);
+            let at = response.interact_rect.center();
             for pressed in [true, false] {
                 frame(compare, vec![egui::Event::PointerMoved(at), egui::Event::PointerButton {
                     pos: at, pressed, button: egui::PointerButton::Primary, modifiers: egui::Modifiers::NONE,
@@ -758,13 +819,12 @@ mod tests {
             }
         };
         for _ in 0..3 { frame(&mut compare, vec![]); }
+        click(&mut compare, egui::Id::new(("compare-region", 0u16, 1usize, 1usize)));
+        assert_eq!(compare.focused_region, Some(1));
         click(&mut compare, widgets::tool_id("compare-change-next"));
         assert_eq!(compare.focused_region, Some(0));
         click(&mut compare, widgets::tool_id("compare-change-prev"));
         assert_eq!(compare.focused_region, Some(1));
-        frame(&mut compare, vec![]);
-        click(&mut compare, egui::Id::new(("compare-region", 0u16, 1usize, 0usize)));
-        assert_eq!(compare.focused_region, Some(0));
         compare.regions.clear();
         compare.step_change(true);
     }

@@ -2302,7 +2302,7 @@ impl EditorApp {
             Tool::Stamps => self.stamps.open = true,
             Tool::Compress => self.compression.open = true,
             Tool::Sanitize => self.sanitize.open = true,
-            Tool::Compare => self.compare.open = true,
+            Tool::Compare => self.compare.open_for(self.doc.as_ref().map(|doc| doc.source.clone())),
             Tool::Privacy => {
                 self.privacy.open = true;
             }

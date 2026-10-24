@@ -492,6 +492,7 @@ pub struct ToolWindow<'a> {
     icon: Icon,
     width: f32,
     centered: bool,
+    height: Option<f32>,
 }
 
 impl<'a> ToolWindow<'a> {
@@ -501,11 +502,17 @@ impl<'a> ToolWindow<'a> {
             icon,
             width: 400.0,
             centered: false,
+            height: None,
         }
     }
 
     pub fn width(mut self, width: f32) -> Self {
         self.width = width;
+        self
+    }
+
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height);
         self
     }
 
@@ -542,7 +549,7 @@ impl<'a> ToolWindow<'a> {
                 color: p.page_shadow,
             });
         let mut close = false;
-        Window::new(self.title)
+        let mut window = Window::new(self.title)
             .id(Id::new(("tool-window", self.title)))
             .title_bar(false)
             .collapsible(false)
@@ -550,8 +557,14 @@ impl<'a> ToolWindow<'a> {
             .pivot(pivot)
             .default_pos(at)
             .constrain_to(screen.shrink(8.0))
-            .frame(frame)
-            .show(ctx, |ui| {
+            .frame(frame);
+        if let Some(height) = self.height {
+            window = window.fixed_size(vec2(
+                self.width.min((screen.width() - 72.0).max(120.0)),
+                height.min((screen.height() - 100.0).max(120.0)),
+            ));
+        }
+        window.show(ctx, |ui| {
                 ui.set_width(self.width.min((screen.width() - 72.0).max(120.0)));
                 ui.spacing_mut().item_spacing.y = 6.0;
                 ui.horizontal(|ui| {

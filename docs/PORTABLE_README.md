@@ -25,8 +25,10 @@ recognize text with installed Windows OCR languages; print.
 
 ## Compare two versions
 
-Choose **Compare PDFs** in the toolbar, select the original and revised saved
-files, then select **Compare**. Save pending edits before comparing.
+Choose **Compare PDFs** in the toolbar. The open PDF is selected as the original.
+Choose the other saved PDF; comparison starts automatically. **Change file** lets
+you replace either file. Save pending edits before comparing. Passwords and page
+matching are under **Options and passwords**.
 Use the changed-page list to move through the document. Within a page, click a
 numbered highlight or use **‹ Change / Change ›**. The list shows removed text
 with **−** and added text with **+**; long excerpts end with an ellipsis.

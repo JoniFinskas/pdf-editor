@@ -796,3 +796,11 @@ Pair numbered page highlights with short before/after text excerpts and cyclic
 change navigation. Retain one pristine page pair in the worker so changing
 overlay mode avoids PDF parsing and rendering. Keep summaries numeric and do not
 persist extracted text. Show comparison failures separately from unchanged pages.
+
+## Comparison setup and layout
+
+Preselect the active document's saved source and start after choosing the second
+file. Keep free selection for both sides and group passwords and page matching
+under options. Use a compact setup view and a full-height results window so the
+page highlights remain reachable. Verify both identical and changed generated
+PDFs through the picker result, worker and rendered UI flow.
