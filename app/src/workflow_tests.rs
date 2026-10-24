@@ -144,6 +144,44 @@ fn workflow_line(app: &EditorApp, ctx: &Context, index: usize) -> Pos2 {
 }
 
 #[test]
+fn generated_page_navigation_and_cached_tab_frame_timings() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let ctx = Context::default(); theme::install(&ctx);
+    let shared = crate::worker::SharedClipboard::default();
+    let mut tabs = Vec::new();
+    for _ in 0..2 {
+        let (mut app, _, _) = mock_app();
+        app.worker = Worker::spawn(ctx.clone(),root.join("target/debug/pdfium.dll"),Substitution::Line,shared.clone());
+        tabs.push(app);
+    }
+    for iteration in 0..3 {
+        for (tab,app) in tabs.iter_mut().enumerate() {
+            let start = std::time::Instant::now();
+            app.open_path(root.join("tests/fixtures/generated/multi-page.pdf"));
+            workflow_settle(app,&ctx);
+            println!("navigation iteration={iteration} tab={tab} open_ready_us={}",start.elapsed().as_micros());
+            let last = app.doc.as_ref().unwrap().pages.len()-1;
+            assert!(last>0);
+            let start = std::time::Instant::now();
+            app.go_to_page(last);
+            for _ in 0..4 { workflow_frame(app,&ctx,vec![]); }
+            workflow_settle(app,&ctx);
+            assert_eq!(app.doc.as_ref().unwrap().current_page,last,"offset={:?} viewport={:?} pages={:?}",app.doc.as_ref().unwrap().offset,app.doc.as_ref().unwrap().viewport,app.doc.as_ref().unwrap().pages.iter().map(|p| (p.info.width,p.info.height)).collect::<Vec<_>>());
+            println!("navigation iteration={iteration} tab={tab} page_ready_us={}",start.elapsed().as_micros());
+        }
+        // Returning to a tab paints its retained document, without reopening it.
+        for (tab,app) in tabs.iter_mut().enumerate() {
+            let generation=app.doc.as_ref().unwrap().generation;
+            let start=std::time::Instant::now();
+            workflow_frame(app,&ctx,vec![]);
+            println!("navigation iteration={iteration} tab={tab} cached_frame_us={}",start.elapsed().as_micros());
+            assert_eq!(app.doc.as_ref().unwrap().generation,generation);
+            assert_eq!(app.busy,0);
+        }
+    }
+}
+
+#[test]
 fn generated_workflow_edits_moves_resizes_copies_and_saves_through_real_workers() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

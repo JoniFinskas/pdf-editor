@@ -661,6 +661,7 @@ struct DocView {
     offset: Vec2,
     viewport: Rect,
     current_page: usize,
+    explicit_page: Option<usize>,
 }
 
 struct PageView {
@@ -1397,6 +1398,7 @@ impl EditorApp {
                     offset: Vec2::ZERO,
                     viewport: Rect::NOTHING,
                     current_page: 0,
+                    explicit_page: None,
                 });
             }
             Reply::Rendered {
@@ -1833,6 +1835,8 @@ impl EditorApp {
             },
         );
         if let Some(index) = jump {
+            doc.explicit_page = Some(index);
+            doc.current_page = index;
             let y = CANVAS_PAD
                 + doc
                     .pages
@@ -2348,6 +2352,8 @@ impl EditorApp {
     fn go_to_page(&mut self, page: usize) {
         if let Some(doc) = &mut self.doc {
             if page >= doc.pages.len() { return; }
+            doc.explicit_page = Some(page);
+            doc.current_page = page;
             let y = CANVAS_PAD + doc.pages.iter().take(page)
                 .map(|p| p.info.height * doc.scale() + PAGE_GAP).sum::<f32>();
             doc.scroll_to = Some(vec2(doc.offset.x, y));
@@ -2963,6 +2969,15 @@ impl EditorApp {
         let busy = self.busy > 0;
         self.tool_anchor = None;
         let Some(doc) = &mut self.doc else { return };
+        if pointer.is_some_and(|pos| canvas_rect.contains(pos))
+            && ctx.input(|i| i.events.iter().any(|event| matches!(event, egui::Event::MouseWheel { .. })) || i.pointer.is_decidedly_dragging()) {
+            doc.explicit_page = None;
+        }
+        if let Some(page) = doc.explicit_page {
+            let page = page.min(doc.pages.len().saturating_sub(1));
+            doc.explicit_page = Some(page);
+            doc.current_page = page;
+        }
         let scale = doc.scale();
         let widest = doc.pages.iter().map(|pg| pg.info.width).fold(0.0, f32::max) * scale;
         let total_h: f32 = doc
@@ -3054,7 +3069,7 @@ impl EditorApp {
                 y += size.y + PAGE_GAP;
                 let rect = round_rect(local.translate(origin.to_vec2()), ppp);
                 page_rects.push(rect);
-                if local.min.y <= center_y {
+                if doc.explicit_page.is_none() && local.min.y <= center_y {
                     doc.current_page = index;
                 }
                 if !local.intersects(near) {
@@ -3146,6 +3161,10 @@ impl EditorApp {
                 // Hover and click hit testing against cached object extents.
                 let mut response =
                     ui.interact(rect, Id::new(("pdf-page", index)), Sense::click_and_drag());
+                if response.clicked() || response.dragged() {
+                    doc.explicit_page = Some(index);
+                    doc.current_page = index;
+                }
                 // Separate hit targets keep handles usable just outside page edges.
                 if !busy
                     && doc.object_mode
