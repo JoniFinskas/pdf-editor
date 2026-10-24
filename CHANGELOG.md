@@ -3,6 +3,8 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+
+## [0.2.3] - 2026-10-24
 - Batch predictable text cursor repairs and anchor eligible text chains to avoid repeated whole-page reparsing.
 
 ## [0.2.2] - 2026-10-24
