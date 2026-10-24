@@ -3821,3 +3821,68 @@ fn generated_edit_move_resize_undo_and_reopen_preserve_links_and_sources() {
     }
 }
 
+
+#[path = "examples/support/dense_fixture.rs"]
+mod dense_fixture;
+
+#[test]
+fn indexed_text_matches_character_scans_on_generated_fixtures() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut paths = Vec::new();
+    all_pdfs(&root().join("tests/fixtures/generated"), &mut paths);
+    for path in paths {
+        let Ok(doc) = e.open(&path) else { continue };
+        let native = e.pdfium.load_pdf_from_byte_slice(&doc.bytes, None).unwrap();
+        for page in 0..e.pages(&doc).unwrap().len() as u16 {
+            let p = native.pages().get(i32::from(page)).unwrap();
+            let text = p.text().unwrap();
+            let expected: Vec<_> = p.objects().iter().enumerate().filter_map(|(i,object)| {
+                object.as_text_object().map(|o| (i,native_text(o,&text).unwrap()))
+            }).collect();
+            let actual: Vec<_> = e.text_objects(&doc,page).unwrap().into_iter()
+                .map(|o| (o.index,o.text)).collect();
+            assert_eq!(actual,expected);
+        }
+    }
+    let doc = e.open(&fixture("unicode-cid.pdf")).unwrap();
+    assert!(e.text_objects(&doc, u16::MAX).is_err());
+    assert!(text_index::index(e.raw, &doc.bytes, u16::MAX).is_err());
+    assert!(text_index::index(e.raw, b"%PDF-1.7\ninvalid generated data", 0).is_err());
+}
+
+#[test]
+fn dense_edit_preserves_neighbors_pixels_history_and_saved_text() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let path=temp("dense-regression.pdf");
+    let bytes=dense_fixture::dense_page(&fs::read(fixture("unicode-cid.pdf")).unwrap(),500);
+    fs::write(&path,&bytes).unwrap();
+    let original=e.open(&path).unwrap();
+    let mut doc=e.open(&path).unwrap();
+    let before=e.text_objects(&doc,0).unwrap();
+    assert_eq!(before.len(),500);
+    e.edit(&mut doc,&before[250],"AB").unwrap();
+    let after=e.text_objects(&doc,0).unwrap();
+    assert_eq!(after.len(),500);
+    assert_eq!(after[250].text,"AB");
+    for (i,(a,b)) in before.iter().zip(&after).enumerate() {
+        if i!=250 { assert_eq!(a.text,b.text); }
+        assert_eq!(a.font,b.font);
+        assert!(a.matrix.iter().zip(b.matrix).all(|(a,b)| (a-b).abs()<0.001));
+    }
+    assert_outside_equal(&e,&original,&doc,&before[250],&after[250]);
+    let edited=doc.bytes.clone();
+    assert!(doc.undo());
+    assert_eq!(doc.bytes,bytes);
+    assert!(doc.redo());
+    assert_eq!(doc.bytes,edited);
+    let output=temp("dense-regression-saved.pdf");
+    let _=fs::remove_file(&output);
+    doc.save_as(&output).unwrap();
+    let reopened=e.open(&output).unwrap();
+    assert_eq!(e.text_objects(&reopened,0).unwrap()[250].text,"AB");
+    assert_eq!(fs::read(&path).unwrap(),bytes);
+    fs::remove_file(path).unwrap();
+    fs::remove_file(output).unwrap();
+}

@@ -9,10 +9,11 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
   dialogs, drag and drop from Explorer, and the close confirmation from the
   title bar. Also check display scales other than 150% and a long editing
   session on generated documents.
-- **Edit latency.** An edit takes about one second on pages with hundreds of
-  text objects, because every core call reparses the PDF bytes, including once
-  per cursor correction. Profile a release build, then cache the
-  parsed document per revision or use a text-state interpreter.
+- **Complex edit latency.** Dense independent-run pages now use one-pass character
+  indexing and per-traversal font decoding. The generated 1,000-object benchmark
+  improved from a 1,236 ms median edit to 41 ms. Cases requiring many sequential
+  cursor repairs still reparse per correction; profile those layouts separately
+  before considering a validated text-state interpreter.
 
 ## P2: Soon
 

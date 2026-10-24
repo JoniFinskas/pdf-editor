@@ -3,6 +3,7 @@
 All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
+- Speed up dense-page text extraction and editing with one-pass character indexing, reused font decoding and selected-page data.
 
 ## [0.2.1] - 2026-10-24
 - Discard late Compare picker results after closing and clear cancelled comparison previews immediately.

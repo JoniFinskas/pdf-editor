@@ -710,3 +710,16 @@ its deferred save; no output request is sent on a rejected edit.
 Use the shared cancellable background picker for Compare. Closing the tool
 immediately cancels its session, discards late picker results, clears password
 inputs and releases previews. Reopening cannot adopt a cancelled selection.
+
+## Dense-page text indexing
+
+Replace per-object scans of every page character with a single PDFium character
+ownership index keyed by native top-level object handles. Nested objects and
+PDFium-generated spacing keep the same filtering as the former extraction path.
+A separate short-lived native document supplies the index because the binding's
+public object API does not expose handles. RAII closes text, page and document
+handles on success, error and unwinding; no cache crosses document revisions.
+
+Decode each page font map once per content traversal and reuse selected-page
+operations and text during edit planning. Retain all mapping, cursor, transform
+and independent round-trip verification. Cursor repair itself is unchanged.

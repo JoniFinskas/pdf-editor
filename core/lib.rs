@@ -16,6 +16,7 @@ mod change_state;
 pub use annotations::{Annotation, Markup, MarkupKind};
 mod compression;
 mod content;
+mod text_index;
 mod crop;
 pub use change_state::ChangeState;
 pub use compression::CompressionReport;
@@ -252,7 +253,10 @@ impl Engine {
         guarded(|| {
             let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
             let p = pdf.pages().get(i32::from(page))?;
-            let page_text = p.text()?;
+            let mut text_by_object = text_index::index(self.raw, &doc.bytes, page)?;
+            if text_by_object.len() != p.objects().len() as usize {
+                return Err(err("Text object structure changed unexpectedly"));
+            }
             let mut result = vec![];
             for (index, object) in p.objects().iter().enumerate() {
                 if let Some(text) = object.as_text_object() {
@@ -264,7 +268,8 @@ impl Engine {
                         index,
                         revision: doc.revision,
 
-                        text: native_text(text, &page_text)?,
+                        text: std::mem::take(text_by_object.get_mut(index)
+                            .ok_or_else(|| err("Text object index changed unexpectedly"))?),
                         font: text.font().name(),
                         size: text.unscaled_font_size().value,
                         bounds: Bounds {
@@ -441,6 +446,7 @@ impl Engine {
         })
     }
 }
+#[cfg(test)]
 fn native_text<'a>(
     object: &PdfPageTextObject<'a>,
     page_text: &'a PdfPageText<'a>,

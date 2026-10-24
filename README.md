@@ -410,3 +410,12 @@ pdf-editor-cli stamp C:\docs --text "Reviewed {date}" --dry-run
 ```
 
 Both commands accept a PDF or a folder. Folders are nonrecursive, processed in sorted filename order, and contain at most 10,000 PDFs. The output folder must already exist; each destination must be new. Originals are never overwritten. Bates numbering continues across successful files. Each operation supports `--pages`, `--position header|footer|absolute`, `--font`, `--size`, `--color RRGGBB`, `--opacity`, `--left` and `--margin`. Header/footer margins are measured from the visible page edge; absolute mode uses a bottom baseline. Text stamping also supports `--text` and `--date`; date defaults to UTC captured once for the batch. Blank page ranges select every page. `--dry-run` validates the complete operation without writes and needs no output path. Failed files are reported individually; successful outputs are retained. Exit codes: 0 success, 1 processing failure, 2 invalid usage.
+
+### Dense-page editing benchmark
+
+Run `cargo run -p pdf-editor-core --example dense_edit_benchmark --release --locked --offline -j 1`
+after preparing the pinned PDFium DLL. It creates only generated 100-, 500- and
+1,000-object pages under `target/performance/`, measures text listing and one edit,
+and verifies unchanged neighboring text and transforms. No input PDFs or GUI
+are used. Timings depend on hardware and workload; cursor-dependent layouts may
+still require repeated verification passes.

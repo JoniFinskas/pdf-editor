@@ -40,6 +40,7 @@ pub(crate) fn runs(
     content: &Content<Vec<Operation>>,
 ) -> Result<Vec<Run>> {
     let fonts = doc.get_page_fonts(page)?;
+    let mut encodings = std::collections::HashMap::new();
     let mut key = Vec::new();
     let mut size = 0.0;
     let mut spacing = [0.0, 0.0, 100.0, 0.0];
@@ -86,7 +87,11 @@ pub(crate) fn runs(
             }
             "Tj" | "TJ" | "'" | "\"" => {
                 let font = fonts.get(&key).ok_or_else(|| err("Missing text font"))?;
-                let encoding = decoding(doc, font)?;
+                // Decode each font map once per page traversal, not once per run.
+                if !encodings.contains_key(&key) {
+                    encodings.insert(key.clone(), decoding(doc, font)?);
+                }
+                let encoding = &encodings[&key];
                 let items = if op.operator == "TJ" {
                     op.operands
                         .first()
@@ -255,13 +260,19 @@ pub(crate) fn edit_styled(
     let missing_name = font_name(&run.font)?;
     let mut plans = vec![];
     let mut combined = text.to_string();
+    let mut selected_data = Some((content, source, native));
     for (&number, &page_id) in &pages {
         if number != selected.page as u32 + 1 && !whole {
             continue;
         }
-        let operations = Content::decode(&pdf.get_page_content_with_limit(page_id, MAX_STREAM)?)?;
-        let records = runs(&pdf, page_id, &operations)?;
-        let before = engine.text_objects(state, (number - 1) as u16)?;
+        let (operations, records, before) = if number == selected.page as u32 + 1 {
+            selected_data.take().ok_or_else(|| err("Duplicate selected page"))?
+        } else {
+            let operations = Content::decode(&pdf.get_page_content_with_limit(page_id, MAX_STREAM)?)?;
+            let records = runs(&pdf, page_id, &operations)?;
+            let before = engine.text_objects(state, (number - 1) as u16)?;
+            (operations, records, before)
+        };
         verify_mapping(&records, &before)?;
         let mut changes = vec![];
         for (i, r) in records.iter().enumerate() {
