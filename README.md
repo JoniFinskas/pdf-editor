@@ -155,6 +155,11 @@ existing files and the original path are never overwritten.
 
 ## Daily and extra tools
 
+**Compare PDFs** fits Original and Revised side by side. Numbered text outlines
+match the change list; select a change to bring it into view. Previous/Next changed
+page skips unchanged pages. Text changes and Visual changes switch the overlay;
+Fit both pages resets zoom. The previous preview stays visible while a new mode loads.
+
 The **All tools** panel opens by default on the home screen and beside documents. Press **Ctrl+K** to search names and descriptions, including subfeatures such as flattening forms, Excel export and Bates numbering. Tools that need an open PDF are visible but disabled until a document is opened. Close the panel for more page space; **All tools** reopens it. The small arrow retains the compact document menu. Its **Edit** section holds
 Find and replace, Fill form, Signatures, Images, Markup and notes, Draw and shapes,
 Redact, and OCR current page. **Document** holds Bookmarks sidebar, Merge/split/

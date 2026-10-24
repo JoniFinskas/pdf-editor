@@ -2,7 +2,7 @@
 use crate::{
     icons::Icon,
     theme::Palette,
-    widgets::{self, Btn, ToolWindow},
+    widgets::{self, Btn, Look, ToolWindow},
 };
 use eframe::egui::{self, Color32, TextureHandle};
 use pdf_editor_core::{ChangeKind, ComparePage, Engine};
@@ -18,6 +18,35 @@ struct Session {
     tx: mpsc::SyncSender<(u16, bool)>,
     rx: mpsc::Receiver<Event>,
     cancel: Arc<AtomicBool>,
+}
+
+struct Region {
+    kind: ChangeKind,
+    bounds: [Option<[f32; 4]>; 2],
+}
+fn change_style(kind: ChangeKind) -> (&'static str, Color32) {
+    match kind {
+        ChangeKind::Added => ("Added", Color32::from_rgb(18, 130, 70)),
+        ChangeKind::Removed => ("Removed", Color32::from_rgb(205, 45, 65)),
+        ChangeKind::Changed => ("Changed", Color32::from_rgb(170, 105, 0)),
+    }
+}
+fn regions(page: &ComparePage) -> Vec<Region> {
+    let mut left = page.left_marks.iter();
+    let mut right = page.right_marks.iter();
+    page.changes
+        .iter()
+        .map(|change| Region {
+            kind: change.kind,
+            bounds: [
+                change.left.and_then(|_| left.next().map(|(_, b)| *b)),
+                change.right.and_then(|_| right.next().map(|(_, b)| *b)),
+            ],
+        })
+        .collect()
+}
+fn fitted_scale(width: f32, sizes: [egui::Vec2; 2], zoom: f32) -> f32 {
+    ((width - 16.0).max(1.0) / (sizes[0].x + sizes[1].x).max(1.0)).min(1.0) * zoom.clamp(0.25, 3.0)
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -111,7 +140,11 @@ pub struct Compare {
     waiting: bool,
     requested: Option<(u16, bool)>,
     textures: [Option<TextureHandle>; 2],
-    marks: [Vec<(ChangeKind, [f32; 4])>; 2],
+    regions: Vec<Region>,
+    focused_region: Option<usize>,
+    jump_region: bool,
+    displayed: Option<(u16, bool)>,
+    changed_pixels: usize,
     error: Option<String>,
 }
 impl Compare {
@@ -120,15 +153,20 @@ impl Compare {
             match result {
                 Ok(Some(path)) => {
                     self.paths[self.picker_side] = Some(path);
-                    self.session = None; self.textures = [None, None];
-                    self.summaries.clear(); self.errors.clear();
-                    self.requested = None; self.waiting = false;
+                    self.session = None;
+                    self.textures = [None, None];
+                    self.summaries.clear();
+                    self.errors.clear();
+                    self.requested = None;
+                    self.waiting = false;
                 }
-                Ok(None) => {},
+                Ok(None) => {}
                 Err(error) => self.error = Some(error.into()),
             }
         }
-        if self.picker.pending() { ctx.request_repaint_after(std::time::Duration::from_millis(50)); }
+        if self.picker.pending() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
         if !self.open {
             self.session = None;
             self.textures = [None, None];
@@ -142,6 +180,7 @@ impl Compare {
         if self.zoom == 0. {
             self.zoom = 1.;
         }
+        let mut failed_session = false;
         if let Some(session) = &self.session {
             while let Ok(event) = session.rx.try_recv() {
                 match event {
@@ -160,6 +199,7 @@ impl Compare {
                     Event::Error(e) => {
                         self.error = Some(e);
                         self.waiting = false;
+                        failed_session = true;
                     }
                     Event::Page(page, overlay, result) => {
                         self.waiting = false;
@@ -171,10 +211,13 @@ impl Compare {
                             Err(e) => {
                                 self.error = Some(e.to_string());
                                 self.textures = [None, None];
+                                self.displayed = None;
                             }
                             Ok(page) => {
                                 self.error = None;
-                                self.marks = [page.left_marks, page.right_marks];
+                                self.regions = regions(&page);
+                                self.changed_pixels = page.changed_pixels;
+                                self.displayed = Some((self.selected, overlay));
                                 self.textures = [page.left, page.right].map(|image| {
                                     image.map(|im| {
                                         ctx.load_texture(
@@ -193,67 +236,93 @@ impl Compare {
                 }
             }
         }
+        if failed_session {
+            self.session = None;
+        }
         let mut open = self.open;
-        ToolWindow::new("Compare PDFs",Icon::Layers).width((ctx.content_rect().width()-64.).clamp(300.,1050.)).show(ctx,p,&mut open,|ui|{
-            widgets::hint(ui,p,"Compare saved files, page by page. Originals and open edits stay unchanged. Pages align by index; inserted pages are not automatically realigned.");
-            ui.horizontal_wrapped(|ui|{
-                for i in 0..2 {
-                    if Btn::new(if i==0{"Choose left PDF"}else{"Choose right PDF"}).enabled(!self.picker.pending()).show(ui,p).clicked() {
-                        self.picker_side = i;
-                        if let Err(error) = self.picker.start(|| rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file()) {
-                            self.error = Some(format!("Cannot open file picker: {error}"));
+        ToolWindow::new("Compare PDFs", Icon::Layers)
+            .width((ctx.content_rect().width() - 80.0).clamp(300.0, 1100.0))
+            .centered().show(ctx, p, &mut open, |ui| {
+                widgets::hint(ui, p, "Compare saved PDFs. Original and Revised stay unchanged. Pages match by number; inserted pages are not realigned.");
+                ui.horizontal_wrapped(|ui| {
+                    for i in 0..2 {
+                        let label = if i == 0 { "Choose original" } else { "Choose revised" };
+                        if Btn::new(label).enabled(!self.picker.pending()).show(ui,p).clicked() {
+                            self.picker_side = i;
+                            if let Err(error) = self.picker.start(|| rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file()) {
+                                self.error = Some(format!("Cannot open file picker: {error}"));
+                            }
                         }
+                        ui.add(egui::Label::new(self.paths[i].as_ref().and_then(|path| path.file_name())
+                            .map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| "No file selected".into())).truncate());
                     }
-                    ui.label(self.paths[i].as_ref().and_then(|p|p.file_name()).map(|n|n.to_string_lossy().into_owned()).unwrap_or_else(||"No file".into()));
-                }
-            });
-            ui.horizontal_wrapped(|ui|{
-                for i in 0..2 {ui.label(if i==0{"Left password"}else{"Right password"});ui.add(egui::TextEdit::singleline(&mut self.passwords[i]).password(true).desired_width(110.));}
-                if Btn::new("Compare").enabled(self.paths.iter().all(Option::is_some)).show(ui,p).clicked()
-                    && let [Some(a),Some(b)]=&self.paths {
-                        self.session=Some(start([a.clone(),b.clone()],std::mem::take(&mut self.passwords),ctx.clone()));
-                        self.summaries.clear();self.errors.clear();self.error=None;self.selected=0;self.waiting=false;self.requested=None;self.textures=[None,None];
-                }
-            });
-            if let Some(error)=&self.error {ui.colored_label(p.error_fg,error);}
-            ui.horizontal_wrapped(|ui|{
-                ui.checkbox(&mut self.overlay,"Visual pixel overlay");
-                ui.add(egui::Slider::new(&mut self.zoom,0.25..=3.).text("Shared zoom"));
-                let count=self.summaries.len();
-                if Btn::new("Previous").enabled(self.selected>0).show(ui,p).clicked(){self.selected-=1;}
-                if Btn::new("Next").enabled((self.selected as usize)+1<count).show(ui,p).clicked(){self.selected+=1;}
-                ui.label(format!("Page {} / {}",usize::from(self.selected)+1,count));
-            });
-            widgets::hint(ui,p,"Green: added · Red: removed · Amber: changed · Magenta: changed pixels. Both pages share scrolling and zoom. Raster preview is capped at one megapixel per page.");
-            ui.horizontal_top(|ui|{
-                ui.vertical(|ui|{
-                    ui.set_width(160.);
-                    ui.label(format!("Scanned {} / {}",self.summaries.iter().filter(|s|s.is_some()).count(),self.summaries.len()));
-                    egui::ScrollArea::vertical().id_salt("comparison-changes").max_height(450.).show(ui,|ui|{
-                        for (i,summary) in self.summaries.iter().enumerate() {
-                            if let Some((text,pixels))=summary && (*text>0 || *pixels>0)
-                                && ui.selectable_label(self.selected as usize==i,format!("Page {}\n{text} text · {pixels} pixels",i+1)).clicked() {self.selected=i as u16;}
-                        }
-                        for (i,error) in &self.errors {if ui.selectable_label(self.selected as usize==*i,format!("Page {}: {error}",i+1)).clicked(){self.selected=*i as u16;}}
-                    });
+                    if self.picker.pending() { ui.spinner(); ui.label("Waiting for file selection…"); }
                 });
-                egui::ScrollArea::both().id_salt(("compare-pages",self.selected)).max_height(450.).show(ui,|ui|{
-                    ui.horizontal_top(|ui|{
-                        for side in 0..2 {
-                            if let Some(texture)=&self.textures[side] {
-                                let size=texture.size_vec2()*self.zoom;
-                                let response=ui.add(egui::Image::new(texture).fit_to_exact_size(size));
-                                if !self.overlay {for (kind,b) in &self.marks[side] {
-                                    let color=match kind{ChangeKind::Added=>Color32::from_rgba_unmultiplied(30,180,80,75),ChangeKind::Removed=>Color32::from_rgba_unmultiplied(230,40,40,75),ChangeKind::Changed=>Color32::from_rgba_unmultiplied(240,160,20,90)};
-                                    let rect=egui::Rect::from_min_max(response.rect.min+egui::vec2(b[0],b[1])*self.zoom,response.rect.min+egui::vec2(b[2],b[3])*self.zoom);
-                                    ui.painter().rect_filled(rect,0.,color);
-                                }}
-                            } else {ui.allocate_ui(egui::vec2(240.,300.),|ui|{ui.label(if self.waiting{"Loading…"}else{"No page"});});}
+                ui.horizontal_wrapped(|ui| {
+                    ui.collapsing("Passwords (optional)", |ui| {
+                        for i in 0..2 {
+                            ui.label(if i == 0 { "Original password" } else { "Revised password" });
+                            ui.add(egui::TextEdit::singleline(&mut self.passwords[i]).password(true).desired_width(130.0));
                         }
                     });
+                    if Btn::new("Compare").id("compare-start").enabled(!self.picker.pending() && self.paths.iter().all(Option::is_some)).show(ui,p).clicked()
+                        && let [Some(a), Some(b)] = &self.paths {
+                        self.session = Some(start([a.clone(), b.clone()], std::mem::take(&mut self.passwords), ctx.clone()));
+                        self.summaries.clear(); self.errors.clear(); self.error = None;
+                        self.selected = 0; self.waiting = false; self.requested = None;
+                        self.textures = [None, None]; self.displayed = None;
+                        self.regions.clear(); self.focused_region = None;
+                    }
                 });
+                if let Some(error) = self.error.clone() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.colored_label(p.error_fg, error);
+                        if Btn::new("Dismiss").show(ui,p).clicked() { self.error = None; }
+                        if Btn::new("Retry page").enabled(self.session.is_some() && !self.waiting).show(ui,p).clicked() { self.requested = None; }
+                    });
+                }
+                ui.separator();
+                ui.horizontal_wrapped(|ui| {
+                    for (label, overlay) in [("Text changes", false), ("Visual changes", true)] {
+                        if Btn::new(label).id(if overlay { "compare-visual" } else { "compare-text" }).look(if self.overlay == overlay { Look::Active } else { Look::Ghost }).show(ui,p).clicked() { self.overlay = overlay; }
+                    }
+                    if Btn::new("Fit both pages").show(ui,p).clicked() { self.zoom = 1.0; }
+                    ui.add(egui::Slider::new(&mut self.zoom, 0.25..=3.0).text("Zoom"));
+                });
+                ui.horizontal_wrapped(|ui| {
+                    for kind in [ChangeKind::Removed, ChangeKind::Added, ChangeKind::Changed] {
+                        let (label, color) = change_style(kind);
+                        ui.colored_label(color, format!("■ {label}"));
+                    }
+                    ui.label(if self.overlay { "Magenta = changed pixels" } else { "Numbers match the change list" });
+                });
+                let count = self.summaries.len();
+                ui.horizontal_wrapped(|ui| {
+                    if Btn::new("‹ Page").enabled(self.selected > 0).show(ui,p).clicked() { self.selected -= 1; }
+                    if count > 0 { ui.strong(format!("Page {} of {count}", self.selected as usize + 1)); }
+                    if Btn::new("Page ›").enabled(self.selected as usize + 1 < count).show(ui,p).clicked() { self.selected += 1; }
+                    let previous = self.changed_page(false);
+                    let next = self.changed_page(true);
+                    if Btn::new("Previous changed page").enabled(previous.is_some()).show(ui,p).clicked() { self.selected = previous.unwrap(); }
+                    if Btn::new("Next changed page").enabled(next.is_some()).show(ui,p).clicked() { self.selected = next.unwrap(); }
+                    if self.waiting { ui.spinner(); ui.label("Updating preview…"); }
+                });
+                if count == 0 {
+                    widgets::hint(ui,p, if self.session.is_some() { "Opening documents…" } else { "Choose an original and revised PDF, then select Compare." });
+                    return;
+                }
+                let height = (ctx.content_rect().height() - 355.0).clamp(120.0, 600.0);
+                let wide = ui.available_width() >= 650.0;
+                if wide {
+                    ui.horizontal_top(|ui| {
+                        ui.vertical(|ui| { ui.set_width(190.0); self.change_list(ui,p,height); });
+                        self.previews(ui,p,height);
+                    });
+                } else {
+                    ui.collapsing("Pages and changes", |ui| self.change_list(ui,p,130.0));
+                    self.previews(ui,p,height);
+                }
             });
-        });
         self.open = open;
         let key = (self.selected, self.overlay);
         if !self.waiting
@@ -264,7 +333,209 @@ impl Compare {
         {
             self.waiting = true;
             self.requested = Some(key);
-            self.textures = [None, None];
+            if self.displayed.is_none_or(|(page, _)| page != self.selected) {
+                self.textures = [None, None];
+                self.displayed = None;
+                self.regions.clear();
+                self.focused_region = None;
+            }
+        }
+    }
+
+    fn changed_page(&self, forward: bool) -> Option<u16> {
+        let changed = |i: usize| {
+            self.summaries[i].is_some_and(|(text, pixels)| text > 0 || pixels > 0)
+                || self.errors.iter().any(|(page, _)| *page == i)
+        };
+        if forward {
+            ((self.selected as usize + 1)..self.summaries.len())
+                .find(|i| changed(*i))
+                .map(|i| i as u16)
+        } else {
+            (0..self.selected as usize)
+                .rev()
+                .find(|i| changed(*i))
+                .map(|i| i as u16)
+        }
+    }
+
+    fn change_list(&mut self, ui: &mut egui::Ui, p: &Palette, height: f32) {
+        let scanned = self.summaries.iter().filter(|s| s.is_some()).count();
+        let changed = self
+            .summaries
+            .iter()
+            .flatten()
+            .filter(|(t, v)| *t > 0 || *v > 0)
+            .count();
+        ui.strong(format!("{changed} changed pages"));
+        ui.label(format!("Checked {scanned} / {}", self.summaries.len()));
+        if scanned == self.summaries.len() && changed == 0 && self.errors.is_empty() {
+            ui.colored_label(p.ok_fg, "No differences found");
+        }
+        egui::ScrollArea::vertical()
+            .id_salt("comparison-changes")
+            .max_height(height)
+            .show(ui, |ui| {
+                for (i, summary) in self.summaries.iter().enumerate() {
+                    if let Some((text, pixels)) = summary
+                        && (*text > 0 || *pixels > 0)
+                    {
+                        let label = format!(
+                            "Page {} · {text} text changes{}",
+                            i + 1,
+                            if *pixels > 0 { " · visual" } else { "" }
+                        );
+                        if ui
+                            .selectable_label(self.selected as usize == i, label)
+                            .clicked()
+                        {
+                            self.selected = i as u16;
+                        }
+                    }
+                }
+                for (i, error) in &self.errors {
+                    if ui
+                        .selectable_label(
+                            self.selected as usize == *i,
+                            format!("Page {} · Could not compare", i + 1),
+                        )
+                        .on_hover_text(error)
+                        .clicked()
+                    {
+                        self.selected = *i as u16;
+                    }
+                }
+                if self
+                    .displayed
+                    .is_some_and(|(page, _)| page == self.selected)
+                {
+                    ui.separator();
+                    ui.strong(format!("This page · {} text changes", self.regions.len()));
+                    ui.label(format!("{} changed pixels", self.changed_pixels));
+                    if self.regions.is_empty() && self.changed_pixels > 0 {
+                        widgets::hint(ui, p, "Image or layout changes: choose Visual changes.");
+                    }
+                    for (i, region) in self.regions.iter().enumerate() {
+                        let (label, color) = change_style(region.kind);
+                        if ui
+                            .selectable_label(
+                                self.focused_region == Some(i),
+                                egui::RichText::new(format!("{} · {label}", i + 1)).color(color),
+                            )
+                            .clicked()
+                        {
+                            self.focused_region = Some(i);
+                            self.jump_region = true;
+                        }
+                    }
+                }
+            });
+    }
+
+    fn previews(&mut self, ui: &mut egui::Ui, p: &Palette, height: f32) {
+        let sizes = self.textures.each_ref().map(|t| {
+            t.as_ref()
+                .map_or(egui::vec2(300.0, 400.0), TextureHandle::size_vec2)
+        });
+        let scale = fitted_scale(ui.available_width(), sizes, self.zoom);
+        let current = self
+            .displayed
+            .is_some_and(|(page, _)| page == self.selected);
+        let visual = self.displayed.is_some_and(|(_, overlay)| overlay);
+        let mut jumped = false;
+        egui::ScrollArea::both()
+            .id_salt(("compare-pages", self.selected))
+            .max_height(height)
+            .show(ui, |ui| {
+                ui.horizontal_top(|ui| {
+                    for side in 0..2 {
+                        ui.vertical(|ui| {
+                            ui.set_width((sizes[side].x * scale).max(80.0));
+                            ui.strong(if side == 0 {
+                                "ORIGINAL · Before"
+                            } else {
+                                "REVISED · After"
+                            });
+                            if current && let Some(texture) = &self.textures[side] {
+                                let response = ui.add(
+                                    egui::Image::new(texture)
+                                        .fit_to_exact_size(sizes[side] * scale),
+                                );
+                                ui.painter().rect_stroke(
+                                    response.rect,
+                                    0.0,
+                                    egui::Stroke::new(1.0, p.border),
+                                    egui::StrokeKind::Outside,
+                                );
+                                for (i, region) in self.regions.iter().enumerate() {
+                                    if let Some(b) = region.bounds[side] {
+                                        let rect = egui::Rect::from_min_max(
+                                            response.rect.min + egui::vec2(b[0], b[1]) * scale,
+                                            response.rect.min + egui::vec2(b[2], b[3]) * scale,
+                                        )
+                                        .expand(2.0);
+                                        let active = self.focused_region == Some(i);
+                                        let (_, color) = change_style(region.kind);
+                                        if !visual || active {
+                                            ui.painter().rect_filled(
+                                                rect,
+                                                2.0,
+                                                color.gamma_multiply(if active {
+                                                    0.3
+                                                } else {
+                                                    0.12
+                                                }),
+                                            );
+                                            ui.painter().rect_stroke(
+                                                rect,
+                                                2.0,
+                                                egui::Stroke::new(
+                                                    if active { 2.5 } else { 1.0 },
+                                                    color,
+                                                ),
+                                                egui::StrokeKind::Outside,
+                                            );
+                                            let badge = egui::Rect::from_min_size(
+                                                rect.left_top(),
+                                                egui::vec2(18.0, 16.0),
+                                            );
+                                            ui.painter().rect_filled(badge, 2.0, color);
+                                            ui.painter().text(
+                                                badge.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                (i + 1).to_string(),
+                                                egui::FontId::proportional(11.0),
+                                                Color32::WHITE,
+                                            );
+                                        }
+                                        if active && self.jump_region && !jumped {
+                                            ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                                            jumped = true;
+                                        }
+                                    }
+                                }
+                            } else {
+                                ui.allocate_ui(
+                                    egui::vec2((sizes[side].x * scale).max(80.0), 200.0),
+                                    |ui| {
+                                        ui.label(if !current && self.waiting {
+                                            "Loading page…"
+                                        } else if !current {
+                                            "Preview unavailable"
+                                        } else if side == 0 {
+                                            "Page added in Revised"
+                                        } else {
+                                            "Page removed from Revised"
+                                        });
+                                    },
+                                );
+                            }
+                        });
+                    }
+                });
+            });
+        if jumped {
+            self.jump_region = false;
         }
     }
 }
@@ -272,6 +543,130 @@ impl Compare {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn paired_regions_keep_numbers_for_additions_removals_and_changes() {
+        let bounds = pdf_editor_core::Bounds {
+            left: 0.0,
+            bottom: 0.0,
+            right: 20.0,
+            top: 10.0,
+        };
+        let page = ComparePage {
+            left: None,
+            right: None,
+            changed_pixels: 3,
+            changes: vec![
+                pdf_editor_core::TextChange {
+                    kind: ChangeKind::Removed,
+                    left: Some(bounds),
+                    right: None,
+                },
+                pdf_editor_core::TextChange {
+                    kind: ChangeKind::Added,
+                    left: None,
+                    right: Some(bounds),
+                },
+                pdf_editor_core::TextChange {
+                    kind: ChangeKind::Changed,
+                    left: Some(bounds),
+                    right: Some(bounds),
+                },
+            ],
+            left_marks: vec![
+                (ChangeKind::Removed, [1.0; 4]),
+                (ChangeKind::Changed, [3.0; 4]),
+            ],
+            right_marks: vec![
+                (ChangeKind::Added, [2.0; 4]),
+                (ChangeKind::Changed, [4.0; 4]),
+            ],
+        };
+        let regions = regions(&page);
+        assert_eq!(regions[0].bounds, [Some([1.0; 4]), None]);
+        assert_eq!(regions[1].bounds, [None, Some([2.0; 4])]);
+        assert_eq!(regions[2].bounds, [Some([3.0; 4]), Some([4.0; 4])]);
+        for width in [240.0, 600.0, 1200.0] {
+            let sizes = [egui::vec2(1000.0, 1500.0), egui::vec2(600.0, 800.0)];
+            let scale = fitted_scale(width, sizes, 1.0);
+            assert!(scale > 0.0 && 1600.0 * scale + 16.0 <= width + 0.01);
+        }
+    }
+
+    #[test]
+    fn changed_page_navigation_skips_identical_and_pending_pages() {
+        let mut compare = Compare {
+            summaries: vec![
+                Some((0, 0)),
+                Some((1, 0)),
+                None,
+                Some((0, 30)),
+                Some((0, 0)),
+            ],
+            errors: vec![(4, "test error".into())],
+            ..Default::default()
+        };
+        assert_eq!(compare.changed_page(false), None);
+        assert_eq!(compare.changed_page(true), Some(1));
+        compare.selected = 3;
+        assert_eq!(compare.changed_page(false), Some(1));
+        assert_eq!(compare.changed_page(true), Some(4));
+    }
+
+    #[test]
+    fn visual_mode_keeps_current_preview_until_replacement_arrives() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let texture = ctx.load_texture(
+            "generated",
+            egui::ColorImage::filled([100, 140], Color32::WHITE),
+            egui::TextureOptions::LINEAR,
+        );
+        let original = texture.id();
+        let (tx, commands) = mpsc::sync_channel(1);
+        let (events, rx) = mpsc::sync_channel(2);
+        let mut compare = Compare {
+            open: true,
+            overlay: true,
+            displayed: Some((0, false)),
+            textures: [Some(texture.clone()), Some(texture)],
+            summaries: vec![Some((1, 10))],
+            session: Some(Session {
+                tx,
+                rx,
+                cancel: Arc::new(AtomicBool::new(false)),
+            }),
+            ..Default::default()
+        };
+        let render = |compare: &mut Compare| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 820.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| compare.show(&ctx, &crate::theme::palette(ui)),
+            );
+            output.textures_delta.clear();
+        };
+        render(&mut compare);
+        assert_eq!(commands.try_recv().unwrap(), (0, true));
+        assert!(compare.waiting);
+        assert_eq!(compare.textures[0].as_ref().unwrap().id(), original);
+        events
+            .send(Event::Page(
+                0,
+                true,
+                Err(pdf_editor_core::Error("test error".into())),
+            ))
+            .unwrap();
+        render(&mut compare);
+        assert!(!compare.waiting);
+        assert!(compare.textures[0].is_none());
+        assert!(compare.displayed.is_none());
+        assert!(compare.error.is_some());
+    }
     #[test]
     fn comparison_window_draws_without_loading_a_document() {
         let ctx = egui::Context::default();
