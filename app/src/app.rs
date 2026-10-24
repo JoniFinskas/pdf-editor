@@ -756,6 +756,7 @@ struct EditState {
     line: Line,
     text: String,
     focus: bool,
+    rejected_text: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1072,6 +1073,11 @@ impl EditorApp {
             return false;
         };
         if edit.text == edit.line.text {
+            return false;
+        }
+        // A focus change must not repeatedly submit a draft already rejected.
+        if edit.rejected_text.as_ref() == Some(&edit.text) {
+            doc.edit = Some(edit);
             return false;
         }
         doc.applying = Some((edit.page, edit.line.rect, edit.line.objects.len()));
@@ -1675,6 +1681,7 @@ impl EditorApp {
                     doc.applying = None;
                     doc.reopen = None;
                     if let Some(mut edit) = doc.pending_edit.take() {
+                        edit.rejected_text = Some(edit.text.clone());
                         edit.focus = true;
                         doc.edit = Some(edit);
                     }
@@ -3260,6 +3267,7 @@ impl EditorApp {
                         doc.selected_item = objects.items.iter().rev().find(|item| bounds_rect(&objects.transform, item.bounds).contains(at)).cloned();
                     } else if let Some(line) = objects.lines.iter().rev().find(|l| l.rect.contains(at)) {
                         start_edit = Some(EditState {
+                            rejected_text: None,
                             page: index,
                             line: line.clone(),
                             text: line.text.clone(),
@@ -3599,6 +3607,7 @@ impl EditorApp {
                             line.clone()
                         };
                         start_edit = Some(EditState {
+                            rejected_text: None,
                             page: index,
                             text: chosen.text.clone(),
                             line: chosen,
@@ -4975,6 +4984,7 @@ fn edit_box(
     let clicked_away = response.clicked_elsewhere()
         && ui.input(|i| i.pointer.primary_clicked());
     if (response.lost_focus() || clicked_away)
+        && edit.rejected_text.as_ref() != Some(&edit.text)
         && !response.context_menu_opened()
         && !egui::Popup::is_any_open(ui.ctx())
     {
@@ -6378,6 +6388,7 @@ mod tests {
         opened(&mut app, &ctx);
         let (object, rect) = glyph("original", 30.0, 40.0);
         app.doc.as_mut().unwrap().edit = Some(EditState {
+            rejected_text: None,
             page: 0, text: "original".into(), focus: true,
             line: Line { paragraph: None, fallback: None, objects: vec![object], rect, text: "original".into() },
         });
@@ -6413,6 +6424,14 @@ mod tests {
         assert_eq!(app.doc.as_ref().unwrap().edit.as_ref().unwrap().text, draft);
         assert!(app.doc.as_ref().unwrap().pending_edit.is_none());
         assert_eq!(app.busy, 0);
+        // Opening a modal or repeatedly clicking elsewhere cannot resubmit
+        // the same unsupported draft or keep the worker permanently busy.
+        for _ in 0..8 {
+            assert!(!app.commit_edit());
+            assert_eq!(app.busy, 0);
+        }
+        assert!(inbox.try_recv().is_err());
+        assert_eq!(app.doc.as_ref().unwrap().edit.as_ref().unwrap().text, draft);
         frame(&mut app, vec![]);
         let escape = frame(&mut app, vec![egui::Event::Key {
             key: Key::Escape, physical_key: None, pressed: true, repeat: false,
@@ -6433,6 +6452,7 @@ mod tests {
                 inbox.try_iter().for_each(drop);
                 let (object, rect) = glyph("original", 30.0, 40.0);
                 app.doc.as_mut().unwrap().edit = Some(EditState {
+                    rejected_text: None,
                     page: 0, text: "new draft".into(), focus: true,
                     line: Line { paragraph: None, fallback: None, objects: vec![object], rect, text: "original".into() },
                 });
