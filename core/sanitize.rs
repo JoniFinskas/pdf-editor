@@ -5,6 +5,8 @@ use lopdf::{Dictionary, Object, Stream, content::Content};
 pub struct SanitizeOptions {
     pub remove_comments: bool,
     pub remove_links: bool,
+    /// Rebuild only visible pixels; removes editable text, forms and links.
+    pub flatten_visible: bool,
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SanitizeReport {
@@ -14,9 +16,13 @@ pub struct SanitizeReport {
     pub actions: usize,
     pub comments: usize,
     pub links: usize,
+    pub rasterized_pages: usize,
 }
 impl std::fmt::Display for SanitizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.rasterized_pages > 0 {
+            return write!(f, "Rebuilt {} pages from visible pixels. Original metadata, hidden text, attachments, scripts, forms and interactive links are absent. Text is no longer searchable or editable. Save As writes the copy; Undo restores the original.", self.rasterized_pages);
+        }
         write!(
             f,
             "Removed: {} metadata entries, {} hidden text blocks, {} attachment entries, {} action entries, {} comments, {} links. Save As writes the cleaned document; Undo restores the original.",
@@ -30,8 +36,62 @@ impl std::fmt::Display for SanitizeReport {
     }
 }
 impl Engine {
+    fn sanitize_visible(&self, doc: &mut Document, options: SanitizeOptions) -> Result<SanitizeReport> {
+        let mut source = parse(&doc.bytes)?;
+        // Remove requested annotation appearances before rendering. Widgets remain
+        // visible, but their interactive payload is never copied to the new PDF.
+        for id in source.get_pages().values() {
+            let annots=source.get_dictionary(*id)?.get(b"Annots").ok().cloned();
+            if let Some(annots)=annots {
+                let mut keep=Vec::new();
+                for value in resolve(&source,&annots)?.as_array()? {
+                    let annotation=resolve(&source,value)?.as_dict()?;
+                    let subtype=annotation.get(b"Subtype").and_then(Object::as_name).unwrap_or_default();
+                    let remove=match subtype {
+                        b"Widget"=>false,
+                        b"Link"=>options.remove_links,
+                        _=>options.remove_comments,
+                    };
+                    if !remove {keep.push(value.clone());}
+                }
+                source.get_dictionary_mut(*id)?.set("Annots",keep);
+            }
+        }
+        let source=self.candidate(doc,source)?;
+        let sizes=self.pages(&source)?;
+        if sizes.len()>100 {return Err(err("Visible-page sanitization supports up to 100 pages per document"));}
+        let pictures=sizes.iter().enumerate().map(|(index,size)| {
+            let scale=2.0_f32.min(2048.0/size.width.max(size.height));
+            self.render(&source,index as u16,scale).map(|image| Picture {
+                width:image.width,height:image.height,rgba:image.rgba
+            })
+        });
+        let rebuilt=self.pictures_to_pdf(pictures,ImagePageSize::Image)?;
+        let rebuilt_sizes=self.pages(&rebuilt)?;
+        let mut pdf=parse(&rebuilt.bytes)?;
+        for (index,id) in pdf.get_pages().values().enumerate() {
+            let size=&sizes[index];
+            let previous=&rebuilt_sizes[index];
+            let content=pdf.get_page_content_with_limit(*id,MAX_STREAM)?;
+            let mut scaled=format!("q {} 0 0 {} 0 0 cm\n",size.width/previous.width,size.height/previous.height).into_bytes();
+            scaled.extend(content);
+            scaled.extend_from_slice(b"\nQ");
+            pdf.change_page_content(*id,scaled)?;
+            pdf.get_dictionary_mut(*id)?.set("MediaBox",vec![Object::Integer(0),Object::Integer(0),
+                Object::Real(size.width),Object::Real(size.height)]);
+        }
+        let candidate=self.candidate(doc,pdf)?;
+        for index in 0..sizes.len() {
+            if !self.text_objects(&candidate,index as u16)?.is_empty() {
+                return Err(err("Visible-page sanitization verification failed; document unchanged"));
+            }
+        }
+        doc.accept(candidate.bytes);
+        Ok(SanitizeReport {rasterized_pages:sizes.len(),..Default::default()})
+    }
     pub fn sanitize(&self, doc: &mut Document, options: SanitizeOptions) -> Result<SanitizeReport> {
         guarded(|| {
+            if options.flatten_visible { return self.sanitize_visible(doc,options); }
             let mut pdf = parse(&doc.bytes)?;
             pdf.prune_objects();
             let mut report = SanitizeReport::default();

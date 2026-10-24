@@ -3339,6 +3339,7 @@ fn sanitize_removes_active_payloads_hidden_text_and_restores_undo() {
             SanitizeOptions {
                 remove_comments: true,
                 remove_links: true,
+                flatten_visible: false,
             },
         )
         .unwrap();
@@ -4110,4 +4111,38 @@ fn replacement_round_trip_handles_generated_layouts() {
             assert_eq!(doc.bytes,original);
         }
     }
+}
+
+#[test]
+fn visible_sanitization_rebuilds_complex_content_without_hidden_payloads() {
+    let _lock=PDFIUM.lock().unwrap_or_else(|e|e.into_inner());
+    let e=engine();
+    let mut pdf=parse(&generated("Visible text",false,0,0.0,false,false)).unwrap();
+    let page=pdf.get_pages()[&1];
+    let info=pdf.add_object(lopdf::dictionary!{"Title"=>"generated private metadata"});
+    pdf.trailer.set("Info",info);
+    let root=pdf.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    pdf.get_dictionary_mut(root).unwrap().set("OCProperties",lopdf::dictionary!{});
+    let mut bytes=vec![];pdf.save_to(&mut bytes).unwrap();
+    let path=temp("visible-sanitize.pdf");fs::write(&path,&bytes).unwrap();
+    let mut doc=e.open(&path).unwrap();
+    let original=doc.bytes.clone();
+    let size=e.pages(&doc).unwrap()[0].clone();
+    assert!(e.sanitize(&mut doc,SanitizeOptions::default()).is_err());
+    assert_eq!(doc.bytes,original);
+    let report=e.sanitize(&mut doc,SanitizeOptions {flatten_visible:true,..Default::default()}).unwrap();
+    assert_eq!(report.rasterized_pages,1);
+    assert!(e.text_objects(&doc,0).unwrap().is_empty());
+    let clean=parse(&doc.bytes).unwrap();
+    assert!(!clean.trailer.has(b"Info"));
+    let catalog=clean.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    assert!(!clean.get_dictionary(catalog).unwrap().has(b"OCProperties"));
+    assert!(!String::from_utf8_lossy(&doc.bytes).contains("generated private metadata"));
+    let actual=e.pages(&doc).unwrap();
+    assert!((actual[0].width-size.width).abs()<0.01);
+    assert!((actual[0].height-size.height).abs()<0.01);
+    assert!(e.render(&doc,0,1.0).unwrap().rgba.chunks_exact(4).any(|p|p[0]<100));
+    assert!(doc.undo());assert_eq!(doc.bytes,original);
+    fs::remove_file(path).unwrap();
+    let _=page;
 }

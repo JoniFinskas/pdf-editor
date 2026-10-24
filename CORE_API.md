@@ -320,3 +320,10 @@ Redaction rebuilds a clean page graph, dropping document-wide annotations, forms
 Word export expands groups only when compositing can be preserved. Other complex
 pages are rendered from the original document into bounded page images; remaining
 pages retain editable text and tables. Export never modifies source history.
+
+
+SanitizeOptions.flatten_visible rebuilds a document of up to 100 pages using
+bounded rendered images, retaining page dimensions and one undo step. It copies
+no original objects, text layer, scripts or metadata. SanitizeReport.rasterized_pages
+identifies this mode. Editable sanitization remains the default and fails closed
+when visibility cannot be verified.

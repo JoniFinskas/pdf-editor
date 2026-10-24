@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Offer explicit visible-page rebuilding for sanitizing complex PDFs, with clear loss-of-editability warnings, preserved page sizes and atomic undo.
+
 - Preview signatures under the pointer and place them with a page click; support Escape cancellation and normal object movement after placement.
 
 - Verify replacements consistently when PDFs retain empty text objects; cover glyph-by-glyph, spaced, transformed, rotated and paragraph layouts.
