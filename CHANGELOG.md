@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Keep rotated/skewed text selections active beyond the edit box and prevent accidental applies on selection release.
+
 - Add Sanitize & save with on-disk verification before atomic publication, image-only desktop defaults, protected-source acknowledgement and cooperative cancellation.
 - Reject retained content aliases and forged/unused payloads during sanitization and verification; write deterministic sanitized copies and check rebuilt image metadata.
 - Rank fallback fonts using run width, weight and slant; align rotated/skewed text editing, selection, caret and IME with the page geometry.

@@ -195,9 +195,19 @@ pub(super) fn show(
     if inside {
         ui.ctx().set_cursor_icon(CursorIcon::Text);
     }
-    if inside && (pointer.primary_pressed() || pointer.primary_down()) {
+    let selecting = ui.ctx().data_mut(|data| {
+        let key = id.with("affine-selection-drag");
+        let captured = if pointer.primary_pressed() {
+            inside
+        } else {
+            data.get_temp::<bool>(key).unwrap_or(false)
+        };
+        data.insert_temp(key, captured && pointer.primary_down());
+        captured && (pointer.primary_down() || pointer.primary_released())
+    });
+    if selecting && let Some(position) = pointer.interact_pos() {
         ui.memory_mut(|memory| memory.request_focus(id));
-        let local = plane.inverse(pointer.interact_pos().unwrap()).unwrap();
+        let local = plane.inverse(position).unwrap();
         let cursor = if let Some((_, galley, offset)) = &hit {
             galley.cursor_from_pos(local.to_vec2() - *offset)
         } else {
@@ -299,7 +309,11 @@ pub(super) fn show(
     if enter && (!paragraph || ui.input(|input| input.modifiers.ctrl)) {
         return Some(true);
     }
-    if pointer.primary_clicked() && !inside && edit.rejected_text.as_ref() != Some(&edit.text) {
+    if pointer.primary_clicked()
+        && !inside
+        && !selecting
+        && edit.rejected_text.as_ref() != Some(&edit.text)
+    {
         return Some(true);
     }
     if output.response.lost_focus()
@@ -422,6 +436,63 @@ mod tests {
             assert_eq!(frame(&mut edit, events).0, None);
             frame(&mut edit, vec![egui::Event::Text("X".into())]);
             assert_eq!(edit.text, "XBA");
+            // Capture drags beyond either edge without intermediate events.
+            for (start, end) in [
+                (pos, plane.point(pos2(150., 10.))),
+                (plane.point(pos2(90., 10.)), plane.point(pos2(-50., 10.))),
+            ] {
+                for events in [
+                    vec![
+                        egui::Event::PointerMoved(start),
+                        egui::Event::PointerButton {
+                            pos: start,
+                            button: egui::PointerButton::Primary,
+                            pressed: true,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    vec![egui::Event::PointerMoved(end)],
+                    vec![egui::Event::PointerButton {
+                        pos: end,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Default::default(),
+                    }],
+                ] {
+                    assert_eq!(frame(&mut edit, events).0, None);
+                }
+                let (_, commands) = frame(&mut edit, vec![egui::Event::Copy]);
+                let copied = commands.iter().any(
+                    |command| matches!(command,egui::OutputCommand::CopyText(text) if text=="XBA"),
+                );
+                assert!(
+                    copied,
+                    "Dragging beyond the affine editor must select the full text"
+                );
+            }
+            // A short selection gesture can still be classified as a click.
+            // Releasing just outside must not apply the edit as a click-away.
+            let start = plane.point(pos2(102., 10.));
+            let end = plane.point(pos2(104., 10.));
+            for (pos, pressed) in [(start, true), (end, false)] {
+                assert_eq!(
+                    frame(
+                        &mut edit,
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ]
+                    )
+                    .0,
+                    None,
+                    "A selection release must not apply the edit"
+                );
+            }
             let (_, commands) = frame(
                 &mut edit,
                 vec![key(Key::A, egui::Modifiers::COMMAND), egui::Event::Copy],

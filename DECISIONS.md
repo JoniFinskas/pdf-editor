@@ -944,3 +944,14 @@ messages and the registered OLE drop target. Raw reports and captures stay local
 Allow the portable build script to select either executable while preserving its
 default workspace build and path-remapping flags. A locked desktop executable must
 not prevent rebuilding the console binary or require closing a running editor.
+
+## Affine text selection capture
+
+Capture selection gestures that start inside the transformed text editor until
+button release, including movement beyond its bounds. Checking only the current
+pointer position leaves the selection at the previous caret when an event jumps
+past an edge. Keep capture scoped to the editor ID and ignore drags started outside.
+Do not interpret a captured release as a click-away, even when its short travel
+remains below the toolkit's drag threshold.
+Verify both directions across rotated/skewed planes and replacement/undo through
+the real worker with a generated transformed PDF.

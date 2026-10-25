@@ -19,11 +19,42 @@ fn rotated_text_edit_applies_in_place_and_undo_preserves_its_matrix() {
     assert!(original.matrix[1].abs() > 0.1);
     let at = workflow_line(&app, &ctx, 0);
     workflow_edit(&mut app, &ctx, at);
-    workflow_frame(
-        &mut app,
-        &ctx,
-        vec![workflow_key(Key::A, egui::Modifiers::COMMAND)],
-    );
+    let doc = app.doc.as_ref().unwrap();
+    let edit = doc.edit.as_ref().unwrap();
+    let page = ctx
+        .read_response(Id::new(("pdf-page", 0usize)))
+        .unwrap()
+        .rect;
+    let (plane, size) = affine_edit::line_plane(
+        &edit.line,
+        &doc.pages[0].objects.as_ref().unwrap().transform,
+        page,
+        doc.scale(),
+    )
+    .unwrap();
+    let start = plane.point(pos2(0., size.y / 2.));
+    let end = plane.point(pos2(size.x.max(40.) + 100., size.y / 2.));
+    for events in [
+        vec![
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            },
+        ],
+        vec![egui::Event::PointerMoved(end)],
+        vec![egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }],
+    ] {
+        workflow_frame(&mut app, &ctx, events);
+    }
+    assert!(app.doc.as_ref().unwrap().edit.is_some());
     workflow_frame(&mut app, &ctx, vec![egui::Event::Text("BA".into())]);
     workflow_frame(
         &mut app,
