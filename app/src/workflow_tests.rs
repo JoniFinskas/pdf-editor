@@ -1,5 +1,43 @@
 // Real worker/PDFium integration driven through egui pointer and keyboard events.
 // All files and configuration belong to generated test sessions.
+#[test]
+fn keyboard_password_submission_opens_a_generated_encrypted_document() {
+    let (mut app,ctx,source)=qol_worker();
+    let original=std::fs::read(&source).unwrap();
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let folder=recovery_safety_folder("keyboard-encrypted");
+    let path=folder.join("generated-encrypted.pdf");
+    let engine=pdf_editor_core::Engine::new(&root.join("target/debug/pdfium.dll")).unwrap();
+    let document=engine.open(&source).unwrap();
+    let _copy=document.create_working_copy(&path,"generated-password").unwrap();
+    app.open_path(path.clone());
+    let deadline=std::time::Instant::now()+std::time::Duration::from_secs(10);
+    while app.busy>0 {
+        app.poll(&ctx);
+        assert!(std::time::Instant::now()<deadline);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let request={
+        let mut frame=|events| {
+            let mut request=None;
+            let mut output=ctx.run_ui(egui::RawInput {screen_rect:Some(Rect::from_min_size(Pos2::ZERO,vec2(1000.,900.))),events,..Default::default()},|ui|request=app.password.show(ui.ctx(),&theme::palette(ui),true,Id::new("generated-encrypted-dialog")));
+            output.textures_delta.clear();request
+        };
+        for _ in 0..3 {assert!(frame(vec![]).is_none());}
+        frame(vec![egui::Event::Text("generated-password".into())]);
+        frame(vec![workflow_key(Key::Enter,Default::default())]).unwrap()
+    };
+    app.document_action(request);
+    workflow_settle(&mut app,&ctx);
+    let doc=app.doc.as_ref().unwrap();
+    assert!(doc.protected);
+    assert_eq!(doc.source,path);
+    assert!(!doc.dirty());
+    assert!(app.qol.working_copy.is_none());
+    assert_eq!(std::fs::read(source).unwrap(),original);
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
 #[path = "tool_stress_tests.rs"]
 mod tool_stress_tests;
 

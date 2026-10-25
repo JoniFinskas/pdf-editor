@@ -973,3 +973,13 @@ existing clipping/interpolation algorithm and output ordering. The generated-tex
 debug benchmark measured 5,537 to 3,587 microseconds median over 20 samples with
 identical mesh fingerprints; this measures the painting loop, not whole-app latency.
 Check clipped area, texture coordinates and vertex colors independently.
+
+## Keyboard dialog flow
+
+Keep native text editors for page numbers and passwords. Select the current page
+number on opening and retain focus after invalid Enter input. Password dialogs
+focus the first field, accept Enter only when idle and valid, move to confirmation
+when needed, and treat Escape as cancellation. Scope field IDs to the calling tab;
+discard field text and widget undo state when closing, submitting or reopening.
+Do not interpret the opening key event as submission. Generated encrypted PDFs
+verify the complete keyboard-to-worker open flow without native dialogs.

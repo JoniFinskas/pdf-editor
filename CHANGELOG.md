@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Improve keyboard control of page navigation and password dialogs; retain focus after invalid input and discard closed password-field undo history.
+
 - Reduce temporary allocations when painting rotated/skewed text while preserving clipping, texture coordinates and colors.
 
 - Wait for pending text edits before exports, printing and common document tools; cancel queued actions when edits fail or the document changes.

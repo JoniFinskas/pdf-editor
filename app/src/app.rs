@@ -4603,7 +4603,7 @@ impl eframe::App for EditorApp {
         if let Some(request) = self.organize.show(&ctx, &p, self.busy == 0) {
             self.document_action(request);
         }
-        if let Some(request) = self.password.show(&ctx, &p, self.busy == 0) {
+        if let Some(request) = self.password.show(&ctx, &p, self.busy == 0, ui.id()) {
             self.document_action(request);
         }
         if self.qol.replace_context.as_ref().is_some_and(|context|self.doc.as_ref().is_none_or(|d|*context!=(d.generation,self.current_search_options()))) {self.replace.count=None;}
@@ -7005,7 +7005,7 @@ mod tests {
                         assert!(app.stamps.show(&ctx, &p, true).is_none());
                         assert!(app.export.show(&ctx, &p, true).is_none());
                         assert!(app.crop.show(&ctx, &p, true, 1).is_none());
-                        assert!(app.password.show(&ctx, &p, true).is_none());
+                        assert!(app.password.show(&ctx, &p, true, ui.id()).is_none());
                     },
                 );
                 texts = output
