@@ -29,14 +29,11 @@ fn values(r: Rect, axis: usize) -> [f32; 3] {
     [r.min[axis], r.center()[axis], r.max[axis]]
 }
 fn active(handle: Option<usize>, axis: usize, anchor: usize) -> bool {
-    match (handle, axis, anchor) {
-        (None, _, _) => true,
-        (Some(0 | 6 | 7), 0, 0)
+    matches!((handle, axis, anchor),
+        (None, _, _) | (Some(0 | 6 | 7), 0, 0)
         | (Some(2..=4), 0, 2)
         | (Some(0..=2), 1, 0)
-        | (Some(4..=6), 1, 2) => true,
-        _ => false,
-    }
+        | (Some(4..=6), 1, 2))
 }
 fn axis_snap(
     r: Rect,

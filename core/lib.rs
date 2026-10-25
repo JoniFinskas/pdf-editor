@@ -280,7 +280,7 @@ impl Engine {
             let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
             let p = pdf.pages().get(i32::from(page))?;
             let mut text_by_object = text_index::index(self.raw, &doc.bytes, page)?;
-            if text_by_object.len() != p.objects().len() as usize {
+            if text_by_object.len() != p.objects().len() {
                 return Err(err("Text object structure changed unexpectedly"));
             }
             let mut result = vec![];

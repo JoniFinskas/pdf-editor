@@ -268,10 +268,9 @@ impl Engine {
                         if in_text {
                             return Err(err("Cannot ungroup forms invoked inside text objects"));
                         }
-                        if allow_transparency && stream.dict.has(b"Group") {
-                            if !pdf.get_dictionary(page)?.has(b"Group") {
-                                page_group = Some(stream.dict.get_deref(b"Group", &pdf)?.clone());
-                            }
+                        if allow_transparency && stream.dict.has(b"Group")
+                            && !pdf.get_dictionary(page)?.has(b"Group") {
+                            page_group = Some(stream.dict.get_deref(b"Group", &pdf)?.clone());
                         }
                         out.extend(expander.expand(stream, &resources, 0)?);
                     } else {

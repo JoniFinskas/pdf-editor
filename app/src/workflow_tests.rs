@@ -1,5 +1,8 @@
 // Real worker/PDFium integration driven through egui pointer and keyboard events.
 // All files and configuration belong to generated test sessions.
+#[path = "tool_stress_tests.rs"]
+mod tool_stress_tests;
+
 #[test]
 fn generated_recovery_snapshot_survives_crash_and_restores_unsaved_edits() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -640,4 +643,62 @@ fn glyph_text_selection_deletes_the_logical_block_and_undo_restores_it() {
     app.undo();
     workflow_settle(&mut app,&ctx);
     assert_eq!(app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().items.len(),before);
+}
+
+#[test]
+fn repeated_worker_failures_release_busy_states_and_keep_the_editor_usable() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let ctx = Context::default();
+    theme::install(&ctx);
+    let (mut app, _, _) = mock_app();
+    app.worker = Worker::spawn(ctx.clone(), root.join("target/debug/pdfium.dll"),
+        Substitution::Line, Default::default());
+    let source = root.join("tests/fixtures/generated/unicode-cid.pdf");
+    let original = std::fs::read(&source).unwrap();
+    let collision = root.join(format!("target/stress-save-collision-{}.pdf", std::process::id()));
+    std::fs::write(&collision, b"existing generated output").unwrap();
+    app.open_path(source.clone());
+    workflow_settle(&mut app, &ctx);
+    let wait = |app: &mut EditorApp| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while app.busy > 0 {
+            app.poll(&ctx);
+            assert!(std::time::Instant::now() < deadline, "Failed operation did not settle");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(app.engine_alive);
+    };
+    for iteration in 0..24 {
+        let generation = app.doc.as_ref().unwrap().generation;
+        let line = app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().lines[0].clone();
+        let draft = format!("invalid\0draft {iteration}");
+        app.doc.as_mut().unwrap().edit = Some(EditState {
+            page: 0, line, text: draft.clone(), focus: false, rejected_text: None,
+        });
+        assert!(app.commit_edit());
+        wait(&mut app);
+        assert_eq!(app.doc.as_ref().unwrap().edit.as_ref().unwrap().text, draft);
+        assert_eq!(app.doc.as_ref().unwrap().generation, generation);
+        assert!(app.doc.as_ref().unwrap().pending_edit.is_none());
+        for _ in 0..3 { assert!(!app.commit_edit()); }
+        assert_eq!(app.busy, 0);
+        app.cancel_edit();
+        app.open_path(root.join("tests/fixtures/generated/malformed.pdf"));
+        wait(&mut app);
+        assert!(!app.opening);
+        assert_eq!(app.doc.as_ref().unwrap().generation, generation);
+        app.password_action(Request::SaveAs(collision.clone()));
+        wait(&mut app);
+        assert!(!app.doc.as_ref().unwrap().dirty());
+        assert!(app.pending_save.is_none());
+        assert!(app.banners.len() <= 4);
+        app.banners.clear();
+        let at = workflow_line(&app, &ctx, 0);
+        workflow_click(&mut app, &ctx, at);
+        assert!(app.doc.as_ref().unwrap().selected_item.is_some());
+        workflow_frame(&mut app, &ctx, vec![workflow_key(Key::Escape, egui::Modifiers::NONE)]);
+    }
+    assert_eq!(std::fs::read(source).unwrap(), original);
+    assert_eq!(std::fs::read(&collision).unwrap(), b"existing generated output");
+    std::fs::remove_file(collision).unwrap();
 }

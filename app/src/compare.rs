@@ -242,11 +242,10 @@ pub struct Compare {
 }
 impl Compare {
     pub fn open_for(&mut self, source: Option<PathBuf>) {
-        if !self.open && let Some(source) = source {
-            if self.paths[0].as_ref() != Some(&source) {
-                self.clear_results();
-                self.paths = [Some(source), None];
-            }
+        if !self.open && let Some(source) = source
+            && self.paths[0].as_ref() != Some(&source) {
+            self.clear_results();
+            self.paths = [Some(source), None];
         }
         self.open = true;
     }
@@ -629,9 +628,9 @@ impl Compare {
             .max_height(height)
             .show(ui, |ui| {
                 ui.horizontal_top(|ui| {
-                    for side in 0..2 {
+                    for (side, size) in sizes.iter().enumerate() {
                         ui.vertical(|ui| {
-                            ui.set_width((sizes[side].x * scale).max(80.0));
+                            ui.set_width((size.x * scale).max(80.0));
                             let page = self
                                 .pairs
                                 .get(self.selected as usize)
@@ -648,7 +647,7 @@ impl Compare {
                             if current && let Some(texture) = &self.textures[side] {
                                 let response = ui.add(
                                     egui::Image::new(texture)
-                                        .fit_to_exact_size(sizes[side] * scale),
+                                        .fit_to_exact_size(*size * scale),
                                 );
                                 ui.painter().rect_stroke(
                                     response.rect,

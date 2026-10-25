@@ -277,6 +277,16 @@ or fixture-generation downloads. See [TEST_REPORT.md](TEST_REPORT.md),
 [DECISIONS.md](DECISIONS.md), and [the threat model](repo-starter-threat-model.md).
 Open work and known limitations are tracked in [BACKLOG.md](BACKLOG.md).
 
+Set `PDF_EDITOR_GENERATED_ONLY=1` before `cargo test --workspace --locked --offline`
+to restrict fixture traversal to generated PDFs. Stress regressions exercise
+concurrent document workers, mixed feature sequences at every page rotation,
+editable form-page transfers, repeated rejected operations, tool dismissal and
+the console commands. Test outputs belong under ignored `target/` storage.
+Set `PDF_EDITOR_TEST_CLI` to an absolute portable console executable path to
+repeat the feature integration matrix against a release build.
+Native printer dialogs, Explorer integration and desktop acceptance remain
+separate interactive checks.
+
 To regenerate synthetic PDFs, first regenerate the renamed subset with
 `python scripts/subset-fixture.py` if needed (fontTools 4.60.1), then run
 `cargo test generate_fixtures -- --ignored`. The subset script accepts the

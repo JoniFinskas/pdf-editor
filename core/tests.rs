@@ -3770,7 +3770,7 @@ fn object_layer_order_round_trips_and_undo_restores() {
     let raster = e.render(&doc, 0, 1.0).unwrap();
     let items = e.page_items(&doc, 0).unwrap();
     let red = items[items.len()-2].clone();
-    e.edit_page_items(&mut doc, &[red.clone()], ObjectAction::BringToFront).unwrap();
+    e.edit_page_items(&mut doc, std::slice::from_ref(&red), ObjectAction::BringToFront).unwrap();
     let after = e.page_items(&doc, 0).unwrap();
     assert_eq!(after.last().unwrap().bounds.left, red.bounds.left);
     assert_ne!(e.render(&doc, 0, 1.0).unwrap().rgba, raster.rgba);
@@ -4057,8 +4057,8 @@ fn batched_cursor_repairs_preserve_layout_pixels_and_history() {
             let mut changed = 0;
             for (pixel, (a, b)) in image_before
                 .rgba
-                .chunks_exact(4)
-                .zip(image_after.rgba.chunks_exact(4))
+                .as_chunks::<4>().0.iter()
+                .zip(image_after.rgba.as_chunks::<4>().0.iter())
                 .enumerate()
             {
                 if a != b {
@@ -4144,7 +4144,7 @@ fn visible_sanitization_rebuilds_complex_content_without_hidden_payloads() {
     let actual=e.pages(&doc).unwrap();
     assert!((actual[0].width-size.width).abs()<0.01);
     assert!((actual[0].height-size.height).abs()<0.01);
-    assert!(e.render(&doc,0,1.0).unwrap().rgba.chunks_exact(4).any(|p|p[0]<100));
+    assert!(e.render(&doc,0,1.0).unwrap().rgba.as_chunks::<4>().0.iter().any(|p|p[0]<100));
     assert!(doc.undo());assert_eq!(doc.bytes,original);
     fs::remove_file(path).unwrap();
     let _=page;

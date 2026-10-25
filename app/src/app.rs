@@ -4570,8 +4570,8 @@ fn editing_settings(ui: &mut Ui, p: &Palette, policy: &mut Substitution) {
 fn close_tabs_prompt(ctx: &Context, p: &Palette, single: bool, busy: bool) -> Option<bool> {
     let mut choice = None;
     let modal = egui::Modal::new(Id::new("close-tabs-confirm"))
-        .frame(modal_frame(&ctx))
-        .show(&ctx, |ui| {
+        .frame(modal_frame(ctx))
+        .show(ctx, |ui| {
             ui.set_width(360.0);
             ui.label(
                 RichText::new(if single {
@@ -4590,7 +4590,7 @@ fn close_tabs_prompt(ctx: &Context, p: &Palette, single: bool, busy: bool) -> Op
                 ui.add_space(4.0);
                 widgets::notice(
                     ui,
-                    &p,
+                    p,
                     widgets::Tone::Warn,
                     "Wait for pending document operations to finish.",
                 );
@@ -4601,7 +4601,7 @@ fn close_tabs_prompt(ctx: &Context, p: &Palette, single: bool, busy: bool) -> Op
                     .id("close-tabs-discard")
                     .look(Look::Danger)
                     .enabled(!busy)
-                    .show(ui, &p)
+                    .show(ui, p)
                     .clicked()
                 {
                     choice = Some(true);
@@ -4610,7 +4610,7 @@ fn close_tabs_prompt(ctx: &Context, p: &Palette, single: bool, busy: bool) -> Op
                     .id("close-tabs-cancel")
                     .look(Look::Outline)
                     .min_width(84.0)
-                    .show(ui, &p)
+                    .show(ui, p)
                     .clicked()
                 {
                     choice = Some(false);
