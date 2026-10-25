@@ -43,6 +43,7 @@ fn generated_worker_stage_timings() {
         engine: Some(engine),
         engine_error: String::new(),
         doc: None,
+        working_copy: None,
         generation: 0,
         policy: Substitution::Line,
     };

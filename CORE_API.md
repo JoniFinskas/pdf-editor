@@ -10,7 +10,7 @@ I/O, lopdf and PDFium errors intentionally discard internal diagnostic details.
 | Function | Inputs | Output / effect |
 | --- | --- | --- |
 | `Engine::page_items` | Document, page | Top-level text/image/path/form objects with revision, native index, kind and PDF-point bounds; capped at 20,000 objects. |
-| `Engine::edit_page_items` | Mutable document, same-page PageItems, ObjectAction | Atomic move by PDF-point delta, resize one object to PDF-point bounds, duplicate with offset, delete, or move selected objects to the front/back of the page paint order; rejects stale selections and unsupported native operations; one undo step. |
+| `Engine::edit_page_items` | Mutable document, same-page PageItems, ObjectAction | Atomic move by PDF-point delta, resize the selection into common PDF-point bounds, duplicate with offset, delete, or move selected objects to the front/back of the page paint order; rejects stale selections and unsupported native operations; one undo step. |
 | `Engine::copy_page_items` | Document, same-page PageItems | Opaque in-memory ObjectClipboard snapshot independent of subsequent edits and source-document lifetime; may be pasted into another document. |
 | `Engine::paste_page_items` | Mutable document, ObjectClipboard, target page | Copy snapshot objects onto the target page with a 12-point right/down offset; copied text/images/paths remain directly editable, source Form groups retain resources and clipping; atomic and undoable. |
 | `Engine::new` | Absolute trusted PDFium DLL path | Runtime handle; reuses the process-wide runtime for the same canonical path. |
@@ -53,8 +53,8 @@ I/O, lopdf and PDFium errors intentionally discard internal diagnostic details.
   rendering and coordinate conversion; scrolling offsets belong to the UI.
 - `EditResult::objects_changed` is zero for a no-op. A new edit clears redo;
   oldest undo snapshots are evicted when their total exceeds 256 MiB.
-- Save As leaves the original path and history unchanged. On an I/O failure a
-  newly created destination can be partial; the original remains untouched.
+- Save As leaves the original path and history unchanged. Complete, flushed output
+  is published from a same-directory temporary file; failed writes are removed.
 - Call engine work off the UI thread for large PDFs. The process-wide PDFium
   runtime serializes complete core transactions across threads, including nested
   core calls and native versioned saves. Do not initialize another independent
@@ -76,7 +76,9 @@ limits. The core has no UI, dialog, network or telemetry dependencies.
 
 - `Engine::edit_pages(document, PageEdit)` -> undoable clockwise 90° rotation, deletion, move to final zero-based index, or insertion of all source pages before an index; rejects empty documents and invalid positions.
 
-Keyboard commands are UI dispatch only: Open/Save As use `Engine::open`/`Document::save_as`, undo/redo use `Document` history, Find uses `Engine::find_text`, and zoom uses `Engine::render`.
+Keyboard commands are UI dispatch only: Open uses `Engine::open`, Save As creates
+a `WorkingCopy`, Save updates that token, undo/redo use `Document` history, Find
+uses the search APIs, and zoom uses `Engine::render`.
 
 - `Settings::load(path)` -> substitution policy and up to ten recent paths; accepts legacy policy-only files.
 - `Settings::remember(path)` -> move a path to the front, deduplicate and retain ten.
@@ -84,7 +86,7 @@ Keyboard commands are UI dispatch only: Open/Save As use `Engine::open`/`Documen
 
 - `ChangeState::default()` / `ChangeState::recovered()` -> clean or unsaved initial history marker.
 - `ChangeState::edited()` / `undone()` / `redone()` -> track a successful history transition, invalidating an abandoned save point.
-- `ChangeState::mark_saved()` -> mark the current position saved after successful Save As.
+- `ChangeState::mark_saved()` -> mark the current position saved after a successful save.
 - `ChangeState::is_dirty()` -> whether the current position differs from the reachable saved position.
 
 - `startup_path(arguments)` -> optional OS-native PDF path from arguments after the executable, accepting an optional `--`; errors on empty paths or extra arguments. Opening still uses `Engine::open`.
@@ -340,3 +342,44 @@ names receive a numeric suffix. Shared groups retain only selected widgets durin
 extraction. XFA, repeated form-page selections, conflicting non-font default
 resources and form references to unselected pages return errors without changing
 the destination or creating an output file.
+
+
+## Selection and batch editing
+
+- `Engine::page_text_characters(document, page)` returns native reading-order `TextCharacter` entries, including generated spaces/newlines and nested text. Indices are page-local character positions, separate from editable object indices; at most one million characters per page.
+- `selected_text(characters, start, end)` copies inclusive endpoints in either direction and returns Unicode text plus non-whitespace bounds, normalizing CRLF. `Engine::highlight_text_selection(document, regions)` creates one atomic highlight undo step for page/bounds pairs.
+- `Engine::format_text(document, objects, &TextFormat)` applies an exact installed embeddable family/style, size and RGB color. It verifies wording, matrices and untouched neighbors before one atomic commit.
+- `Engine::layout_page_items(document, objects, ObjectLayout)` aligns same-page objects or distributes at least three objects with equal gaps. Core axes are PDF coordinates; a UI maps visible labels through its page transform.
+- `Engine::edit_page_batch(document, &PageBatch)` rotates, deletes, moves, duplicates or inserts blank pages atomically. `before` is an insertion slot in the original page order, from zero through page count; selected pages retain document order. Unsupported bookmark/form preservation fails without mutation.
+- `Document::revision()` identifies the current selection revision, including history changes.
+
+## Search options
+
+`SearchOptions` selects case-sensitive/whole-word matching, optional page indices
+and PDF-point regions. `find_text_with_options` returns `SearchHit` bounds and
+excerpts for native reading-order text, including nested forms. Empty page lists
+match nothing. Region-scoped matches must fit within a region. Count and replace
+use `replacement_count_with_options` and `replace_text_with_options`; they include
+only safely mapped editable runs and preserve a single undo transaction.
+
+## Operation control, recovery and working copies
+
+`Engine::with_operation(&OperationControl, closure)` installs a thread-local
+cooperative control. Another thread can call `cancel()` or inspect `progress()`.
+Safe checkpoints propagate cancellation before mutation commits or output writes;
+an active native call finishes first. Controls are independent for later jobs.
+
+`Document::save_recovery(path)` writes a new PDF/history pair; `recovery_bytes()`
+serializes current bytes and undo/redo branches. `Engine::open_recovery(path, source)`
+validates a matching sidecar and all snapshots, or opens an older PDF-only recovery.
+`restore_recovery(source, bytes)` accepts an explicit source identity. Combined
+snapshot data is bounded by the 256 MiB history plus 64 MiB document allowance.
+Protected documents cannot produce recovery data. Sidecars contain document data
+and belong only in private runtime storage.
+
+`Document::create_working_copy(path, password)` exclusively creates a new file
+and returns an opaque `WorkingCopy` token. `update_working_copy(&mut token)`
+atomically updates only that session-owned destination, checking its last written
+bytes and rejecting redirected files or detected external changes. Original
+identity remains protected. The token retains encryption in memory; it is never
+serialized or persisted in session/recovery files.

@@ -14,11 +14,14 @@ pub struct Replace {
     occurrence: usize,
 }
 impl Replace {
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, idle: bool) -> Option<Request> {
+    #[cfg(test)]
+    pub fn show(&mut self,ctx:&egui::Context,p:&Palette,idle:bool)->Option<Request> { self.show_with_options(ctx,p,idle,|_|false) }
+    pub fn show_with_options(&mut self, ctx: &egui::Context, p: &Palette, idle: bool, options: impl FnOnce(&mut egui::Ui)->bool) -> Option<Request> {
         let mut request = None;
         ToolWindow::new("Find and replace", Icon::Replace)
             .width(380.0)
             .show(ctx, p, &mut self.open, |ui| {
+                if options(ui) {self.count=None;}
                 let width = ui.available_width();
                 widgets::field(ui, p, "Find", |ui| {
                     if ui
@@ -34,13 +37,13 @@ impl Replace {
                 widgets::hint(
                     ui,
                     p,
-                    "Literal, case-insensitive text. Each replacement action is one undo step.",
+                    "Literal text, using the case, word and scope options above. Each action is one undo step.",
                 );
                 match self.count {
                     Some(count) => {
                         ui.horizontal(|ui| {
                             widgets::dot(ui, if count > 0 { p.accent_strong } else { p.muted });
-                            ui.label(format!("{count} editable matches in the document"));
+                            ui.label(format!("{count} editable matches in this scope"));
                         });
                         self.occurrence = self.occurrence.clamp(1, count.max(1));
                         widgets::number(

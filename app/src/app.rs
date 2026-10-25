@@ -3,6 +3,12 @@
 
 #[path = "catalog.rs"]
 mod catalog;
+#[path = "qol.rs"]
+mod qol;
+#[path = "qol_sessions.rs"]
+mod qol_sessions;
+#[path = "qol_gestures.rs"]
+mod qol_gestures;
 use crate::icons::Icon;
 use crate::recovery::{self, AutoSave, Orphan, Session};
 use crate::theme::{self, Palette};
@@ -43,7 +49,7 @@ const SHORTCUTS: [(&str, &[&str], &str); 11] = [
     ("Search all tools", &["Ctrl", "K"], "Arrow keys choose; Enter opens."),
     ("Go to page", &["Ctrl", "G"], ""),
     ("Open a PDF", &["Ctrl", "O"], ""),
-    ("Save As", &["Ctrl", "S"], "Ctrl + Shift + S also works."),
+    ("Save working copy", &["Ctrl", "S"], "Ctrl + Shift + S creates another copy."),
     ("Undo", &["Ctrl", "Z"], ""),
     ("Redo", &["Ctrl", "Y"], "Ctrl + Shift + Z also works."),
     ("Find text", &["Ctrl", "F"], ""),
@@ -184,6 +190,7 @@ impl Tool {
 
 /// Each tab owns a complete editing session, including its worker and recovery lock.
 pub struct TabbedApp {
+    sessions: qol_sessions::Sessions,
     native_guard: Option<Box<dyn FnMut()>>,
     clipboard: crate::worker::SharedClipboard,
     tabs: Vec<(u64, EditorApp)>,
@@ -201,9 +208,13 @@ impl TabbedApp {
     }
     pub fn new(ctx: &Context, initial: pdf_editor_core::Result<Option<PathBuf>>) -> Self {
         let clipboard = crate::worker::SharedClipboard::default();
-        Self {
+        let restore=matches!(&initial,Ok(None));
+        let first=EditorApp::new(ctx,initial,clipboard.clone());
+        let sessions=qol_sessions::Sessions::new(first.config_path.as_deref());
+        let mut app=Self {
+            sessions,
             native_guard: None,
-            tabs: vec![(0, EditorApp::new(ctx, initial, clipboard.clone()))],
+            tabs: vec![(0, first)],
             clipboard,
             active: 0,
             next_id: 1,
@@ -211,7 +222,9 @@ impl TabbedApp {
             allow_exit: false,
             instance: None,
             merge_tab: None,
-        }
+        };
+        app.sessions_start(ctx,restore);
+        app
     }
     pub fn with_instance(
         mut self,
@@ -289,6 +302,7 @@ impl TabbedApp {
             })
     }
     fn remove(&mut self, id: u64, ctx: &Context) {
+        self.sessions_remember_closed(id);
         if let Some(index) = self.tabs.iter().position(|(key, _)| *key == id) {
             let (_, mut tab) = self.tabs.remove(index);
             tab.allow_close = true;
@@ -307,6 +321,7 @@ impl eframe::App for TabbedApp {
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         if let Some(guard) = &mut self.native_guard { guard(); }
         let ctx = ui.ctx().clone();
+        self.sessions_shortcuts(&ctx);
         if let Some(instance) = &self.instance {
             let requests = instance.poll();
             for request in requests {
@@ -427,8 +442,10 @@ impl eframe::App for TabbedApp {
                 }
             }
         }
+            self.sessions_tick(&ctx);
     }
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        self.sessions_flush();
         for (_, tab) in &mut self.tabs {
             eframe::App::on_exit(tab, gl);
         }
@@ -439,6 +456,7 @@ impl eframe::App for TabbedApp {
 }
 
 pub struct EditorApp {
+    qol: qol::Qol,
     surface: crate::window_state::Surface,
     tabbed: bool,
     new_tab_path: Option<PathBuf>,
@@ -814,6 +832,7 @@ impl EditorApp {
         let orphans = recovery::orphans();
         let worker = Worker::spawn(ctx.clone(), library.unwrap_or_default(), policy, clipboard);
         let mut app = Self {
+            qol: Default::default(),
             surface: Default::default(),
             tabbed: true,
             new_tab_path: None,
@@ -893,6 +912,20 @@ impl EditorApp {
     // ----- Commands -----
 
     fn send(&mut self, request: Request) {
+        if let Request::EditItems(items,pdf_editor_core::ObjectAction::Move {..}|pdf_editor_core::ObjectAction::Resize {..})|Request::LayoutItems(items,_) = &request {
+            self.qol.restore_objects=items.first().map(|first|(first.page,items.iter().map(|i|i.index).collect()));
+        }
+
+        if matches!(&request,Request::ReplacementCount(_)|Request::ReplacementCountOptions(..)) {self.qol.replace_context=self.doc.as_ref().map(|d|(d.generation,self.current_search_options()));}
+        let request = if self.qol.advanced() {
+            let options = self.current_search_options();
+            match request {
+                Request::Find(query) => Request::FindOptions(query, options),
+                Request::ReplacementCount(query) => Request::ReplacementCountOptions(query, options),
+                Request::Replace {query,text,occurrence} => Request::ReplaceOptions {query,text,occurrence,options},
+                other => other,
+            }
+        } else {request};
         if !self.worker.send(request) {
             self.engine_stopped();
         }
@@ -961,7 +994,9 @@ impl EditorApp {
         }
         self.opening = true;
         self.busy += 1;
-        self.send(Request::Open(path));
+        let request=self.restoring.as_ref().filter(|orphan|orphan.copy==path).map(|orphan|orphan.source.clone().unwrap_or_else(||path.clone()))
+            .map_or_else(||Request::Open(path.clone()),|source|Request::OpenRecovery {path:path.clone(),source});
+        self.send(request);
     }
 
     fn save_as(&mut self) {
@@ -993,7 +1028,7 @@ impl EditorApp {
     /// Save only after all preceding edits have succeeded. A rejected edit
     /// cancels this intent instead of writing an older document version.
     fn password_action(&mut self, request: Request) {
-        if matches!(request, Request::SaveAs(_) | Request::SavePassword(..)) {
+        if matches!(request, Request::SaveAs(_) | Request::SavePassword(..) | Request::SaveWorkingCopy) {
             if self.doc.is_none() || !self.engine_alive || self.pending_save.is_some() {
                 return;
             }
@@ -1226,7 +1261,7 @@ impl EditorApp {
             }
             Reply::ReplacementCount(query, count) => {
                 self.busy = self.busy.saturating_sub(1);
-                if self.replace.query == query {
+                if self.replace.query == query && self.qol.replace_context.as_ref().is_none_or(|context|self.doc.as_ref().is_some_and(|d|*context==(d.generation,self.current_search_options()))) {
                     self.replace.count = Some(count);
                 }
             }
@@ -1307,7 +1342,11 @@ impl EditorApp {
                 pages,
                 suggested,
                 protected,
+                can_undo,
+                can_redo,
             } => {
+                self.qol.document_changed();self.qol.restore_objects=None;
+                self.qol.working_copy=None; self.qol.copy_encrypted=false; self.qol.original_protected=protected;
                 self.scan_cleanup.invalidate();
                 if self.restoring.is_none()
                     && let Some(config) = &self.config_path
@@ -1384,8 +1423,8 @@ impl EditorApp {
                         .collect(),
                     suggested,
                     zoom,
-                    can_undo: false,
-                    can_redo: false,
+                    can_undo,
+                    can_redo,
                     changes: if restored.is_some() {
                         pdf_editor_core::ChangeState::recovered()
                     } else {
@@ -1402,6 +1441,7 @@ impl EditorApp {
                     current_page: 0,
                     explicit_page: None,
                 });
+                self.sessions_apply_view();
             }
             Reply::Rendered {
                 generation,
@@ -1480,6 +1520,12 @@ impl EditorApp {
                         generation,
                         lines: group_lines(text_items),
                     });
+                    if self.qol.restore_objects.as_ref().is_some_and(|(p,_)|*p==page) {
+                        let (_,indices)=self.qol.restore_objects.take().unwrap();
+                        self.qol.objects=self.doc.as_ref().unwrap().pages[usize::from(page)].objects.as_ref().unwrap().items.iter().filter(|item|indices.contains(&item.index)).cloned().collect();
+                        let primary=self.qol.primary();
+                        self.doc.as_mut().unwrap().selected_item=primary;
+                    }
                 }
             }
             Reply::Changed {
@@ -1491,6 +1537,7 @@ impl EditorApp {
                 warning,
                 objects_changed,
             } => {
+                let search_options=self.qol.advanced().then(||self.current_search_options());
                 self.busy = self.busy.saturating_sub(1);
                 let Some(doc) = &mut self.doc else { return };
                 let selected = doc.applying.take().map_or(1, |(_, _, n)| n);
@@ -1512,6 +1559,7 @@ impl EditorApp {
                     }
                 }
                 if doc.generation != generation {
+                    self.qol.document_changed();
                     self.scan_cleanup.invalidate();
                     doc.selected_item = None;
                     doc.dragging_item = None;
@@ -1522,7 +1570,7 @@ impl EditorApp {
                     self.replace.count = None;
                     if !self.find.query.is_empty() {
                         self.find.refresh_only = true;
-                        self.worker.send(Request::Find(self.find.query.clone()));
+                        self.worker.send(search_options.map_or_else(||Request::Find(self.find.query.clone()),|options|Request::FindOptions(self.find.query.clone(),options)));
                     }
                     doc.edit = None;
                     if !pages.is_empty() {
@@ -1568,6 +1616,27 @@ impl EditorApp {
                     );
                 }
             }
+            Reply::Characters {generation,page,characters} => {
+                if self.doc.as_ref().is_some_and(|d|d.generation==generation) {
+                    self.qol.pending_characters.remove(&page);
+                    match characters { Ok(chars)=>{self.qol.characters.insert(page,chars);},Err(error)=>self.banner(BannerKind::Warning,error) }
+                }
+            }
+            Reply::SearchResults {generation,query,hits,boxes} => {
+                if self.doc.as_ref().is_some_and(|d|d.generation==generation) && self.find.query==query {
+                    self.find.matches=boxes; self.qol.hits=hits;
+                    if self.find.refresh_only {self.find.active=self.find.active.min(self.find.matches.len().saturating_sub(1)); self.find.refresh_only=false;}
+                    else {self.find.active=0;self.go_match();}
+                }
+            }
+            Reply::WorkingCopySaved {path,encrypted} => {
+                self.qol.working_copy=Some(path.clone());self.qol.copy_encrypted=encrypted;
+                if let Some(doc)=&mut self.doc {
+                    doc.protected=self.qol.original_protected||encrypted;
+                    doc.name=path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                }
+                self.handle(ctx,Reply::Saved(path));
+            }
             Reply::Saved(path) => {
                 self.busy = self.busy.saturating_sub(1);
                 if let Some(doc) = &mut self.doc {
@@ -1598,6 +1667,7 @@ impl EditorApp {
             } => {
                 let Some(doc) = &mut self.doc else {
                     let _ = std::fs::remove_file(&path);
+                    let _ = std::fs::remove_file(path.with_extension("history"));
                     return;
                 };
                 doc.copying = false;
@@ -1608,6 +1678,7 @@ impl EditorApp {
                     (None, _) => {
                         // Saved or reverted while the copy was written.
                         let _ = std::fs::remove_file(&path);
+                    let _ = std::fs::remove_file(path.with_extension("history"));
                         return;
                     }
                     (Some(e), _) => Err(e),
@@ -1621,7 +1692,8 @@ impl EditorApp {
                     }
                     Err(e) => {
                         let _ = std::fs::remove_file(&path);
-                        doc.copied_generation = Some(generation);
+                    let _ = std::fs::remove_file(path.with_extension("history"));
+                        doc.next_copy=Some(ctx.input(|i|i.time)+60.0);
                         self.banner(
                             BannerKind::Warning,
                             format!("Auto-save could not write a recovery copy: {e}"),
@@ -1669,7 +1741,8 @@ impl EditorApp {
                         doc.edit = Some(edit);
                     }
                 }
-                self.banner(BannerKind::Error, message);
+                let kind=if message=="Operation cancelled" {BannerKind::Warning} else {BannerKind::Error};
+                self.banner(kind, message);
             }
         }
     }
@@ -1680,6 +1753,7 @@ impl EditorApp {
         let count = doc.pages.len();
         let current = u16::try_from(doc.current_page).unwrap_or(0);
         let mut action = None;
+        let mut batch = None;
         let mut insert = None;
         self.insert_dialog.feedback(ui,p);
         Frame::new()
@@ -1727,7 +1801,8 @@ impl EditorApp {
                 });
             });
         widgets::rule(ui, p);
-        ui.label(RichText::new("Drag a page to reorder").small().color(p.muted));
+        ui.label(RichText::new("Drag selected pages to reorder").small().color(p.muted));
+        self.page_actions(ui,p,idle);
 
         let Some(doc) = &mut self.doc else { return };
         let mut requests = Vec::new();
@@ -1738,7 +1813,7 @@ impl EditorApp {
             doc.pages.len(),
             |ui, range| {
                 for index in range.clone() {
-                    let selected = doc.current_page == index;
+                    let selected = if self.qol.pages.is_empty() {doc.current_page == index} else {self.qol.pages.contains(&index)};
                     let page = &mut doc.pages[index];
                     ui.vertical_centered(|ui| {
                         ui.set_height(THUMB_ROW);
@@ -1813,6 +1888,8 @@ impl EditorApp {
                             requests.push(Request::Thumbnail(index as u16));
                         }
                         if response.clicked() {
+                            let mods=ui.input(|i|i.modifiers);
+                            self.qol.page_click(index,mods.shift,mods.command);
                             jump = Some(index);
                         }
                         Popup::context_menu(&response).show(|ui| {
@@ -1823,6 +1900,7 @@ impl EditorApp {
                             }
                         });
                         if idle && response.drag_started() {
+                            if !self.qol.pages.contains(&index) {self.qol.page_click(index,false,false);}
                             self.dragging_page = Some(index);
                         }
                         if let Some(from) = self.dragging_page {
@@ -1842,13 +1920,14 @@ impl EditorApp {
                                 && rect.expand2(vec2(18.0,10.0)).contains(pointer) {
                                 let after=pointer.y>=rect.center().y;
                                 let to=reorder_destination(from,index,after,count);
-                                if from!=to {
+                                if from!=to || self.qol.pages.len()>1 {
                                     let y=if after {number.rect.bottom()+8.0} else {rect.top()-8.0};
                                     let y=ui.ctx().animate_value_with_time(Id::new("page-insertion-y"),y,0.10);
                                     ui.painter().line_segment([pos2(rect.left()-8.0,y),pos2(rect.right()+8.0,y)],Stroke::new(3.0,p.accent));
                                     ui.painter().circle_filled(pos2(rect.left()-8.0,y),3.0,p.accent);
                                     if ui.input(|i| i.pointer.any_released()) {
-                                        action=Some(pdf_editor_core::PageEdit::Move {from:from as u16,to:to as u16});
+                                        if self.qol.pages.len()>1 { batch=Some(pdf_editor_core::PageBatch::Move {pages:self.qol.page_indices(from),before:(index+usize::from(after)) as u16}); }
+                                        else {action=Some(pdf_editor_core::PageEdit::Move {from:from as u16,to:to as u16});}
                                     }
                                 }
                             }
@@ -1885,6 +1964,7 @@ impl EditorApp {
                 .add_filter("PDF document", &["pdf"]).pick_file()
                 .map(|path| Request::Pages(pdf_editor_core::PageEdit::Insert { path,before })));
         }
+        if let Some(batch) = batch {self.commit_edit(); self.busy+=1;self.send(Request::PageBatch(batch));}
         if let Some(action) = action {
             self.commit_edit();
             self.busy += 1;
@@ -1901,6 +1981,11 @@ impl EditorApp {
                 .as_ref()
                 .and_then(|d| d.edit.as_ref())
                 .is_some_and(|e| e.text != e.line.text);
+        if Btn::new("Font family and style…").id("text-font-format").enabled(ready).show(ui,p).clicked() {
+            self.qol.format_targets=self.formatting_targets();
+            self.qol.format_open=true;
+            if self.text_tool.fonts.is_empty() {self.send(Request::Fonts);}
+        }
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             let previous = self.text_tool.selected;
@@ -2184,12 +2269,16 @@ impl EditorApp {
                             .show(ui, p);
                         if clear.clicked() {
                             self.find.query.clear();
-                            self.find.matches.clear();
+                            self.find.matches.clear();self.qol.hits.clear();
                             self.privacy.preview = None;
                             self.find.focus = true;
                         }
                     });
                 });
+            if Btn::new("Options & results").id("search-options").show(ui,p).clicked() {
+                self.qol.search_open=true;
+                self.send(Request::FindOptions(self.find.query.clone(),self.current_search_options()));
+            }
             if Btn::new("Replace…").show(ui, p).clicked() {
                 self.replace.open = true;
                 self.replace.query = self.find.query.clone();
@@ -2257,6 +2346,7 @@ impl EditorApp {
                 },
                 Command::Tools => { self.tools_open = true; self.tools_focus = true; },
                 Command::Open => self.request_open(None),
+                Command::Save => self.save(),
                 Command::SaveAs => self.save_as(),
                 Command::Undo => self.undo(),
                 Command::Redo => self.redo(),
@@ -2432,6 +2522,7 @@ impl EditorApp {
                     self.tools_open = !self.tools_open;
                 }
                 self.document_tools(ui, p);
+                self.qol_toolbar(ui, p);
                 ui.label(RichText::new("Click to select / Double-click text to edit").small().color(p.muted));
                 ui.checkbox(&mut self.snap_enabled, "Snap").on_hover_text("Align edges and centers, center on the page, and match gaps between objects. Hold Alt to move freely; turn Snap off to disable guides and snapping.");
                 widgets::divider(ui, p, 22.0);
@@ -2465,6 +2556,7 @@ impl EditorApp {
                     .show(ui, |ui| {
                         ui.set_width(MENU_WIDTH);
                         ui.spacing_mut().item_spacing.y = 0.0;
+                        if Btn::new("Save As...").with_icon(Icon::Save).id("save-copy-as").align_left().min_width(MENU_WIDTH).enabled(idle).show(ui,p).clicked() {self.save_as();ui.close();}
                         for (section, tools) in Tool::MENU {
                             menu_caption(ui, p, section);
                             for &(kind, label, icon) in tools {
@@ -2561,16 +2653,17 @@ impl EditorApp {
             {
                 self.request_open(None);
             }
-            if Btn::new(text("Save As"))
+            if Btn::new(text("Save"))
                 .with_icon(Icon::Save)
                 .id("save-as")
                 .enabled(idle)
-                .tip("Save a copy; the original is never changed (Ctrl+S)")
+                .tip("Save working copy (Ctrl+S); first save creates a new file")
                 .show(ui, p)
                 .clicked()
             {
-                self.save_as();
+                self.save();
             }
+
             widgets::divider(ui, p, 26.0);
             let (can_undo, can_redo) = self
                 .doc
@@ -3037,7 +3130,7 @@ impl EditorApp {
         let mut requests = Vec::new();
         let mut start_edit: Option<EditState> = None;
         let mut clicked_at: Option<(usize, Pos2)> = None;
-        if doc.object_mode && !busy && doc.edit.is_none() && !ctx.text_edit_focused() {
+        if !self.qol.text_mode && doc.object_mode && !busy && doc.edit.is_none() && !ctx.text_edit_focused() {
             let clipboard_event = |paste| {
                 ctx.input_mut(|i| {
                     let found = i.events.iter().position(|event| {
@@ -3062,7 +3155,7 @@ impl EditorApp {
                 self.busy += 1;
             } else if let Some(item) = &doc.selected_item {
                 let selected=doc.pages.get(usize::from(item.page)).and_then(|page|page.objects.as_ref())
-                    .map_or_else(||vec![item.clone()],|objects|selection_items(objects,item));
+                    .map_or_else(||vec![item.clone()],|objects|self.qol.items(objects,item));
                 let request = if clipboard_event(false)
                     || ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::C))
                 {
@@ -3090,6 +3183,25 @@ impl EditorApp {
             }
         }
 
+        if !self.qol.text_mode && !busy && doc.edit.is_none() && !ctx.text_edit_focused()
+            && let Some(item)=&doc.selected_item
+            && let Some(objects)=doc.pages.get(usize::from(item.page)).and_then(|p|p.objects.as_ref()) {
+            let step=if ctx.input(|i|i.modifiers.shift) {10.0} else {1.0};
+            let mut delta=Vec2::ZERO;
+            for (key,vector) in [(Key::ArrowLeft,vec2(-step,0.0)),(Key::ArrowRight,vec2(step,0.0)),(Key::ArrowUp,vec2(0.0,-step)),(Key::ArrowDown,vec2(0.0,step))] {
+                let mods=if step>1.0 {egui::Modifiers::SHIFT} else {egui::Modifiers::NONE};
+                if ctx.input_mut(|i|i.consume_key(mods,key)) {delta+=vector;}
+            }
+            if delta!=Vec2::ZERO && let Some((dx,dy))=raster_delta(&objects.transform,delta) {
+                requests.push(Request::EditItems(self.qol.items(objects,item),pdf_editor_core::ObjectAction::Move {dx,dy})); self.busy+=1;
+            }
+        }
+        if self.qol.text_mode && !ctx.text_edit_focused() {
+            let copied=ctx.input_mut(|i| {
+                if let Some(index)=i.events.iter().position(|event|matches!(event,egui::Event::Copy)) {i.events.remove(index);true} else {i.consume_key(egui::Modifiers::COMMAND,Key::C)}
+            });
+            if copied && let Some((text,_))=self.qol.selection() {ctx.copy_text(text);}
+        }
         let output = area.show_viewport(ui, |ui, viewport| {
             let origin = ui.max_rect().min;
             ui.allocate_rect(
@@ -3104,6 +3216,11 @@ impl EditorApp {
             let mut first_visible: Option<usize> = None;
             let mut last_visible = 0;
 
+            if self.qol.text_dragging && let Some(pointer)=ctx.input(|i|i.pointer.hover_pos()) {
+                let clip=ui.clip_rect();
+                let delta=if pointer.y<clip.top()+28.0 {18.0} else if pointer.y>clip.bottom()-28.0 {-18.0} else {0.0};
+                if delta!=0.0 {ui.scroll_with_delta_animation(vec2(0.0,delta),egui::style::ScrollAnimation::none());ctx.request_repaint();}
+            }
             for (index, page) in doc.pages.iter_mut().enumerate() {
                 let size = vec2(page.info.width, page.info.height) * scale;
                 let local = Rect::from_min_size(pos2((content_w - size.x) / 2.0, y), size);
@@ -3216,6 +3333,11 @@ impl EditorApp {
                 if response.clicked() || response.dragged() {
                     doc.explicit_page = Some(index);
                     doc.current_page = index;
+                }
+                if !busy && doc.edit.is_none() && !self.drawing.active && !self.tables.selecting && !self.text_tool.adding
+                    && self.qol.on_canvas(&ctx,&response,&painter,page_no,rect,scale,page.objects.as_ref(),&mut doc.selected_item,&mut requests,p.accent) {
+                    doc.panning=false;doc.dragging_item=None;
+                    continue;
                 }
                 // Separate hit targets keep handles usable just outside page edges.
                 if !busy
@@ -3374,20 +3496,29 @@ impl EditorApp {
                         && resize_handle.is_none()
                         && (response.clicked() || response.secondary_clicked())
                     {
-                        doc.selected_item = item_hit.zip(page.objects.as_ref()).map(|(item,objects)|selection_item(objects,item));
+                        if let Some(objects)=&page.objects {
+                            let extend=ctx.input(|i|i.modifiers.shift || i.modifiers.command);
+                            let keep=response.secondary_clicked()&&item_hit.is_some_and(|item|self.qol.objects.iter().any(|picked|picked.page==item.page&&picked.revision==item.revision&&picked.index==item.index));
+                            if !keep {doc.selected_item=self.qol.select(objects,item_hit,extend);}
+                        }
                         if doc.edit.as_ref().is_none_or(|e| e.text == e.line.text) {
                             doc.edit = None;
                             self.text_tool.selection.clear();
                         }
                     }
+                    if response.drag_started() && resize_handle.is_none() && doc.object_mode
+                        && let Some(objects)=&page.objects && let Some(item)=item_hit
+                        && !self.qol.objects.iter().any(|picked|picked.page==item.page&&picked.index==item.index) {
+                        doc.selected_item=self.qol.select(objects,Some(item),false);
+                    }
                     let can_drag = doc.edit.is_none();
                     if response.drag_started() && can_drag {
                         let items = if resize_handle.is_some() {
                             doc.selected_item.as_ref().zip(page.objects.as_ref())
-                                .map_or_else(Vec::new,|(item,objects)|selection_items(objects,item))
+                                .map_or_else(Vec::new,|(item,objects)|self.qol.items(objects,item))
                         } else if doc.object_mode {
                             item_hit.zip(page.objects.as_ref())
-                                .map_or_else(Vec::new,|(item,objects)|selection_items(objects,item))
+                                .map_or_else(Vec::new,|(item,objects)|self.qol.items(objects,item))
                         } else if let Some(objects) = &page.objects {
                             objects
                                 .lines
@@ -3506,6 +3637,9 @@ impl EditorApp {
                                 drag.preview.unwrap_or_else(|| drag.bounds.translate(drag.delta))
                             })
                             .unwrap_or_else(|| bounds_rect(&objects.transform, item.bounds));
+                        for picked in &self.qol.objects {
+                            if picked.page==page_no {painter.rect_stroke(to_screen(bounds_rect(&objects.transform,picked.bounds),rect,scale),1.0,Stroke::new(1.0,p.accent),StrokeKind::Outside);}
+                        }
                         let selection = to_screen(preview_bounds, rect, scale);
                         for handle in resize_handles(selection) {
                             let square = Rect::from_center_size(handle, vec2(7.0, 7.0));
@@ -3542,7 +3676,7 @@ impl EditorApp {
                                 }
                                 if ui.button("Copy").clicked() {
                                     self.busy += 1;
-                                    requests.push(Request::CopyItems(selection_items(objects,item)));
+                                    requests.push(Request::CopyItems(self.qol.items(objects,item)));
                                     ui.close();
                                 }
                                 for (label, action) in [
@@ -3560,7 +3694,7 @@ impl EditorApp {
                                     if ui.button(label).clicked() {
                                         self.busy += 1;
                                         requests
-                                            .push(Request::EditItems(selection_items(objects,item), action));
+                                            .push(Request::EditItems(self.qol.items(objects,item), action));
                                         ui.close();
                                     }
                                 }
@@ -3800,7 +3934,7 @@ impl EditorApp {
             ui.label(RichText::new("Discard unsaved edits?").font(theme::semibold(17.0)));
             ui.add_space(2.0);
             ui.label(
-                RichText::new("Your edits have not been saved. Use Save As first to keep them; the original file stays untouched either way.")
+                RichText::new("Your edits have not been saved. Save the working copy first to keep them.")
                     .color(p.muted),
             );
             ui.add_space(12.0);
@@ -4110,6 +4244,8 @@ impl EditorApp {
 
     fn general_settings(&mut self, ui: &mut Ui, p: &Palette, autosave: &mut AutoSave) {
         self.integration.show(ui);
+        if ui.checkbox(&mut self.qol.remember_session,"Remember open tabs and reading position on this computer").changed() {self.qol.remember_changed=true;}
+        ui.label(RichText::new("Optional. Stores local file paths and view positions; passwords are never remembered.").small().color(p.muted));
         ui.add_space(20.0);
         section_title(ui, "Auto-save");
         let label = |value: AutoSave| match value.0 {
@@ -4142,7 +4278,7 @@ impl EditorApp {
                     .to_string()
             }
             (None, Some(_)) => "Copies are deleted when you save, discard your edits or close \
-                                normally. Your original file and saved copies are never \
+                                normally. Your original file is never \
                                 overwritten."
                 .to_string(),
         };
@@ -4441,7 +4577,11 @@ impl eframe::App for EditorApp {
         if let Some(request) = self.password.show(&ctx, &p, self.busy == 0) {
             self.password_action(request);
         }
-        if let Some(request) = self.replace.show(&ctx, &p, self.busy == 0) {
+        if self.qol.replace_context.as_ref().is_some_and(|context|self.doc.as_ref().is_none_or(|d|*context!=(d.generation,self.current_search_options()))) {self.replace.count=None;}
+        let mut replace=std::mem::take(&mut self.replace);
+        let replace_request=replace.show_with_options(&ctx,&p,self.busy==0,|ui|self.search_options_ui(ui));
+        self.replace=replace;
+        if let Some(request) = replace_request {
             self.commit_edit();
             self.busy += 1;
             self.send(request);
@@ -4465,6 +4605,7 @@ impl eframe::App for EditorApp {
             self.busy += 1;
             self.send(request);
         }
+        self.qol_windows(&ctx, &p);
         self.banners(&ctx, toolbar_bottom, &p);
         self.confirm_modal(&ctx, &p);
         self.restore_modal(&ctx, &p);
@@ -4476,6 +4617,7 @@ impl eframe::App for EditorApp {
         // An exit with unsaved edits that were not discarded keeps the copy
         // for the next start.
         let unsaved = self.doc.as_ref().is_some_and(DocView::dirty) && !self.allow_close;
+        if !unsaved {self.discard_recovery();}
         if let Some(session) = self.session.take()
             && !unsaved
         {
@@ -5303,6 +5445,7 @@ fn round_rect(rect: Rect, ppp: f32) -> Rect {
 #[cfg(test)]
 mod tests {
     include!("workflow_tests.rs");
+    include!("qol_workflow_tests.rs");
     use super::*;
 
     #[test]
@@ -5430,7 +5573,8 @@ mod tests {
         let (worker, inbox, outbox) = crate::worker::test_channel();
         (
             EditorApp {
-                surface: Default::default(),
+                qol: Default::default(),
+            surface: Default::default(),
                 tabbed: false,
                 new_tab_path: None,
             tools_open: true,
@@ -5515,6 +5659,7 @@ mod tests {
             ctx,
             Reply::Opened {
                 protected: false,
+                can_undo: false, can_redo: false,
                 generation: 1,
                 path: PathBuf::from("sample.pdf"),
                 name: "sample.pdf".into(),
@@ -5541,6 +5686,7 @@ mod tests {
             &ctx,
             Reply::Opened {
                 protected: false,
+                can_undo: false, can_redo: false,
                 generation: 1,
                 path: "generated.pdf".into(),
                 name: "generated.pdf".into(),
@@ -6398,7 +6544,7 @@ mod tests {
             }
             if width > 1120.0 {
                 // Wide windows label the main actions.
-                for label in ["Open", "Save As", "Undo", "Redo", "Add text", "Find"] {
+                for label in ["Open", "Save", "Undo", "Redo", "Add text", "Find"] {
                     button_center(&output.shapes, label);
                 }
             }
@@ -6497,6 +6643,7 @@ mod tests {
         assert!(first.confirm.is_none());
         assert!(requests.try_recv().is_err());
         let mut tabs = TabbedApp {
+            sessions: Default::default(),
             native_guard: None,
             clipboard: Default::default(),
             tabs: vec![(0, first), (1, second)],

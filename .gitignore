@@ -38,3 +38,8 @@ desktop.ini
 /scripts/__pycache__/
 /TEST_REPORT.md
 /MANUAL_TEST.md
+
+# Local session and recovery state
+/last-session.bin
+/session-settings.txt
+*.history

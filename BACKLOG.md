@@ -19,13 +19,10 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
 
 - **Closer fallback fonts.** When a browser-printed Type3 font lacks a typed
   character, the line falls back to the closest installed TrueType font,
-  usually Arial. Match on a size and weight hint, or offer a font choice in the
-  warning banner.
+  usually Arial. Existing text can choose an explicit family/style; automatic
+  fallback matching could additionally rank visual width and weight.
 - **Rotated and skewed text.** The edit box is always horizontal, so rotated
   runs are edited in an axis-aligned box. Rotate the box to the text matrix.
-- **Undo history after restore.** A restored recovery copy opens with unsaved
-  edits but no undo history. Store the snapshot history with the recovery copy
-  if restored sessions need undo.
 - **Icon glyphs.** Runs whose text differs between the two parsers (icon fonts)
   keep their place in the page mapping but cannot be edited.
 

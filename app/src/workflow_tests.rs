@@ -70,6 +70,11 @@ fn generated_recovery_snapshot_survives_crash_and_restores_unsaved_edits() {
             .text,
         "AB"
     );
+    assert!(app.doc.as_ref().unwrap().can_undo);
+    app.undo();workflow_settle(&mut app,&ctx);
+    assert_ne!(app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().lines[0].text,"AB");
+    app.redo();workflow_settle(&mut app,&ctx);
+    assert_eq!(app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().lines[0].text,"AB");
     let output = folder.join("restored-copy.pdf");
     app.password_action(Request::SaveAs(output.clone()));
     workflow_settle(&mut app, &ctx);

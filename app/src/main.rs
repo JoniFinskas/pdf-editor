@@ -24,6 +24,7 @@ mod paragraph;
 mod passwords;
 mod pictures;
 mod recovery;
+mod session_state;
 mod redaction;
 mod sanitize;
 

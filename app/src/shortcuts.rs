@@ -5,6 +5,7 @@ pub enum Command {
     Tools,
     GoToPage,
     Open,
+    Save,
     SaveAs,
     Undo,
     Redo,
@@ -19,11 +20,14 @@ pub fn consume(ctx: &Context, editing: bool) -> Vec<Command> {
     let mut out = Vec::new();
     let ctrl = Modifiers::COMMAND;
     let shift = ctrl | Modifiers::SHIFT;
+    if pressed(shift, Key::S) {
+        out.push(Command::SaveAs);
+    }
     for (key, command) in [
         (Key::G, Command::GoToPage),
         (Key::K, Command::Tools),
         (Key::O, Command::Open),
-        (Key::S, Command::SaveAs),
+        (Key::S, Command::Save),
         (Key::F, Command::Find),
         (Key::Minus, Command::ZoomOut),
         (Key::Num0, Command::ActualSize),
@@ -31,9 +35,6 @@ pub fn consume(ctx: &Context, editing: bool) -> Vec<Command> {
         if pressed(ctrl, key) {
             out.push(command);
         }
-    }
-    if pressed(shift, Key::S) {
-        out.push(Command::SaveAs);
     }
     if pressed(ctrl, Key::Plus)
         || pressed(ctrl, Key::Equals)
@@ -78,9 +79,9 @@ mod tests {
     fn required_shortcuts_dispatch_and_preserve_text_undo() {
         for (key, command) in [
             (Key::G, Command::GoToPage),
-        (Key::K, Command::Tools),
-        (Key::O, Command::Open),
-            (Key::S, Command::SaveAs),
+            (Key::K, Command::Tools),
+            (Key::O, Command::Open),
+            (Key::S, Command::Save),
             (Key::Z, Command::Undo),
             (Key::Y, Command::Redo),
             (Key::F, Command::Find),
@@ -91,6 +92,10 @@ mod tests {
             assert!(dispatch(key, Modifiers::NONE, false).is_empty());
         }
         assert!(dispatch(Key::Z, Modifiers::COMMAND, true).is_empty());
+        assert_eq!(
+            dispatch(Key::S, Modifiers::COMMAND | Modifiers::SHIFT, false),
+            vec![Command::SaveAs]
+        );
         assert_eq!(
             dispatch(Key::Equals, Modifiers::COMMAND | Modifiers::SHIFT, false),
             vec![Command::ZoomIn]

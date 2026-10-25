@@ -111,15 +111,18 @@ checks and their limits are recorded in [TEST_REPORT.md](TEST_REPORT.md).
 
 Auto-save keeps recovery copies of unsaved edits in
 `%LOCALAPPDATA%\PdfEditor\Recovery`, never in place of the original or a saved
-copy. They are deleted after Save As, after edits are discarded and on a normal
+copy. They are deleted after a successful save, after edits are discarded and on a normal
 exit; after an unexpected exit the editor offers to restore them. Auto-save can
 be turned off in Settings. The editor opens no network connections.
 
 Use [CORE_API.md](CORE_API.md) for integration. Create an Engine with the absolute
 path of the bundled DLL, open a file, list its text objects, then pass a selected
 object to `Engine::edit`. Rendering returns tightly packed RGBA pixels. Undo/redo
-includes whole-document font substitutions. Save As requires a new `.pdf` filename;
-existing files and the original path are never overwritten.
+includes whole-document font substitutions. Save As requires a new `.pdf` filename.
+It creates a working copy owned by this editing session; Ctrl+S can update that
+copy while the original stays protected. A missing, redirected or externally
+changed working copy requires another Save As. Ctrl+Shift+S or the document menu
+creates another copy. Encryption settings are retained in memory for repeated saves.
 
 ## Basic editing controls
 
@@ -143,10 +146,10 @@ existing files and the original path are never overwritten.
 - Text edits retain page and thumbnail previews while replacements render in the
   background. Search refreshes preserve the current viewing position. Complex
   PDF edits can still take time; this is not a guarantee of zero processing latency.
-- The Pages sidebar navigates by thumbnail. Rotate and Delete act on the current
-  page. Drag a thumbnail onto another to reorder; Insert PDF adds all source pages
+- The Pages sidebar navigates by thumbnail. Batch actions use the selected pages,
+  falling back to the current page. Drag selected thumbnails to reorder; Insert PDF adds all source pages
   before the current page. The last page cannot be deleted.
-- Ctrl+O opens, Ctrl+S saves a new copy, Ctrl+Z/Ctrl+Y undo/redo, and Ctrl+Plus/Minus zoom.
+- Ctrl+O opens, Ctrl+S saves the working copy (creating one on first save), Ctrl+Shift+S creates another copy, Ctrl+Z/Ctrl+Y undo/redo, and Ctrl+Plus/Minus zoom.
   Text fields keep their own undo history while focused.
 - Recent lists the last ten opened PDFs in the existing local settings file.
   Opening another file creates a separate tab. Closing a dirty tab or the app warns
@@ -201,7 +204,8 @@ to reveal its close button. Closing a dirty tab asks whether to discard changes.
 - Replace counts editable matches and replaces one or all while retaining the
   existing font where possible. Unsupported text mappings produce an error.
 - Encrypted PDFs prompt for a password. Save As optionally encrypts the new copy
-  with AES-256. Recovery copies are disabled for encrypted sources. A blank Save As
+  with AES-256. Recovery copies and remembered sessions exclude encrypted sources
+  and encrypted working copies. A blank Save As
   password deliberately exports an unencrypted copy.
 - Merge appends PDFs in the chosen order. Extract accepts ranges such as `1-3,5`;
   Split separates groups with semicolons, such as `1-3;4-6`. These exports are
@@ -229,6 +233,43 @@ to reveal its close button. Closing a dirty tab asks whether to discard changes.
 - Bookmarks opens a sidebar for navigation and nested entries. Add targets the
   current page; Rename, Delete and Move up/down act on the selected entry. Delete
   includes children; moving preserves the selected subtree.
+
+## Selection, search and session controls
+
+Choose **Select text** and drag across words or pages; double-click selects a word,
+triple-click selects a line. **Copy text** or Ctrl+C copies Unicode text with line
+breaks. **Highlight selection** adds editable highlights in one undo step. Text uses
+the PDF's native reading order; complex layouts can differ from visual order.
+
+**Selection tools** offers box selection, alignment and equal-gap distribution.
+Shift-click adds/removes logical text blocks or other objects. Drag the selection
+or its handles to move/resize together; arrows nudge by one PDF point and
+Shift+arrows by ten. Copy, duplicate and delete act on the whole selection.
+Alignment labels follow the displayed page orientation.
+
+Ctrl-click thumbnails to toggle pages and Shift-click for a range. Sidebar actions
+rotate, delete, duplicate or extract those pages. Drag a selected thumbnail to move
+the batch in document order. **Blank page** accepts dimensions and insertion position.
+A batch is one undo step. Deleting all pages or breaking bookmark destinations is
+refused without changing the document.
+
+Find's **Options & results** opens case/whole-word controls, scope choices and
+clickable result excerpts. Scopes include the current page, selected thumbnails
+and selected text. Find and replace uses the same options and counts only safely
+editable matches; nested text can be searchable without being replaceable.
+**Font family and style** changes existing text using installed embeddable fonts,
+including bold/italic. Unsupported styles or unsafe layout changes are refused.
+
+Long multi-step operations show progress. **Cancel** takes effect at the next safe
+step, after an active native call finishes. Cancelled mutations preserve the prior
+document and history; batch exports remove outputs they created before cancellation.
+
+Settings offers **Remember open tabs and reading position**, off by default. It
+stores unencrypted saved file paths and page/zoom/scroll locally, without passwords.
+Ctrl+Tab and Ctrl+Shift+Tab cycle tabs; Ctrl+T opens a tab, Ctrl+W closes it and
+Ctrl+Shift+T reopens a saved closed tab. Explicitly discarded edits are not reopened.
+Recovery snapshots also keep bounded undo/redo history. Recovery remains separate
+from saving a working copy and is unavailable for protected documents.
 
 ## Editing behavior
 

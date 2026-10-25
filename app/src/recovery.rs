@@ -64,7 +64,7 @@ impl AutoSave {
 }
 
 /// Writes through a uniquely named temporary file, then renames it over `path`.
-fn write_replacing(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_replacing(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = path
         .parent()
         .ok_or_else(|| io::Error::other("invalid settings path"))?;
@@ -151,12 +151,18 @@ impl Session {
         self.dir.join(format!("{PREFIX}{}.pdf", self.counter))
     }
 
+    /// The last complete copy owned by this session.
+    pub(crate) fn current_path(&self) -> Option<&Path> {
+        self.current.as_deref()
+    }
+
     /// Records a written copy of `source` and removes the previous one.
     pub fn written(&mut self, copy: PathBuf, source: &Path) -> io::Result<()> {
         write_replacing(&self.dir.join(SOURCE), source.to_string_lossy().as_bytes())?;
         if let Some(previous) = self.current.replace(copy)
             && Some(&previous) != self.current.as_ref()
         {
+            let _ = fs::remove_file(previous.with_extension("history"));
             let _ = fs::remove_file(previous);
         }
         Ok(())
@@ -165,6 +171,7 @@ impl Session {
     /// Removes the copy, for example after a save or a discard.
     pub fn clear(&mut self) {
         if let Some(copy) = self.current.take() {
+            let _ = fs::remove_file(copy.with_extension("history"));
             let _ = fs::remove_file(copy);
         }
         let _ = fs::remove_file(self.dir.join(SOURCE));

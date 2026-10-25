@@ -854,3 +854,25 @@ selected widgets, alias imported default fonts, and make colliding root names
 unique so repeated imports remain independent. Reject XFA, repeated form pages,
 unsupported resource conflicts and references to unselected pages atomically.
 Verify the editable field count before accepting or writing the result.
+
+
+### Selection and safe batch transactions
+
+Native character indices provide reading-order copying and precise search ranges;
+editable object identifiers remain separate. Batch page and object changes build
+and verify a candidate before one undo commit. Arrangement labels map through the
+page transform so rotated documents retain visual directions. Multi-step jobs use
+thread-local cooperative controls; cancellation never interrupts native calls.
+
+### Session continuity and working-copy authority
+
+Optional session files store only local unencrypted document references and view
+positions. Bounded recovery sidecars carry immutable current/undo/redo snapshots,
+validate every PDF on restore, and never persist passwords. Explicit discard removes
+owned snapshots; failed recovery writes retain their prior success marker and retry.
+
+Save As creates an exclusive new file and an opaque in-memory working-copy token.
+Only that token can authorize repeated atomic replacement, after checking the last
+written bytes and rejecting redirected files. Original document identity is retained
+throughout the session. Encryption passwords remain in the token and are cleared
+when it is dropped; reopening a saved file starts with Save As again.

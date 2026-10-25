@@ -21,12 +21,23 @@ const SAMPLE_SCALE: f32 = 4.0;
 const SAMPLE_SPAN: f32 = 1000.0;
 
 pub enum Request {
+    Characters(u16),
+    FindOptions(String, pdf_editor_core::SearchOptions),
+    ReplacementCountOptions(String, pdf_editor_core::SearchOptions),
+    ReplaceOptions { query:String, text:String, occurrence:Option<usize>, options:pdf_editor_core::SearchOptions },
+    FormatText(Vec<TextObject>, pdf_editor_core::TextFormat),
+    PageBatch(pdf_editor_core::PageBatch),
+    LayoutItems(Vec<pdf_editor_core::PageItem>, pdf_editor_core::ObjectLayout),
+    HighlightText(Vec<(u16, pdf_editor_core::Bounds)>),
+    SaveWorkingCopy,
+
     ScanPreview(u16, Option<pdf_editor_core::ScanOptions>),
     CleanupScan(u16, pdf_editor_core::ScanOptions),
     ImagesToPdf(Vec<PathBuf>, pdf_editor_core::ImagePageSize, PathBuf),
     CopyItemsPrepared(CopyJob),
     PasteItemsPrepared(u16, Option<Arc<CopySlot>>),
     Open(PathBuf),
+    OpenRecovery { path: PathBuf, source: PathBuf },
     OpenPassword(PathBuf, String),
     SavePassword(PathBuf, String),
     Bookmarks,
@@ -146,6 +157,10 @@ impl PageTransform {
 }
 
 pub enum Reply {
+    Characters {generation:u64,page:u16,characters:Result<Vec<pdf_editor_core::TextCharacter>,String>},
+    SearchResults {generation:u64,query:String,hits:Vec<pdf_editor_core::SearchHit>,boxes:Vec<(u16,Vec<[f32;4]>)>},
+    WorkingCopySaved {path:PathBuf,encrypted:bool},
+
     TableDetected(pdf_editor_core::TableGrid),
 
     ScanPreview {
@@ -186,6 +201,8 @@ pub enum Reply {
         pages: Vec<PageInfo>,
         suggested: PathBuf,
         protected: bool,
+        can_undo: bool,
+        can_redo: bool,
     },
     Rendered {
         generation: u64,
@@ -289,7 +306,26 @@ impl SharedClipboard {
     }
 }
 
+#[derive(Clone, Default)]
+struct ActiveJob(Arc<Mutex<Option<pdf_editor_core::OperationControl>>>);
+impl ActiveJob {
+    fn start(&self) -> pdf_editor_core::OperationControl {
+        let control = pdf_editor_core::OperationControl::default();
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(control.clone());
+        control
+    }
+    fn finish(&self) { *self.0.lock().unwrap_or_else(|e| e.into_inner()) = None; }
+    fn cancel(&self) -> bool {
+        let current = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(control) = current.as_ref() { control.cancel(); true } else { false }
+    }
+    fn progress(&self) -> Option<pdf_editor_core::OperationProgress> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).as_ref()?.progress()
+    }
+}
+
 pub struct Worker {
+    active: ActiveJob,
     clipboard: Option<SharedClipboard>,
     requests: Sender<Request>,
     replies: Receiver<Reply>,
@@ -305,17 +341,24 @@ impl Worker {
         let (requests, inbox) = channel();
         let (outbox, replies) = sync_channel(1);
         let shared = clipboard.clone();
+        let active = ActiveJob::default();
+        let job = active.clone();
         // If spawning fails the closure and its sender are dropped, so the
         // first poll reports a disconnected engine.
         let _ = thread::Builder::new()
             .name("pdf-engine".into())
-            .spawn(move || run(ctx, library, policy, clipboard, inbox, outbox));
+            .spawn(move || run(ctx, library, policy, clipboard, inbox, outbox, job));
         Self {
+            active,
             clipboard: Some(shared),
             requests,
             replies,
         }
     }
+
+    /// Progress for the currently executing job only.
+    pub fn progress(&self) -> Option<pdf_editor_core::OperationProgress> { self.active.progress() }
+    pub fn cancel(&self) -> bool { self.active.cancel() }
 
     /// Returns false when the engine thread is gone.
     pub fn send(&self, request: Request) -> bool {
@@ -352,6 +395,7 @@ struct State {
     engine: Option<Engine>,
     engine_error: String,
     doc: Option<Document>,
+    working_copy: Option<pdf_editor_core::WorkingCopy>,
     generation: u64,
     policy: Substitution,
 }
@@ -363,6 +407,7 @@ fn run(
     clipboard: SharedClipboard,
     inbox: Receiver<Request>,
     outbox: SyncSender<Reply>,
+    active: ActiveJob,
 ) {
     let (engine, engine_error) = match Engine::new(&library) {
         Ok(engine) => (Some(engine), String::new()),
@@ -376,6 +421,7 @@ fn run(
         engine,
         engine_error,
         doc: None,
+        working_copy: None,
         generation: 0,
         policy,
     };
@@ -388,7 +434,16 @@ fn run(
         }
         let batch = coalesce(batch);
         for request in batch {
-            let reply = catch_unwind(AssertUnwindSafe(|| handle(&mut state, request)))
+            let cancellable=matches!(&request,Request::CleanupScan(..)|Request::ImagesToPdf(..)|Request::Merge(..)|Request::Extract(..)|Request::Split(..)|Request::ExportWord(..)|Request::ExportImages(..)|Request::Compress(..)|Request::Ocr(..)|Request::PageBatch(..)|Request::LayoutItems(..)|Request::HighlightText(..)|Request::FormatText(..)|Request::Replace {..}|Request::ReplaceOptions {..}|Request::EditParagraph(..)|Request::Print);
+            let control = if cancellable {active.start()} else {Default::default()};
+            let reply = catch_unwind(AssertUnwindSafe(|| {
+                pdf_editor_core::operation::with_control(&control, || {
+                    if let Err(error) = pdf_editor_core::operation::checkpoint("Processing document", 0, 1) {
+                        return Some(Reply::Failed { message: error.to_string(), blocking: page_of(&request).is_none(), page: page_of(&request) });
+                    }
+                    handle(&mut state, request)
+                })
+            }))
                 .unwrap_or_else(|_| {
                     Some(Reply::Failed {
                         message: "An internal error occurred while processing the document.".into(),
@@ -396,6 +451,7 @@ fn run(
                         page: None,
                     })
                 });
+            active.finish();
             if let Some(reply) = reply {
                 // Wake the UI before a bounded send can wait for a free slot.
                 ctx.request_repaint();
@@ -459,7 +515,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
         });
     };
     let page = page_of(&request);
-    let blocking = page.is_none() && !matches!(request, Request::Find(_) | Request::Fonts);
+    let blocking = page.is_none() && !matches!(request, Request::Find(_) | Request::FindOptions(..) | Request::Characters(_) | Request::Fonts);
     let failed = |e: pdf_editor_core::Error| {
         Some(Reply::Failed {
             message: e.to_string(),
@@ -469,6 +525,51 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
+        Request::Characters(page) => Some(Reply::Characters { generation:state.generation,page,
+            characters:engine.page_text_characters(state.doc.as_ref()?,page).map_err(|e|e.to_string()) }),
+        Request::FindOptions(query, options) => {
+            let doc=state.doc.as_ref()?;
+            match engine.find_text_with_options(doc,&query,&options).and_then(|hits| {
+                let boxes=search_boxes(engine,doc,&hits)?; Ok((hits,boxes))
+            }) {
+                Ok((hits,boxes))=>Some(Reply::SearchResults {generation:state.generation,query,hits,boxes}),
+                Err(e)=>failed(e),
+            }
+        }
+        Request::ReplacementCountOptions(query,options) => match engine.replacement_count_with_options(state.doc.as_ref()?,&query,&options) {
+            Ok(count)=>Some(Reply::ReplacementCount(query,count)), Err(e)=>failed(e),
+        },
+        Request::ReplaceOptions {query,text,occurrence,options} => match engine.replace_text_with_options(state.doc.as_mut()?,&query,&text,occurrence,&options) {
+            Ok(count)=>{state.generation+=u64::from(count>0);Some(changed(state,ChangeKind::Edit,Some(format!("Replaced {count} matches.")),count))},
+            Err(e)=>failed(e),
+        },
+        Request::FormatText(objects,format)=>match engine.format_text(state.doc.as_mut()?,&objects,&format) {
+            Ok(result)=>{state.generation+=u64::from(result.objects_changed>0);Some(content_changed(state,ChangeKind::Edit,result.warning,result.objects_changed))},
+            Err(e)=>failed(e),
+        },
+        Request::PageBatch(edit)=>{
+            let doc=state.doc.as_mut()?;let before=doc.revision();
+            match engine.edit_page_batch(doc,&edit) {
+                Ok(())=>{let change=usize::from(state.doc.as_ref()?.revision()!=before);state.generation+=change as u64;Some(changed(state,ChangeKind::Edit,None,change))},
+                Err(e)=>failed(e),
+            }
+        }
+        Request::LayoutItems(items,layout)=>{
+            let doc=state.doc.as_mut()?;let before=doc.revision();
+            match engine.layout_page_items(doc,&items,layout) {
+                Ok(())=>{let change=usize::from(state.doc.as_ref()?.revision()!=before);state.generation+=change as u64;Some(content_changed(state,ChangeKind::Edit,None,change))},
+                Err(e)=>failed(e),
+            }
+        }
+        Request::HighlightText(regions)=>match engine.highlight_text_selection(state.doc.as_mut()?,&regions) {
+            Ok(())=>{state.generation+=1;Some(content_changed(state,ChangeKind::Edit,None,1))},Err(e)=>failed(e),
+        },
+        Request::SaveWorkingCopy=>{
+            let Some(copy)=state.working_copy.as_mut() else {return failed(pdf_editor_core::Error("Create a working copy with Save As first".into()));};
+            match state.doc.as_ref()?.update_working_copy(copy) {
+                Ok(())=>Some(Reply::WorkingCopySaved{path:copy.path().to_owned(),encrypted:copy.encrypted()}),Err(e)=>failed(e),
+            }
+        }
         Request::ScanPreview(page, options) => match engine
             .scan_preview(state.doc.as_ref()?, page)
             .and_then(|picture| match &options {
@@ -1046,6 +1147,20 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 Err(e) => failed(e),
             }
         }
+        Request::OpenRecovery { path, source } => {
+            let mut doc = match engine.open_recovery(&path, &source) {
+                Ok(doc) => doc, Err(error) => return failed(error),
+            };
+            let pages = match engine.pages(&doc) { Ok(pages) => pages, Err(error) => return failed(error) };
+            doc.substitution = state.policy;
+            let suggested = doc.suggested_save_path();
+            let can_undo = doc.can_undo();
+            let can_redo = doc.can_redo();
+            state.working_copy = None;
+            state.doc = Some(doc);
+            state.generation += 1;
+            Some(Reply::Opened { generation: state.generation, name: source.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Recovered.pdf".into()), path: source, pages, suggested, protected: false, can_undo, can_redo })
+        }
         Request::Open(path) => handle(state, Request::OpenPassword(path, String::new())),
         Request::OpenPassword(path, password) => {
             let mut doc = match engine.open_with_password(&path, &password) {
@@ -1062,6 +1177,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             };
             doc.substitution = state.policy;
             let suggested = doc.suggested_save_path();
+            state.working_copy = None;
             state.doc = Some(doc);
             state.generation += 1;
             let name = path
@@ -1075,6 +1191,8 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 pages,
                 suggested,
                 protected,
+                can_undo: false,
+                can_redo: false,
             })
         }
         Request::Render { page, scale } => {
@@ -1148,25 +1266,18 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             }
             Some(changed(state, kind, None, usize::from(moved)))
         }
-        Request::SavePassword(path, password) => {
-            match state.doc.as_ref()?.save_as_with_password(&path, &password) {
-                Ok(()) => Some(Reply::Saved(path)),
-                Err(e) => failed(e),
-            }
-        }
-        Request::SaveAs(path) => {
-            let doc = state.doc.as_ref()?;
-            match doc.save_as(&path) {
-                Ok(()) => Some(Reply::Saved(path)),
-                Err(e) => failed(e),
-            }
-        }
+        Request::SavePassword(path,password)=>match state.doc.as_ref()?.create_working_copy(&path,&password) {
+            Ok(copy)=>{let encrypted=copy.encrypted();state.working_copy=Some(copy);Some(Reply::WorkingCopySaved{path,encrypted})},Err(e)=>failed(e),
+        },
+        Request::SaveAs(path)=>match state.doc.as_ref()?.create_working_copy(&path,"") {
+            Ok(copy)=>{state.working_copy=Some(copy);Some(Reply::WorkingCopySaved{path,encrypted:false})},Err(e)=>failed(e),
+        },
         Request::Snapshot(path) => {
             let doc = state.doc.as_ref()?;
-            let error = if doc.is_password_protected() {
+            let error = if doc.is_password_protected() || state.working_copy.as_ref().is_some_and(|copy|copy.encrypted()) {
                 Some("Recovery copies are disabled for password-protected documents".into())
             } else {
-                doc.save_as(&path).err().map(|e| e.to_string())
+                doc.save_recovery(&path).err().map(|e| e.to_string())
             };
             Some(Reply::Snapshot {
                 generation: state.generation,
@@ -1185,6 +1296,20 @@ fn page_of(request: &Request) -> Option<u16> {
         }
         _ => None,
     }
+}
+
+fn search_boxes(engine:&Engine,doc:&Document,hits:&[pdf_editor_core::SearchHit])->pdf_editor_core::Result<Vec<(u16,Vec<[f32;4]>)>> {
+    let mut transforms=std::collections::BTreeMap::new();
+    hits.iter().map(|hit| {
+        let transform=if let Some(t)=transforms.get(&hit.page) {*t} else {
+            let t=page_transform(engine,doc,hit.page)?;transforms.insert(hit.page,t);t
+        };
+        let boxes=hit.bounds.iter().map(|b| {
+            let points=[transform.apply(b.left,b.bottom),transform.apply(b.right,b.bottom),transform.apply(b.left,b.top),transform.apply(b.right,b.top)];
+            [points.iter().map(|p|p.0).fold(f32::INFINITY,f32::min),points.iter().map(|p|p.1).fold(f32::INFINITY,f32::min),points.iter().map(|p|p.0).fold(f32::NEG_INFINITY,f32::max),points.iter().map(|p|p.1).fold(f32::NEG_INFINITY,f32::max)]
+        }).collect();
+        Ok((hit.page,boxes))
+    }).collect()
 }
 
 fn changed(
@@ -1255,6 +1380,7 @@ pub(crate) fn test_channel() -> (Worker, Receiver<Request>, Sender<Reply>) {
     let (outbox, replies) = channel();
     (
         Worker {
+            active: ActiveJob::default(),
             clipboard: None,
             requests,
             replies,
@@ -1282,6 +1408,7 @@ mod clipboard_tests {
         let expected = engine.text_objects(&doc, 0).unwrap()[0].text.clone();
         let shared = SharedClipboard::default();
         let mut source = State {
+            working_copy: None,
             clipboard: shared.clone(),
             engine: Some(engine),
             engine_error: String::new(),
@@ -1308,6 +1435,7 @@ mod clipboard_tests {
             let engine = Engine::new(&library).unwrap();
             let doc = engine.open(&path).unwrap();
             let mut destination = State {
+            working_copy: None,
                 clipboard: shared,
                 engine: Some(engine),
                 engine_error: String::new(),
@@ -1374,6 +1502,7 @@ mod clipboard_tests {
         let items = source_engine.page_items(&source_doc, 0).unwrap();
         let shared = SharedClipboard::default();
         let mut source = State {
+            working_copy: None,
             clipboard: shared.clone(),
             engine: Some(source_engine),
             engine_error: String::new(),
@@ -1396,6 +1525,7 @@ mod clipboard_tests {
             .unwrap()
             .len();
         let mut destination = State {
+            working_copy: None,
             clipboard: shared.clone(),
             engine: Some(destination_engine),
             engine_error: String::new(),
@@ -1442,3 +1572,18 @@ mod clipboard_tests {
 #[cfg(test)]
 #[path = "latency_tests.rs"]
 mod latency_tests;
+
+#[cfg(test)]
+mod operation_tests {
+    use super::*;
+    #[test]
+    fn cancelling_the_active_job_never_cancels_a_later_job() {
+        let active = ActiveJob::default();
+        assert!(!active.cancel());
+        let first = active.start();
+        assert!(active.cancel()); assert!(first.is_cancelled());
+        active.finish(); assert!(!active.cancel()); assert!(active.progress().is_none());
+        let second = active.start(); assert!(!second.is_cancelled());
+        active.finish();
+    }
+}

@@ -4,6 +4,16 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Select words, lines and text ranges across pages for Unicode copying and one-step highlighting.
+- Shift-click or marquee-select objects; move, resize, copy, delete, nudge, align and distribute selections together, including rotated pages.
+- Select multiple thumbnails for batch page actions, drag reordering, duplication and blank-page insertion.
+- Show long-operation progress with cooperative cancellation and export cleanup.
+- Apply installed font families, bold/italic, size and color to existing text with preservation checks.
+- Optionally remember unencrypted tabs and reading positions; add tab shortcuts, reopen closed tabs and restore recovery undo/redo history.
+- Add search case/whole-word options, page/text scopes and result excerpts, with consistent replacement counting.
+- Save a session-owned working copy with Ctrl+S while protecting the original, retaining encryption and refusing detected external changes; Ctrl+Shift+S creates another copy.
+- Retry failed recovery writes and remove discarded recovered snapshots.
+
 - Serialize PDF engine transactions across tabs and comparison jobs to prevent concurrent native saves from corrupting processing results.
 - Preserve editable fields, appearances and default fonts when inserting, merging, splitting or extracting form pages; keep repeated imports independent.
 
