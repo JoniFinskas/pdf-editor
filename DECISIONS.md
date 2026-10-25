@@ -983,3 +983,14 @@ when needed, and treat Escape as cancellation. Scope field IDs to the calling ta
 discard field text and widget undo state when closing, submitting or reopening.
 Do not interpret the opening key event as submission. Generated encrypted PDFs
 verify the complete keyboard-to-worker open flow without native dialogs.
+
+## Export destinations and stopped-engine dispatch
+
+Apply the desktop recovery-storage guard to every file and folder export before
+dispatch, including extraction, split, images, Word, tables and image conversion.
+Probe folder outputs as children so the existing canonical-parent check also
+rejects recovery-root and junction-alias destinations. A generated regression
+confirmed an extracted file could otherwise be deleted during recovery cleanup.
+Keep image conversion independent of an open document, while requiring a live
+engine. Always clear busy/opening/pending state after a failed worker send, even
+when shutdown was already reported; emit the restart notice only once.

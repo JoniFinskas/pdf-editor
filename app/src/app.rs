@@ -957,12 +957,12 @@ impl EditorApp {
     }
 
     fn engine_stopped(&mut self) {
+        self.pending_action = None;
+        self.pending_comparison=None;
+        self.busy = 0;
+        self.opening = false;
         if self.engine_alive {
             self.engine_alive = false;
-            self.pending_action = None;
-            self.pending_comparison=None;
-            self.busy = 0;
-            self.opening = false;
             self.banner(
                 BannerKind::Error,
                 "The PDF engine stopped. Restart the editor to continue.",
@@ -1060,17 +1060,21 @@ impl EditorApp {
     /// Run document actions only after preceding edits have succeeded.
     /// A rejected edit cancels the intent instead of using an older version.
     fn document_action(&mut self, request: Request) {
-        if !matches!(request, Request::OpenPassword(..)) {
-            if self.doc.is_none() || !self.engine_alive || self.opening || self.pending_action.is_some() {
-                return;
-            }
-            let destination=match &request {
-                Request::SaveAs(path)|Request::SavePassword(path,_)|Request::ExportSanitized(_,path)=>Some(path),
-                Request::SaveWorkingCopy=>self.qol.working_copy.as_ref(),
-                _=>None,
-            };
-            if destination.is_some_and(|path|self.recovery_destination(path)) {
-                self.banner(BannerKind::Warning,"Choose a folder outside recovery storage. Recovery folders are reserved for temporary copies.");
+        if !self.engine_alive { return; }
+        let reserved = match &request {
+            Request::SaveAs(path)|Request::SavePassword(path,_)|Request::ExportSanitized(_,path)
+                |Request::Extract(_,path)|Request::ExportWord(path)|Request::ExportTable(_,_,path)
+                |Request::ImagesToPdf(_,_,path) => self.recovery_destination(path),
+            Request::SaveWorkingCopy => self.qol.working_copy.as_ref().is_some_and(|path|self.recovery_destination(path)),
+            Request::Split(_,folder)|Request::ExportImages(_,_,_,folder) => self.recovery_destination(&folder.join("output")),
+            _ => false,
+        };
+        if reserved {
+            self.banner(BannerKind::Warning,"Choose a folder outside recovery storage.");
+            return;
+        }
+        if !matches!(request, Request::OpenPassword(..)|Request::ImagesToPdf(..)) {
+            if self.doc.is_none() || self.opening || self.pending_action.is_some() {
                 return;
             }
             self.commit_edit();
@@ -4518,8 +4522,7 @@ impl eframe::App for EditorApp {
             self.go_to_page(page);
         }
         if let Some(request) = self.image_create.show(&ctx, &p, self.busy == 0) {
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         if let Some(request) = self.scan_cleanup.show(
             &ctx,

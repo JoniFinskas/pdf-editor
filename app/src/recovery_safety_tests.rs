@@ -1,4 +1,99 @@
 // Recovery boundary checks use generated PDFs and isolated runtime folders.
+#[test]
+fn extraction_rejects_recovery_storage_before_cleanup_can_delete_the_export() {
+    let (mut app, ctx, _) = qol_worker();
+    let folder = recovery_safety_folder("extract-output");
+    app.session = Some(Session::start_in(&folder).unwrap());
+    let output = app.session.as_mut().unwrap().next_path();
+    app.document_action(Request::Extract("1".into(), output.clone()));
+    workflow_settle(&mut app, &ctx);
+    let exported = output.exists();
+    eframe::App::on_exit(&mut app, None);
+    let removed = !output.exists();
+    std::fs::remove_dir_all(folder).unwrap();
+    assert!(!exported, "Export entered recovery storage; deleted on exit: {removed}");
+}
+
+#[test]
+fn all_export_targets_reject_recovery_files_and_folders() {
+    let ctx = Context::default();
+    let (mut app, inbox, _outbox) = mock_app();
+    opened(&mut app, &ctx);
+    let folder = recovery_safety_folder("export-targets");
+    app.session = Some(Session::start_in(&folder).unwrap());
+    let output = app.session.as_mut().unwrap().next_path();
+    let directory = output.parent().unwrap();
+    let requests = [
+        Request::Extract("1".into(),output.clone()),
+        Request::ExportWord(output.with_extension("docx")),
+        Request::ExportTable(pdf_editor_core::TableGrid {cells:vec![vec!["Generated".into()]]},pdf_editor_core::TableFormat::Csv,output.with_extension("csv")),
+        Request::Split("1".into(),directory.to_owned()),
+        Request::ExportImages("1".into(),36,pdf_editor_core::PageImageFormat::Png,directory.to_owned()),
+        Request::ImagesToPdf(vec![],pdf_editor_core::ImagePageSize::A4,output.clone()),
+    ];
+    for (index,request) in requests.into_iter().enumerate() {
+        if index==5 {app.doc=None;}
+        app.document_action(request);
+        assert_eq!(app.busy,0,"Export {index} reached the worker");
+        assert!(inbox.try_recv().is_err());
+        assert!(app.engine_alive);
+    }
+    app.session.take().unwrap().close();
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn image_conversion_can_export_without_an_open_document() {
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let folder=recovery_safety_folder("standalone-images");
+    let engine=pdf_editor_core::Engine::new(&root.join("target/debug/pdfium.dll")).unwrap();
+    let source=engine.open(&root.join("tests/fixtures/generated/unicode-cid.pdf")).unwrap();
+    let pictures=engine.export_page_images(&source,&[0],36,pdf_editor_core::PageImageFormat::Png,&folder).unwrap();
+    let ctx=Context::default();
+    let (mut app,_,_)=mock_app();
+    app.worker=Worker::spawn(ctx.clone(),root.join("target/debug/pdfium.dll"),Substitution::Line,Default::default());
+    let output=folder.join("created.pdf");
+    app.document_action(Request::ImagesToPdf(pictures,pdf_editor_core::ImagePageSize::A4,output.clone()));
+    let deadline=std::time::Instant::now()+std::time::Duration::from_secs(10);
+    while app.busy>0 {
+        app.poll(&ctx);
+        assert!(std::time::Instant::now()<deadline);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(app.doc.is_none());
+    assert!(app.engine_alive);
+    assert_eq!(engine.pages(&engine.open(&output).unwrap()).unwrap().len(),1);
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn independent_actions_keep_busy_clear_after_engine_shutdown() {
+    let (mut app,inbox,_outbox)=mock_app();
+    app.engine_stopped();
+    for request in [Request::OpenPassword("generated.pdf".into(),"generated-password".into()),
+        Request::ImagesToPdf(vec![],pdf_editor_core::ImagePageSize::A4,"generated-output.pdf".into())] {
+        app.document_action(request);
+        assert_eq!(app.busy,0,"Stopped engine accepted independent work");
+        assert!(inbox.try_recv().is_err());
+    }
+}
+
+#[test]
+fn repeated_engine_shutdown_clears_work_after_a_failed_send() {
+    let (mut app,inbox,_outbox)=mock_app();
+    drop(inbox);
+    app.engine_stopped();
+    app.busy=1;
+    app.opening=true;
+    app.pending_action=Some(Request::SaveAs("generated.pdf".into()));
+    app.pending_comparison=Some(1);
+    app.send(Request::Print);
+    assert_eq!(app.busy,0);
+    assert!(!app.opening);
+    assert!(app.pending_action.is_none() && app.pending_comparison.is_none());
+    assert_eq!(app.banners.iter().filter(|banner|banner.kind==BannerKind::Error).count(),1);
+}
+
 fn recovery_safety_folder(label: &str) -> PathBuf {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -199,6 +294,12 @@ fn recovery_directory_junctions_preserve_external_files_and_reject_save_aliases(
         assert_eq!(app.busy, 0);
         assert!(!output.exists());
         assert!(app.qol.working_copy.is_none());
+    }
+    for request in [Request::Extract("1".into(),alias.join("extract.pdf")),
+        Request::Split("1".into(),alias.clone()),
+        Request::ExportImages("1".into(),36,pdf_editor_core::PageImageFormat::Png,alias.clone())] {
+        app.document_action(request);
+        assert_eq!(app.busy,0,"Export bypassed the recovery junction guard");
     }
     app.session.take().unwrap().close();
     assert!(!snapshot.exists());
