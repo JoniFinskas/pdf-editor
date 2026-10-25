@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Protect saved PDFs from recovery cleanup: reject recovery-folder Save As destinations, preserve unrecognized files and directories, and suggest a safe filename when source metadata is missing.
+
 - Select words, lines and text ranges across pages for Unicode copying and one-step highlighting.
 - Shift-click or marquee-select objects; move, resize, copy, delete, nudge, align and distribute selections together, including rotated pages.
 - Select multiple thumbnails for batch page actions, drag reordering, duplication and blank-page insertion.

@@ -876,3 +876,14 @@ Only that token can authorize repeated atomic replacement, after checking the la
 written bytes and rejecting redirected files. Original document identity is retained
 throughout the session. Encryption passwords remain in the token and are cleared
 when it is dropped; reopening a saved file starts with Save As again.
+
+
+### Recovery storage ownership
+
+Recovery directories are reserved for runtime snapshots, not saved working copies.
+Resolve output parents before dispatching Save As, encrypted saves or working-copy
+updates so directory aliases cannot bypass that boundary. Missing source metadata
+uses a filename-only suggestion. Cleanup removes only numbered snapshots, their
+history sidecars, metadata/lock files and recognized interrupted temporary writes;
+it never recursively removes unknown entries or traverses redirected directories.
+This prevents recovery retirement from deleting unrelated saved documents.

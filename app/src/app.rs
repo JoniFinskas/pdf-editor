@@ -1012,12 +1012,14 @@ impl EditorApp {
             return;
         }
         if self.picker.pending() { return; }
-        let suggested = doc.suggested.clone();
+        let suggested = if self.recovery_destination(&doc.suggested) {
+            PathBuf::from("Recovered_edited.pdf")
+        } else {doc.suggested.clone()};
         self.picker_save = true;
         if let Err(error) = self.picker.start(move || {
             let mut dialog = rfd::FileDialog::new().set_title("Save As")
                 .add_filter("PDF document", &["pdf"]);
-            if let Some(dir) = suggested.parent() { dialog = dialog.set_directory(dir); }
+            if let Some(dir) = suggested.parent().filter(|dir|!dir.as_os_str().is_empty()) { dialog = dialog.set_directory(dir); }
             if let Some(name) = suggested.file_name() { dialog = dialog.set_file_name(name.to_string_lossy()); }
             dialog.save_file()
         }) {
@@ -1030,6 +1032,15 @@ impl EditorApp {
     fn password_action(&mut self, request: Request) {
         if matches!(request, Request::SaveAs(_) | Request::SavePassword(..) | Request::SaveWorkingCopy) {
             if self.doc.is_none() || !self.engine_alive || self.pending_save.is_some() {
+                return;
+            }
+            let destination=match &request {
+                Request::SaveAs(path)|Request::SavePassword(path,_)=>Some(path),
+                Request::SaveWorkingCopy=>self.qol.working_copy.as_ref(),
+                _=>None,
+            };
+            if destination.is_some_and(|path|self.recovery_destination(path)) {
+                self.banner(BannerKind::Warning,"Choose a folder outside recovery storage. Recovery folders are reserved for temporary copies.");
                 return;
             }
             self.commit_edit();
@@ -1045,6 +1056,14 @@ impl EditorApp {
         self.opening = matches!(request, Request::OpenPassword(..));
         self.busy += 1;
         self.send(request);
+    }
+
+    fn recovery_destination(&self, path: &std::path::Path) -> bool {
+        self.session.as_ref().is_some_and(|s|s.contains_output(path))
+            || self.restoring.as_ref().is_some_and(|o|o.contains_output(path))
+            || self.doc.as_ref().and_then(|d|d.restored_from.as_ref()).is_some_and(|o|o.contains_output(path))
+            || self.orphans.iter().any(|o|o.contains_output(path))
+            || recovery::root().is_some_and(|root|recovery::contains_output(&root,path))
     }
 
     fn undo(&mut self) {
@@ -1390,7 +1409,8 @@ impl EditorApp {
                 let (name, source, suggested) = match &restored {
                     Some(orphan) => {
                         let source = orphan.source.clone().unwrap_or(path);
-                        let suggested = edited_name(&source).unwrap_or(suggested);
+                        let suggested = orphan.source.as_deref().and_then(edited_name)
+                            .unwrap_or_else(||PathBuf::from("Recovered_edited.pdf"));
                         (format!("{} (recovered)", orphan.name()), source, suggested)
                     }
                     None => (name, path, suggested),
@@ -5446,6 +5466,7 @@ fn round_rect(rect: Rect, ppp: f32) -> Rect {
 mod tests {
     include!("workflow_tests.rs");
     include!("qol_workflow_tests.rs");
+    include!("recovery_safety_tests.rs");
     use super::*;
 
     #[test]

@@ -114,6 +114,10 @@ Auto-save keeps recovery copies of unsaved edits in
 copy. They are deleted after a successful save, after edits are discarded and on a normal
 exit; after an unexpected exit the editor offers to restore them. Auto-save can
 be turned off in Settings. The editor opens no network connections.
+Recovery folders are reserved for temporary copies; Save As requires another
+folder. Cleanup removes only recognized recovery artifacts, preserving unrelated
+files and subdirectories. A restored copy with missing source metadata suggests
+`Recovered_edited.pdf` without preselecting its recovery directory.
 
 Use [CORE_API.md](CORE_API.md) for integration. Create an Engine with the absolute
 path of the bundled DLL, open a file, list its text objects, then pass a selected

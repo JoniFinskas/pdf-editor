@@ -104,6 +104,94 @@ pub fn root() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("PdfEditor/Recovery"))
 }
 
+/// Resolve the existing parent so relative paths and directory aliases cannot
+/// direct an output into storage reserved for automatic recovery cleanup.
+pub(crate) fn contains_output(dir: &Path, output: &Path) -> bool {
+    let parent = output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let (Ok(dir), Ok(parent)) = (dir.canonicalize(), parent.canonicalize()) else {
+        return false;
+    };
+    #[cfg(windows)]
+    {
+        let mut components = parent.components();
+        dir.components().all(|part| {
+            components.next().is_some_and(|candidate| {
+                part.as_os_str()
+                    .as_encoded_bytes()
+                    .eq_ignore_ascii_case(candidate.as_os_str().as_encoded_bytes())
+            })
+        })
+    }
+    #[cfg(not(windows))]
+    parent.starts_with(dir)
+}
+
+fn numbered(name: &str) -> bool {
+    !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn snapshot_file(name: &str, extension: &str) -> bool {
+    name.strip_prefix(PREFIX)
+        .and_then(|s| s.strip_suffix(extension))
+        .is_some_and(numbered)
+}
+
+fn owned_artifact(name: &str) -> bool {
+    if name == LOCK
+        || name == SOURCE
+        || snapshot_file(name, ".pdf")
+        || snapshot_file(name, ".history")
+    {
+        return true;
+    }
+    let pair = |value: &str, separator| {
+        value
+            .split_once(separator)
+            .is_some_and(|(a, b)| numbered(a) && numbered(b))
+    };
+    name.strip_prefix(".pdf-editor-save-")
+        .and_then(|s| s.strip_suffix(".tmp"))
+        .is_some_and(|s| pair(s, '-'))
+        || name
+            .strip_prefix(".source.txt.")
+            .and_then(|s| s.strip_suffix(".tmp"))
+            .is_some_and(|s| pair(s, '.'))
+}
+
+/// Delete only the reserved runtime namespace. A saved file or unknown
+/// subdirectory must never become collateral damage of recovery cleanup.
+fn cleanup(dir: &Path) {
+    let Ok(metadata) = fs::symlink_metadata(dir) else {
+        return;
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return;
+        }
+    }
+    if dir.join(LOCK).exists() && open_lock(&dir.join(LOCK), false).is_err() {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name().to_str().is_some_and(owned_artifact) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+    // Nonempty directories contain unrecognized entries and are retained.
+    let _ = fs::remove_dir(dir);
+}
+
 /// Opens the session lock so no other process can open it while held.
 fn open_lock(path: &Path, create: bool) -> io::Result<File> {
     let mut options = OpenOptions::new();
@@ -119,7 +207,7 @@ fn open_lock(path: &Path, create: bool) -> io::Result<File> {
     options.open(path)
 }
 
-/// This editor's recovery folder, removed again on a normal exit.
+/// This editor's recovery files, cleaned up on a normal exit.
 pub struct Session {
     dir: PathBuf,
     _lock: File,
@@ -156,6 +244,10 @@ impl Session {
         self.current.as_deref()
     }
 
+    pub(crate) fn contains_output(&self, output: &Path) -> bool {
+        contains_output(&self.dir, output)
+    }
+
     /// Records a written copy of `source` and removes the previous one.
     pub fn written(&mut self, copy: PathBuf, source: &Path) -> io::Result<()> {
         write_replacing(&self.dir.join(SOURCE), source.to_string_lossy().as_bytes())?;
@@ -177,12 +269,11 @@ impl Session {
         let _ = fs::remove_file(self.dir.join(SOURCE));
     }
 
-    /// Removes the whole folder; called on a normal exit only, so a crash
-    /// leaves the copy for the next start.
+    /// Removes owned recovery artifacts on normal exit. Unknown entries remain.
     pub fn close(self) {
         let Self { dir, _lock, .. } = self;
         drop(_lock);
-        let _ = fs::remove_dir_all(dir);
+        cleanup(&dir);
     }
 }
 
@@ -204,7 +295,11 @@ impl Orphan {
     }
 
     pub fn discard(&self) {
-        let _ = fs::remove_dir_all(&self.dir);
+        cleanup(&self.dir);
+    }
+
+    pub(crate) fn contains_output(&self, output: &Path) -> bool {
+        contains_output(&self.dir, output)
     }
 }
 
@@ -233,7 +328,7 @@ pub(crate) fn orphans_in(root: &Path) -> Vec<Orphan> {
             .filter(|p| {
                 p.file_name()
                     .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with(PREFIX) && n.ends_with(".pdf"))
+                    .is_some_and(|n| snapshot_file(n, ".pdf"))
             })
             .filter_map(|p| Some((fs::metadata(&p).ok()?.modified().ok()?, p)))
             .max();
@@ -251,7 +346,7 @@ pub(crate) fn orphans_in(root: &Path) -> Vec<Orphan> {
                 });
             }
             None => {
-                let _ = fs::remove_dir_all(&dir);
+                cleanup(&dir);
             }
         }
     }
@@ -264,6 +359,71 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cleanup_recognizes_only_reserved_runtime_artifacts() {
+        for name in [
+            "session.lock",
+            "source.txt",
+            "snapshot-1.pdf",
+            "snapshot-12.history",
+            ".pdf-editor-save-123-4.tmp",
+            ".source.txt.123.456.tmp",
+        ] {
+            assert!(owned_artifact(name), "{name}");
+        }
+        for name in [
+            "snapshot-copy.pdf",
+            "snapshot-.pdf",
+            "snapshot-1_edited.pdf",
+            "saved.pdf",
+            "snapshot-2.history.backup",
+            ".pdf-editor-save-notes.tmp",
+            ".source.txt.backup.tmp",
+            "source.txt.backup",
+            "keep",
+        ] {
+            assert!(!owned_artifact(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn output_boundaries_resolve_parents_and_do_not_match_sibling_prefixes() {
+        let root = std::env::temp_dir().join(format!("pdf-recovery-boundary-{}", nanos()));
+        let private = root.join("session");
+        let nested = private.join("nested");
+        let sibling = root.join("session-other");
+        fs::create_dir_all(&nested).unwrap();
+        fs::create_dir(&sibling).unwrap();
+        assert!(contains_output(&private, &private.join("new.pdf")));
+        assert!(contains_output(&private, &nested.join("../new.pdf")));
+        assert!(contains_output(&private, &nested.join("new.pdf")));
+        assert!(!contains_output(&private, &sibling.join("new.pdf")));
+        assert!(!contains_output(&private, &root.join("new.pdf")));
+        #[cfg(windows)]
+        assert!(contains_output(
+            &private,
+            &PathBuf::from(nested.to_string_lossy().to_uppercase()).join("new.pdf")
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cleanup_cannot_discard_a_session_with_a_held_lock() {
+        let root = std::env::temp_dir().join(format!("pdf-recovery-active-{}", nanos()));
+        let mut session = Session::start_in(&root).unwrap();
+        let snapshot = session.next_path();
+        fs::write(&snapshot, b"generated snapshot").unwrap();
+        session
+            .written(snapshot.clone(), Path::new("generated.pdf"))
+            .unwrap();
+        cleanup(snapshot.parent().unwrap());
+        assert!(snapshot.exists());
+        assert!(orphans_in(&root).is_empty());
+        session.close();
+        assert!(!snapshot.exists());
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
     fn interrupted_snapshot_keeps_the_previous_complete_recovery_copy() {
         let root = std::env::temp_dir().join(format!("pdf-recovery-interrupted-{}", nanos()));
         let mut session = Session::start_in(&root).unwrap();
@@ -272,11 +432,7 @@ mod tests {
         session
             .written(copy.clone(), Path::new("generated.pdf"))
             .unwrap();
-        fs::write(
-            session.dir.join(".pdf-editor-save-interrupted.tmp"),
-            b"partial",
-        )
-        .unwrap();
+        fs::write(session.dir.join(".pdf-editor-save-123-0.tmp"), b"partial").unwrap();
         drop(session);
         let found = orphans_in(&root);
         assert_eq!(found.len(), 1);
