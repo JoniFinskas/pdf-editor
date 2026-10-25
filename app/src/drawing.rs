@@ -88,7 +88,7 @@ impl DrawingTool {
                 widgets::hint(
                     ui,
                     p,
-                    "Drag on a page to draw. Each stroke or shape becomes a PDF annotation and one undo step.",
+                    "Drag on the page to draw.",
                 );
                 widgets::actions(ui, |ui| {
                     if Btn::new(if self.active {

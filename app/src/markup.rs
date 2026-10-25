@@ -75,7 +75,7 @@ impl MarkupTool {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         if self.items.is_empty() {
-                            widgets::hint(ui, p, "No annotations loaded.");
+                            widgets::hint(ui, p, "No annotations.");
                         }
                         for (i, item) in self.items.iter().enumerate() {
                             let text: String = item.markup.text.chars().take(32).collect();
@@ -149,7 +149,7 @@ impl MarkupTool {
                     "Opacity",
                     egui::Slider::new(&mut self.draft.opacity, 0.0..=1.0),
                 );
-                widgets::caption(ui, p, "Bounds in PDF points, from the bottom-left corner");
+                widgets::caption(ui, p, "PDF points · bottom-left origin");
                 widgets::numbers(
                     ui,
                     p,
@@ -171,7 +171,7 @@ impl MarkupTool {
                 widgets::hint(
                     ui,
                     p,
-                    "Select text before opening this window to use its bounds. Refresh after changes.",
+                    "Selected text supplies the bounds.",
                 );
                 widgets::actions(ui, |ui| {
                     if Btn::new(if self.selected.is_some() {

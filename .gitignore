@@ -43,3 +43,5 @@ desktop.ini
 /last-session.bin
 /session-settings.txt
 *.history
+
+/comparison-origins.bin

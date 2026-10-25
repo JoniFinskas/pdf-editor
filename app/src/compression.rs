@@ -28,7 +28,7 @@ impl Compression {
                 widgets::hint(
                     ui,
                     p,
-                    "Downscale and JPEG-compress supported RGB images. Text stays editable.",
+                    "Compresses RGB images; text stays editable.",
                 );
                 widgets::slider(
                     ui,
@@ -45,7 +45,7 @@ impl Compression {
                 widgets::hint(
                     ui,
                     p,
-                    "The result banner shows size before and after. If no space is saved, the document stays unchanged. Undo restores image quality.",
+                    "No change if compression saves no space.",
                 );
                 widgets::actions(ui, |ui| {
                     if Btn::new("Compress")

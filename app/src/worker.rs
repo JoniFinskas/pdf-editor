@@ -21,6 +21,7 @@ const SAMPLE_SCALE: f32 = 4.0;
 const SAMPLE_SPAN: f32 = 1000.0;
 
 pub enum Request {
+    ComparisonSnapshot(u64),
     Characters(u16),
     FindOptions(String, pdf_editor_core::SearchOptions),
     ReplacementCountOptions(String, pdf_editor_core::SearchOptions),
@@ -157,6 +158,7 @@ impl PageTransform {
 }
 
 pub enum Reply {
+    ComparisonSnapshot {id:u64,generation:u64,original:Arc<Document>,current:Arc<Document>},
     Characters {generation:u64,page:u16,characters:Result<Vec<pdf_editor_core::TextCharacter>,String>},
     SearchResults {generation:u64,query:String,hits:Vec<pdf_editor_core::SearchHit>,boxes:Vec<(u16,Vec<[f32;4]>)>},
     WorkingCopySaved {path:PathBuf,encrypted:bool},
@@ -391,6 +393,7 @@ impl Worker {
 }
 
 struct State {
+    comparison_original: Option<Arc<Document>>,
     clipboard: SharedClipboard,
     engine: Option<Engine>,
     engine_error: String,
@@ -417,6 +420,7 @@ fn run(
         ),
     };
     let mut state = State {
+        comparison_original: None,
         clipboard,
         engine,
         engine_error,
@@ -525,6 +529,11 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
+        Request::ComparisonSnapshot(id)=>{
+            let doc=state.doc.as_ref()?;
+            let original=state.comparison_original.clone().unwrap_or_else(||Arc::new(doc.comparison_snapshot()));
+            Some(Reply::ComparisonSnapshot {id,generation:state.generation,original,current:Arc::new(doc.comparison_snapshot())})
+        }
         Request::Characters(page) => Some(Reply::Characters { generation:state.generation,page,
             characters:engine.page_text_characters(state.doc.as_ref()?,page).map_err(|e|e.to_string()) }),
         Request::FindOptions(query, options) => {
@@ -1156,6 +1165,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             let suggested = doc.suggested_save_path();
             let can_undo = doc.can_undo();
             let can_redo = doc.can_redo();
+            state.comparison_original=Some(Arc::new(engine.open(&source).unwrap_or_else(|_|doc.comparison_snapshot())));
             state.working_copy = None;
             state.doc = Some(doc);
             state.generation += 1;
@@ -1177,6 +1187,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             };
             doc.substitution = state.policy;
             let suggested = doc.suggested_save_path();
+            state.comparison_original=Some(Arc::new(doc.comparison_snapshot()));
             state.working_copy = None;
             state.doc = Some(doc);
             state.generation += 1;
@@ -1408,6 +1419,7 @@ mod clipboard_tests {
         let expected = engine.text_objects(&doc, 0).unwrap()[0].text.clone();
         let shared = SharedClipboard::default();
         let mut source = State {
+        comparison_original: None,
             working_copy: None,
             clipboard: shared.clone(),
             engine: Some(engine),
@@ -1435,6 +1447,7 @@ mod clipboard_tests {
             let engine = Engine::new(&library).unwrap();
             let doc = engine.open(&path).unwrap();
             let mut destination = State {
+        comparison_original: None,
             working_copy: None,
                 clipboard: shared,
                 engine: Some(engine),
@@ -1502,6 +1515,7 @@ mod clipboard_tests {
         let items = source_engine.page_items(&source_doc, 0).unwrap();
         let shared = SharedClipboard::default();
         let mut source = State {
+        comparison_original: None,
             working_copy: None,
             clipboard: shared.clone(),
             engine: Some(source_engine),
@@ -1525,6 +1539,7 @@ mod clipboard_tests {
             .unwrap()
             .len();
         let mut destination = State {
+        comparison_original: None,
             working_copy: None,
             clipboard: shared.clone(),
             engine: Some(destination_engine),

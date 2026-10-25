@@ -37,13 +37,13 @@ impl Replace {
                 widgets::hint(
                     ui,
                     p,
-                    "Literal text, using the case, word and scope options above. Each action is one undo step.",
+                    "Literal text; regular expressions are not supported.",
                 );
                 match self.count {
                     Some(count) => {
                         ui.horizontal(|ui| {
                             widgets::dot(ui, if count > 0 { p.accent_strong } else { p.muted });
-                            ui.label(format!("{count} editable matches in this scope"));
+                            ui.label(format!("{count} editable matches"));
                         });
                         self.occurrence = self.occurrence.clamp(1, count.max(1));
                         widgets::number(

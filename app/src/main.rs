@@ -10,6 +10,7 @@ mod image_create;
 mod scan_cleanup;
 
 mod compare;
+mod comparison_origin;
 mod compression;
 mod crop;
 mod drawing;

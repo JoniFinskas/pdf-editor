@@ -4,6 +4,12 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Compare current unsaved edits against an immutable opening original; retain explicit originals and encrypted-input passwords across refreshes.
+- Remember originals for app-saved unencrypted copies in private local settings; offer older filename matches for confirmation and reject identical comparison files.
+- Simplify comparison, tool panels, editor chrome and settings while retaining actionable warnings and errors.
+- Verify editable and visible-page sanitization across comment/link options, edited content, saved output, appearance and undo/redo; clarify visible edits and local recovery retention.
+
+
 - Protect saved PDFs from recovery cleanup: reject recovery-folder Save As destinations, preserve unrecognized files and directories, and suggest a safe filename when source metadata is missing.
 
 - Select words, lines and text ranges across pages for Unicode copying and one-step highlighting.

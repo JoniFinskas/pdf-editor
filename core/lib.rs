@@ -522,6 +522,11 @@ fn render_config(page: &PdfPage<'_>, scale: f32) -> Result<PdfRenderConfig> {
         .render_annotations(true))
 }
 impl Document {
+    /// Independent in-memory version for read-only comparison, without history.
+    pub fn comparison_snapshot(&self) -> Self {
+        Self {bytes:self.bytes.clone(),original:self.original.clone(),undo:vec![],redo:vec![],
+            revision:self.revision,protected:self.protected,substitution:self.substitution}
+    }
     pub fn revision(&self) -> u64 { self.revision }
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()

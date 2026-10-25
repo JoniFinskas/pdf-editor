@@ -42,7 +42,6 @@ impl Forms {
                     return;
                 }
                 ui.horizontal(|ui| {
-                    widgets::hint(ui, p, "Refresh after applying to load updated values.");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if Btn::icon(Icon::RotateRight)
                             .height(30.0)
@@ -56,7 +55,7 @@ impl Forms {
                     });
                 });
                 if self.fields.is_empty() {
-                    widgets::hint(ui, p, "No supported form fields in this document.");
+                    widgets::hint(ui, p, "No supported form fields.");
                 }
                 egui::ScrollArea::vertical()
                     .max_height(460.0)

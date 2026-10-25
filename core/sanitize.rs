@@ -21,18 +21,21 @@ pub struct SanitizeReport {
 impl std::fmt::Display for SanitizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.rasterized_pages > 0 {
-            return write!(f, "Rebuilt {} pages from visible pixels. Original metadata, hidden text, attachments, scripts, forms and interactive links are absent. Text is no longer searchable or editable. Save As writes the copy; Undo restores the original.", self.rasterized_pages);
+            return write!(f, "Rebuilt {} image-only pages. Save As to keep the cleaned copy.", self.rasterized_pages);
         }
-        write!(
-            f,
-            "Removed: {} metadata entries, {} hidden text blocks, {} attachment entries, {} action entries, {} comments, {} links. Save As writes the cleaned document; Undo restores the original.",
-            self.metadata,
-            self.hidden_text_blocks,
-            self.attachments,
-            self.actions,
-            self.comments,
-            self.links
-        )
+        let removed: Vec<_> = [
+            (self.metadata, "metadata entries"),
+            (self.hidden_text_blocks, "hidden text blocks"),
+            (self.attachments, "attachments"),
+            (self.actions, "actions"),
+            (self.comments, "comments"),
+            (self.links, "links"),
+        ].into_iter().filter(|(count, _)| *count > 0)
+            .map(|(count, label)| format!("{count} {label}")).collect();
+        if removed.is_empty() {
+            return f.write_str("No removable metadata or hidden content found.");
+        }
+        write!(f, "Removed {}. Save As to keep the cleaned copy.", removed.join(", "))
     }
 }
 impl Engine {

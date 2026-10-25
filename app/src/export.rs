@@ -52,7 +52,7 @@ impl Export {
                 widgets::hint(
                     ui,
                     p,
-                    "Each page becomes a new image file. Very large pages may require a lower DPI.",
+                    "Large pages may need a lower DPI.",
                 );
                 widgets::actions(ui, |ui| {
                     if Btn::new("Export to folder…")

@@ -89,7 +89,7 @@ impl EditorApp {
                     horizontal_arrows: true,
                     ..Default::default()
                 })
-                .hint_text("Search: diff, OCR, forms…  Ctrl+K")
+                .hint_text("Search tools")
                 .desired_width(f32::INFINITY),
         );
         if self.tools_focus {
@@ -137,16 +137,8 @@ impl EditorApp {
                 self.tools_focus = true;
             }
         });
-        widgets::hint(ui, p, "↑ / ↓ choose a result · Enter opens it");
         let ready = self.busy == 0 && self.engine_alive;
         let document = self.doc.is_some();
-        if !document {
-            widgets::hint(
-                ui,
-                p,
-                "Open a PDF for document tools. Compare, Images to PDF and recovery settings are available now.",
-            );
-        }
         let mut entries = Vec::new();
         for (label, key) in [
             ("Edit text / spell check", "catalog-edit"),
@@ -230,18 +222,10 @@ impl EditorApp {
                     if response.clicked() || (enter && selected && entry.enabled) {
                         chosen = Some(index);
                     }
-                    if !entry.description.is_empty() {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(entry.description).small().color(p.muted),
-                            )
-                            .wrap(),
-                        );
-                    }
-                    ui.add_space(8.0);
+                    ui.add_space(2.0);
                 }
                 if entries.is_empty() {
-                    ui.label("No matching tools. Try a shorter search or reset the category.");
+                    ui.label("No matching tools.");
                 }
             });
         if let Some(index) = chosen {

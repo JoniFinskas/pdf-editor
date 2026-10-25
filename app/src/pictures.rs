@@ -79,7 +79,7 @@ impl Pictures {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         if self.items.is_empty() {
-                            widgets::hint(ui, p, "No inserted images or signatures found.");
+                            widgets::hint(ui, p, "No images or signatures.");
                         }
                         for (i, item) in self.items.iter().enumerate() {
                             if widgets::list_row(
@@ -104,7 +104,7 @@ impl Pictures {
                 widgets::hint(
                     ui,
                     p,
-                    "PDF points, from the bottom-left corner of the page.",
+                    "PDF points · bottom-left origin",
                 );
                 let mut page = usize::from(self.at.page) + 1;
                 widgets::number(
@@ -134,11 +134,6 @@ impl Pictures {
                 if !self.error.is_empty() && widgets::dismissible_notice(ui, p, Tone::Error, &self.error, "dismiss-picture-error") {
                     self.error.clear();
                 }
-                widgets::hint(
-                    ui,
-                    p,
-                    "Refresh after changes to select an inserted image or signature.",
-                );
                 widgets::actions(ui, |ui| {
                     if let Some(item) = self.selected.and_then(|i| self.items.get(i)) {
                         if Btn::new("Move and resize")

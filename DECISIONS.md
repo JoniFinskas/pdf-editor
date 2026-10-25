@@ -887,3 +887,23 @@ uses a filename-only suggestion. Cleanup removes only numbered snapshots, their
 history sidecars, metadata/lock files and recognized interrupted temporary writes;
 it never recursively removes unknown entries or traverses redirected directories.
 This prevents recovery retirement from deleting unrelated saved documents.
+
+## Current-edit comparison and minimal tool copy
+
+Capture an immutable opening snapshot on the document worker and compare it
+with current applied bytes. Keep both versions in memory without history copies
+or plaintext temporary PDFs. Queue capture after successful pending edits and
+reject stale results. Saving never changes the opening baseline. Preserve an
+explicitly chosen original and transient encrypted-input passwords across refreshes.
+
+Remember source/copy relationships only after successful unencrypted saves from
+unprotected sources, in a private bounded local file. Validate the whole store
+and copy size/modification time before resolving a relationship. Treat filename
+matching only as a suggestion requiring confirmation; the PDF itself receives no
+ancestry metadata. Identical canonical paths are invalid in saved-file mode.
+
+Keep tool inputs, useful results and irreversible-operation warnings visible;
+remove repeated tutorials and static status prose. Generated sanitization tests
+cover both modes, all comment/link combinations, visible edits, fresh saves,
+removed payloads and exact undo/redo. Rebuilt output is image-only; visible edits
+remain, and local undo/recovery can retain source content.

@@ -127,7 +127,7 @@ impl Signatures {
             .width(440.0)
             .show(ctx, p, &mut open, |ui| {
                 self.dialog.feedback(ui, p);
-                widgets::hint(ui, p, "Draw a signature, or import a PNG or JPG.");
+                widgets::hint(ui, p, "Draw here or import an image.");
                 let size = Vec2::new(ui.available_width(), 140.0);
                 let (response, painter) = ui.allocate_painter(size, Sense::drag());
                 let pad = response.rect;
@@ -249,7 +249,7 @@ impl Signatures {
                     widgets::hint(
                         ui,
                         p,
-                        "A config folder is required to save reusable signatures.",
+                        "A config folder is needed to save signatures.",
                     );
                 }
                 if let Some(texture) = &self.preview {
@@ -267,7 +267,7 @@ impl Signatures {
                 widgets::hint(
                     ui,
                     p,
-                    "PDF points, measured from the bottom-left corner of the page.",
+                    "PDF points · bottom-left origin",
                 );
                 let mut page = usize::from(self.at.page) + 1;
                 widgets::numbers(
@@ -304,7 +304,7 @@ impl Signatures {
                 widgets::hint(
                     ui,
                     p,
-                    "Choose Place signature, then click the page to position it. Escape cancels. After placement, select it to move or resize; Undo removes it.",
+                    "Click the page to place. Esc cancels.",
                 );
                 widgets::actions(ui, |ui| {
                     if Btn::new("Place signature")

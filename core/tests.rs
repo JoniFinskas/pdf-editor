@@ -6,6 +6,22 @@ use lopdf::{
 };
 use std::sync::Mutex;
 static PDFIUM: Mutex<()> = Mutex::new(());
+#[path = "sanitize_workflow_tests.rs"]
+mod sanitize_workflow_tests;
+
+#[test]
+fn comparison_snapshots_keep_opening_bytes_and_never_copy_edit_history() {
+    let _lock=PDFIUM.lock().unwrap_or_else(|e|e.into_inner());let e=engine();
+    let mut doc=e.open(&fixture("unicode-cid.pdf")).unwrap();
+    let opening=doc.comparison_snapshot();let source=doc.bytes.clone();
+    let object=e.text_objects(&doc,0).unwrap().remove(0);e.edit(&mut doc,&object,"AB").unwrap();
+    let mut current=doc.comparison_snapshot();
+    assert_eq!(opening.bytes,source);assert_ne!(current.bytes,opening.bytes);
+    assert!(!current.can_undo());assert!(!current.can_redo());assert!(!current.undo());
+    assert!(doc.can_undo());assert!(e.compare_page(&opening,&current,0,false).unwrap().changed_pixels>0);
+    doc.undo();assert_eq!(doc.bytes,opening.bytes);assert_ne!(doc.bytes,current.bytes);
+    assert_eq!(e.compare_page(&opening,&doc,0,false).unwrap().changed_pixels,0);
+}
 
 #[path = "stress_tests.rs"]
 mod stress_tests;

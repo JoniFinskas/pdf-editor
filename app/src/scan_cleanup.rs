@@ -51,7 +51,7 @@ impl ScanCleanup {
             widgets::hint(
                 ui,
                 p,
-                "For photo-only pages. Load a page, inspect the detected paper edges and drag the four corners clockwise. The corrected page replaces the photo in one undo step.",
+                "Photo-only pages. Drag the four corners clockwise to set the paper edges.",
             );
             ui.horizontal(|ui| {
                 ui.label("Page");
@@ -169,7 +169,7 @@ impl ScanCleanup {
             widgets::hint(
                 ui,
                 p,
-                "Edge detection works best with light paper on a darker background. Correct corners manually when needed. Deskew uses the selected edges plus the angle adjustment.",
+                "Edge detection works best with light paper on a dark background.",
             );
         };
         ToolWindow::new("Scan cleanup", Icon::Scan)

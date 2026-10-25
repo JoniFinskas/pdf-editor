@@ -51,7 +51,7 @@ impl ImageCreate {
         let idle = idle && !self.dialog.busy() && request.is_none();
         ToolWindow::new("Images to PDF",Icon::Image).width(480.0).show(ctx,p,&mut self.open,|ui| {
             self.dialog.feedback(ui,p);
-            widgets::hint(ui,p,"Drop JPG, PNG or HEIC images here. One image per page, in listed order. HEIC requires an installed Windows codec.");
+            widgets::hint(ui,p,"One image per page, in listed order. HEIC needs a Windows codec.");
             let mut movement=None;
             let mut remove=None;
             egui::ScrollArea::vertical().max_height(260.0).show(ui,|ui| {
@@ -70,7 +70,7 @@ impl ImageCreate {
                 if Btn::new("Add images…").enabled(idle).show(ui,p).clicked() { self.dialog.launch(|| rfd::FileDialog::new().add_filter("Images",&["jpg","jpeg","png","heic","heif"]).pick_files().map(Selection::Images)); }
                 if Btn::new("Create PDF…").look(Look::Primary).enabled(idle && !self.paths.is_empty()).show(ui,p).clicked() { let (paths,size)=(self.paths.clone(),self.size); self.dialog.launch(move || rfd::FileDialog::new().add_filter("PDF",&["pdf"]).set_file_name("images.pdf").save_file().map(|path| Selection::Create(Request::ImagesToPdf(paths,size,path)))); }
             });
-            widgets::hint(ui,p,"Photos are encoded at JPEG quality 95 on white. Existing files are never overwritten.");
+            widgets::hint(ui,p,"JPEG quality 95 · white background · saves to a new file");
         });
         if !self.open { self.dialog.cancel(); return None; }
         request

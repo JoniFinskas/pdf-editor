@@ -21,7 +21,7 @@ impl Tables {
         let mut select = false;
         ToolWindow::new("Tables to Excel or CSV",Icon::Export).width(620.).show(ctx,p,&mut self.open,|ui|{
    self.dialog.feedback(ui,p);
-   widgets::hint(ui,p,"Select a table on the page. Check the detected grid before exporting; complex or merged cells may need corrections.");
+   widgets::hint(ui,p,"Check the grid before exporting, especially merged cells.");
    if Btn::new("Select area on page").enabled(idle).show(ui,p).clicked(){select=true;}
    if let Some(grid)=&mut self.grid {
     egui::ScrollArea::both().max_height(340.).show(ui,|ui|{egui::Grid::new("table-preview").striped(true).show(ui,|ui|{for row in &mut grid.cells {for cell in row {ui.add(widgets::text_field(cell,110.));}ui.end_row();}});});

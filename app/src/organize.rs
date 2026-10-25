@@ -53,8 +53,8 @@ impl Organize {
                 self.dialog.feedback(ui,p);
                 let width = ui.available_width();
                 widgets::subheading(ui, p, "Merge");
-                if self.shell_collecting { widgets::hint(ui, p, "Pending Explorer selection. Additional selections join this list until Merge or Close. Review the order below."); }
-                widgets::hint(ui, p, "Append PDFs after the current document.");
+                if self.shell_collecting { widgets::hint(ui, p, "Explorer selections are added until you merge or close."); }
+                widgets::hint(ui, p, "PDFs are appended to the open document.");
                 let mut movement = None;
                 for (i, path) in self.paths.iter().enumerate() {
                     ui.push_id(i, |ui| {
@@ -157,7 +157,7 @@ impl Organize {
                 widgets::hint(
                     ui,
                     p,
-                    "Exports use new filenames and do not alter the open document. Exported PDFs have no password.",
+                    "Exported PDFs are new files without password protection.",
                 );
             });
         if !self.open {

@@ -162,26 +162,28 @@ creates another copy. Encryption settings are retained in memory for repeated sa
 
 ## Daily and extra tools
 
-**Compare PDFs** preselects the open document as the original and compares
-automatically after a second PDF is chosen. Either file can be changed. Review
-controls appear with the results, showing Original and Revised side by side.
-Numbered text outlines
-match the change list. Read the original (−) and revised (+) excerpts, click a
-highlight on either page, or use Previous/Next change to bring it into view.
-Include unchanged pages when reviewing the whole document. Previous/Next changed
-page skips unchanged pages. Text changes and Visual changes switch the overlay;
-Fit both pages resets zoom. Switching modes reuses the current page render.
-Unchanged pages anchor the automatic page matching, so inserted/deleted pages do
-not shift later matches. The labels show actual Original/Revised page numbers.
-Repeated pages, reordered pages and adjacent modified/inserted pages can be
-ambiguous; use **Match page numbers only** when that is a better fit.
+**Compare PDFs** opens Original versus Current edits, including applied unsaved
+changes. Opening it applies pending text first; rejected edits must be corrected
+or discarded. Saving does not reset the opening original. Copies saved by the
+app remember their original in local settings for later comparisons, except
+protected or encrypted documents. Older `_edited.pdf` copies can offer a sibling
+filename suggestion; confirm it or choose the original with the folder button.
+A filename match alone does not establish ancestry. **Two files** compares saved
+PDFs and rejects the same file on both sides.
+
+Review numbered text outlines and before/after excerpts, click a highlight, or
+use the change arrows. **All pages** includes unchanged pages. **Text** and
+**Visual** switch overlays; **Fit** resets zoom. Switching modes reuses the page
+render. Unchanged pages anchor automatic page matching around insertions and
+deletions. Repeated pages and adjacent modified/inserted pages can be ambiguous;
+choose **Match page numbers** in options when appropriate.
 
 Import/export file selection runs in the background. The tool shows its pending
 state and a Cancel pending action control. Closing a tool discards its late
 selection; reopen it to start again. Export options are captured when selection
 starts. Image decoding also stays off the UI thread.
 
-The **All tools** panel opens by default on the home screen and beside documents. Press **Ctrl+K** to search names and descriptions, including subfeatures such as flattening forms, Excel export and Bates numbering. Tools that need an open PDF are visible but disabled until a document is opened. Close the panel for more page space; **All tools** reopens it. The small arrow retains the compact document menu. Its **Edit** section holds
+The **All tools** panel opens on the home screen and closes when a document opens. Press **Ctrl+K** to search names and descriptions, including subfeatures such as flattening forms, Excel export and Bates numbering. Tools that need an open PDF are visible but disabled until a document is opened. Close the panel for more page space; **All tools** reopens it. The small arrow retains the compact document menu. Its **Edit** section holds
 Find and replace, Fill form, Signatures, Images, Markup and notes, Draw and shapes,
 Redact, and OCR current page. **Document** holds Bookmarks sidebar, Merge/split/
 extract, Crop page, Page numbers and watermark, Export pages as images, Compress
@@ -464,7 +466,16 @@ These cases leave the original document unchanged. For complex documents,
 (up to 100 pages, at most 2048 pixels per side). No original text layer, metadata,
 scripts, forms or attachments are copied. Page dimensions are preserved, but text
 is no longer searchable or editable and interactive links are removed. This is an
-explicit option; Undo restores the original.
+explicit option; Undo restores the original. Comment/drawing and link options
+control whether their visible appearances are included in the rebuilt images;
+interactive annotation data is always removed.
+
+Visible edits remain in the page images. Rebuilding removes underlying edit
+objects and metadata from the saved copy, not visual evidence of an edit. The app
+has no edit-activity log. Undo/redo stays in memory, while optional recovery
+PDFs/history can retain earlier content. Recent files, optional restored tabs and
+comparison-origin settings keep local paths. Sanitizing does not delete the
+source, existing recovery copies or operating-system backups.
 
 ### Batch headers, footers and Bates numbering
 
@@ -502,8 +513,7 @@ Snapping starts within six screen points and holds slightly farther to avoid
 jitter between nearby targets. Hold **Alt** for free placement or turn **Snap**
 off. The released object keeps the position shown by its preview.
 
-The recovery button shows whether copies are off, unavailable, pending, writing
-or saved. Unapplied text is marked separately. Click it for interval settings.
+Settings → General shows recovery status and interval settings.
 Recovery is enabled every two minutes by default for unprotected documents; it
 never replaces Save As or writes over the original.
 

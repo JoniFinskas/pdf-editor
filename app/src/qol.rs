@@ -380,7 +380,6 @@ impl EditorApp {
         let mut request = None;
         crate::widgets::ToolWindow::new("Selection tools",Icon::Edit).width(390.0).show(ctx,p,&mut open,|ui| {
             ui.checkbox(&mut self.qol.box_select,"Box selection").on_hover_text("Drag a rectangle around objects. Shift-drag on empty page space also selects a rectangle.");
-            ui.label("Shift-click adds or removes objects. Arrow keys move by 1 point; Shift+Arrow moves by 10.");
             ui.label(format!("{} objects selected",self.qol.objects.len()));
             let items=self.qol.objects.clone();
             ui.add_enabled_ui(self.busy==0&&!items.is_empty(),|ui| {
@@ -530,7 +529,6 @@ impl EditorApp {
             ui.horizontal(|ui| {ui.checkbox(&mut self.qol.bold,"Bold");ui.checkbox(&mut self.qol.italic,"Italic");});
             ui.add(egui::DragValue::new(&mut self.text_tool.size).range(1.0..=1000.0).suffix(" pt"));
             ui.color_edit_button_srgb(&mut self.text_tool.color);
-            ui.label("Applies to selected text. Choose the replacement family here when a font is missing.");
             apply=Btn::new("Apply font and style").id("apply-font-format").look(Look::Primary).enabled(self.busy==0&&!self.qol.family.trim().is_empty()).show(ui,p).clicked();
         });
         self.qol.format_open = open;
@@ -575,10 +573,7 @@ impl EditorApp {
         let pages = self.qol.page_indices(current);
         let mut request = None;
         let mut extract = false;
-        ui.label(format!(
-            "{} selected · Ctrl-click / Shift-click",
-            pages.len()
-        ));
+        ui.label(format!("{} selected",pages.len())).on_hover_text("Ctrl-click toggles; Shift-click selects a range");
         ui.add_enabled_ui(idle, |ui| {
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Rotate").clicked() {

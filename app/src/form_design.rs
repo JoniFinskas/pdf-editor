@@ -109,13 +109,13 @@ impl Designer {
                     ui.text_edit_multiline(&mut self.options);
                 }
                 if self.kind == 4 {
-                    ui.label("Enter dates as YYYY-MM-DD.");
+                    ui.label("Date format: YYYY-MM-DD");
                 }
             }
             ui.label(
-                "Drag the rectangle to move; drag its corner to resize. Apply to save changes.",
+                "Drag to move; drag a corner to resize.",
             );
-            ui.label("Position and size in PDF points, measured from the bottom-left.");
+            ui.label("PDF points · bottom-left origin");
             ui.horizontal(|ui| {
                 for (label, value) in [
                     ("Left", &mut self.bounds.left),

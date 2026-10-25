@@ -149,7 +149,7 @@ impl Tool {
             Self::Word => "Export paragraphs, fonts, images and simple tables to Word DOCX.",
             Self::Compress => "Downscale and recompress images; compare file sizes.",
             Self::Sanitize => "Remove metadata, hidden text, scripts, attachments and optional comments or links.",
-            Self::Compare => "Compare two saved PDFs side by side, with text changes and a pixel overlay.",
+            Self::Compare => "Compare current edits with the original, or compare two saved PDFs.",
             Self::Print => "Print through the Windows print dialog.",
         }
     }
@@ -471,6 +471,8 @@ pub struct EditorApp {
     insert_dialog: crate::dialogs::ToolDialog<Request>,
     picker_save: bool,
     pending_save: Option<Request>,
+    pending_comparison: Option<u64>,
+    compare_origin: Option<PathBuf>,
     recent_files: Vec<PathBuf>,
     dragging_page: Option<usize>,
     text_tool: TextTool,
@@ -847,6 +849,8 @@ impl EditorApp {
             insert_dialog: Default::default(),
             picker_save: false,
             pending_save: None,
+            pending_comparison: None,
+            compare_origin: None,
             recent_files: config_path
                 .as_deref()
                 .and_then(|p| pdf_editor_core::Settings::load(p).ok())
@@ -935,6 +939,7 @@ impl EditorApp {
         if self.engine_alive {
             self.engine_alive = false;
             self.pending_save = None;
+            self.pending_comparison=None;
             self.busy = 0;
             self.opening = false;
             self.banner(
@@ -1056,6 +1061,27 @@ impl EditorApp {
         self.opening = matches!(request, Request::OpenPassword(..));
         self.busy += 1;
         self.send(request);
+    }
+
+    fn open_comparison(&mut self) {
+        if self.compare.is_current() {self.refresh_comparison();return;}
+        self.commit_edit();
+        if self.doc.as_ref().and_then(|d|d.edit.as_ref()).is_some_and(|e|e.text!=e.line.text) {
+            self.banner(BannerKind::Warning,"Apply or discard the text edit before comparing.");return;
+        }
+        let Some(doc)=&self.doc else {self.compare.open_for(None);return;};
+        let suggestion=if self.compare_origin.is_none() {crate::comparison_origin::suggest(&doc.source)}else{None};
+        let id=self.compare.open_current(doc.source.clone(),self.compare_origin.clone(),suggestion);
+        self.pending_comparison=Some(id);
+    }
+
+    fn refresh_comparison(&mut self) {
+        if !self.compare.is_current() {self.open_comparison();return;}
+        self.commit_edit();
+        if self.doc.as_ref().and_then(|d|d.edit.as_ref()).is_some_and(|e|e.text!=e.line.text) {
+            self.banner(BannerKind::Warning,"Apply or discard the text edit before comparing.");return;
+        }
+        self.pending_comparison=Some(self.compare.prepare_current());
     }
 
     fn recovery_destination(&self, path: &std::path::Path) -> bool {
@@ -1221,10 +1247,22 @@ impl EditorApp {
         if self.busy == 0 && let Some(request) = self.pending_save.take() {
             self.password_action(request);
         }
+        if self.busy==0 && let Some(id)=self.pending_comparison.take() && self.compare.accepts_current(id) {
+            self.busy+=1;self.send(Request::ComparisonSnapshot(id));
+        }
+
     }
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::ComparisonSnapshot {id,generation,original,current}=>{
+                self.busy=self.busy.saturating_sub(1);
+                if !self.compare.accepts_current(id) {return;}
+                if self.doc.as_ref().is_some_and(|d|d.generation==generation) {
+                    self.compare.receive_current(ctx,id,[original,current]);
+                } else {self.pending_comparison=Some(self.compare.prepare_current());}
+            }
+
             Reply::TableDetected(grid) => {
                 self.busy = self.busy.saturating_sub(1);
                 self.tables.grid = Some(grid);
@@ -1364,6 +1402,9 @@ impl EditorApp {
                 can_undo,
                 can_redo,
             } => {
+                self.compare.reset_document();self.pending_comparison=None;
+                self.compare_origin=if protected {None}else{self.config_path.as_deref().and_then(|config|crate::comparison_origin::resolve(config,&path).ok().flatten())};
+                self.tools_open=false;
                 self.qol.document_changed();self.qol.restore_objects=None;
                 self.qol.working_copy=None; self.qol.copy_encrypted=false; self.qol.original_protected=protected;
                 self.scan_cleanup.invalidate();
@@ -1560,6 +1601,7 @@ impl EditorApp {
                 let search_options=self.qol.advanced().then(||self.current_search_options());
                 self.busy = self.busy.saturating_sub(1);
                 let Some(doc) = &mut self.doc else { return };
+                let comparison_changed=doc.generation!=generation;
                 let selected = doc.applying.take().map_or(1, |(_, _, n)| n);
                 doc.pending_edit = None;
                 doc.can_undo = can_undo;
@@ -1621,6 +1663,7 @@ impl EditorApp {
                         page.error = None;
                     }
                 }
+                if comparison_changed && self.compare.is_current() {self.pending_comparison=Some(self.compare.prepare_current());}
                 if self.bookmarks.open {
                     self.busy += 1;
                     self.worker.send(Request::Bookmarks);
@@ -1650,6 +1693,13 @@ impl EditorApp {
                 }
             }
             Reply::WorkingCopySaved {path,encrypted} => {
+                if !encrypted && !self.qol.original_protected && let (Some(config),Some(doc))=(&self.config_path,&self.doc) {
+                    let source=self.compare_origin.as_ref().unwrap_or(&doc.source);
+                    if crate::comparison_origin::remember(config,source,&path).is_err() {
+                        self.banner(BannerKind::Warning,"Saved. The original-file link could not be remembered.");
+                    }
+                }
+
                 self.qol.working_copy=Some(path.clone());self.qol.copy_encrypted=encrypted;
                 if let Some(doc)=&mut self.doc {
                     doc.protected=self.qol.original_protected||encrypted;
@@ -1739,6 +1789,7 @@ impl EditorApp {
                     return;
                 }
                 self.busy = self.busy.saturating_sub(1);
+                self.pending_comparison=None;self.compare.preparation_failed(&message);
                 if self.pending_save.take().is_some() {
                     self.banner(BannerKind::Warning,
                         "Save cancelled because a pending change failed. Correct the edit and save again.");
@@ -1821,7 +1872,6 @@ impl EditorApp {
                 });
             });
         widgets::rule(ui, p);
-        ui.label(RichText::new("Drag selected pages to reorder").small().color(p.muted));
         self.page_actions(ui,p,idle);
 
         let Some(doc) = &mut self.doc else { return };
@@ -2452,7 +2502,7 @@ impl EditorApp {
             Tool::Stamps => self.stamps.open = true,
             Tool::Compress => self.compression.open = true,
             Tool::Sanitize => self.sanitize.open = true,
-            Tool::Compare => self.compare.open_for(self.doc.as_ref().map(|doc| doc.source.clone())),
+            Tool::Compare => self.open_comparison(),
             Tool::Privacy => {
                 self.privacy.open = true;
             }
@@ -2543,16 +2593,10 @@ impl EditorApp {
                 }
                 self.document_tools(ui, p);
                 self.qol_toolbar(ui, p);
-                ui.label(RichText::new("Click to select / Double-click text to edit").small().color(p.muted));
-                ui.checkbox(&mut self.snap_enabled, "Snap").on_hover_text("Align edges and centers, center on the page, and match gaps between objects. Hold Alt to move freely; turn Snap off to disable guides and snapping.");
+                ui.checkbox(&mut self.snap_enabled, "Snap").on_hover_text("Align edges, centers and gaps. Hold Alt to bypass.");
                 widgets::divider(ui, p, 22.0);
                 if Btn::new("Compare PDFs").id("compare-visible").height(30.0).show(ui, p).clicked() { self.open_tool(Tool::Compare); }
-                if Btn::new(self.recovery_status()).id("recovery-status").height(30.0)
-                    .tip("Recovery copies protect applied edits after a crash. Open recovery settings.")
-                    .show(ui,p).clicked() {
-                    self.commit_edit(); self.settings_open = true; self.settings_tab = SettingsTab::General;
-                }
-                ui.label(RichText::new("Drag to move / handles resize / Delete removes selection").small().color(p.muted));
+
             });
         } else {
             self.home_bar(ui, p);
@@ -4264,8 +4308,7 @@ impl EditorApp {
 
     fn general_settings(&mut self, ui: &mut Ui, p: &Palette, autosave: &mut AutoSave) {
         self.integration.show(ui);
-        if ui.checkbox(&mut self.qol.remember_session,"Remember open tabs and reading position on this computer").changed() {self.qol.remember_changed=true;}
-        ui.label(RichText::new("Optional. Stores local file paths and view positions; passwords are never remembered.").small().color(p.muted));
+        if ui.checkbox(&mut self.qol.remember_session,"Restore tabs on startup").changed() {self.qol.remember_changed=true;}
         ui.add_space(20.0);
         section_title(ui, "Auto-save");
         let label = |value: AutoSave| match value.0 {
@@ -4276,8 +4319,7 @@ impl EditorApp {
             ui,
             p,
             "Recovery copies",
-            "Copy unsaved edits to a private recovery folder on this computer. If the \
-             editor closes unexpectedly, it offers to restore them on the next start.",
+            "Recover applied edits after a crash.",
             |ui| {
                 egui::ComboBox::from_id_salt("autosave")
                     .width(240.0)
@@ -4291,55 +4333,9 @@ impl EditorApp {
                     });
             },
         );
-        let status = match (&self.session_error, autosave.0) {
-            (Some(e), Some(_)) => format!("Auto-save is unavailable: {e}"),
-            (_, None) => {
-                "Auto-save is off. Unsaved edits are lost if the editor closes unexpectedly."
-                    .to_string()
-            }
-            (None, Some(_)) => "Copies are deleted when you save, discard your edits or close \
-                                normally. Your original file is never \
-                                overwritten."
-                .to_string(),
-        };
-        ui.label(RichText::new(status).small().color(p.muted));
-        if autosave.0.is_some()
-            && self.session_error.is_none()
-            && let Some(folder) = recovery::root()
-        {
-            let folder = shown_path(&folder);
-            ui.add(
-                egui::Label::new(
-                    RichText::new(format!("Folder: {folder}"))
-                        .small()
-                        .color(p.muted),
-                )
-                .truncate(),
-            )
-            .on_hover_text(folder);
-        }
-        ui.add_space(20.0);
-        widgets::rule(ui, p);
-        ui.add_space(18.0);
-        section_title(ui, "Safety");
-        widgets::setting_row(
-            ui,
-            p,
-            "Unsaved edits",
-            "Closing the window or opening another PDF asks before discarding unsaved edits.",
-            |ui| {
-                ui.label(RichText::new("Always on").color(p.muted));
-            },
-        );
-        widgets::setting_row(
-            ui,
-            p,
-            "Original files",
-            "Save As writes a new file. The original PDF is never changed.",
-            |ui| {
-                ui.label(RichText::new("Always on").color(p.muted));
-            },
-        );
+        if let Some(error)=&self.session_error {ui.colored_label(p.warn_fg,format!("Recovery unavailable: {error}"));}
+        else {ui.label(RichText::new(self.recovery_status()).small().color(p.muted)).on_hover_text("Recovery copies stay on this computer. Password-protected documents are excluded.");}
+
     }
 
     fn drop_overlay(&self, ctx: &Context, p: &Palette) {
@@ -4540,6 +4536,7 @@ impl eframe::App for EditorApp {
             self.send(request);
         }
         self.compare.show(&ctx, &p);
+        if self.compare.take_refresh() {self.refresh_comparison();}
         if let Some(request) = self.sanitize.show(&ctx, &p, self.busy == 0) {
             self.commit_edit();
             self.busy += 1;
@@ -5467,6 +5464,7 @@ mod tests {
     include!("workflow_tests.rs");
     include!("qol_workflow_tests.rs");
     include!("recovery_safety_tests.rs");
+    include!("comparison_workflow_tests.rs");
     use super::*;
 
     #[test]
@@ -5609,6 +5607,8 @@ mod tests {
             insert_dialog: Default::default(),
             picker_save: false,
             pending_save: None,
+            pending_comparison: None,
+            compare_origin: None,
                 recent_files: vec![],
                 dragging_page: None,
                 text_tool: TextTool::default(),

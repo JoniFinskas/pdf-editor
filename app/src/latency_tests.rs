@@ -39,6 +39,7 @@ fn generated_worker_stage_timings() {
         .unwrap();
     let engine = Engine::new(&root.join("target/debug/pdfium.dll")).unwrap();
     let mut state = State {
+        comparison_original: None,
         clipboard: SharedClipboard::default(),
         engine: Some(engine),
         engine_error: String::new(),

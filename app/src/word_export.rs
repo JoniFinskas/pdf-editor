@@ -16,8 +16,8 @@ impl WordExport {
         let idle = idle && !self.dialog.busy() && request.is_none();
         ToolWindow::new("Export to Word",Icon::Export).width(430.).show(ctx,p,&mut self.open,|ui|{
    self.dialog.feedback(ui,p);
-   widgets::hint(ui,p,"Export paragraphs, font names, sizes, bold/italic, images and simple ruled tables to an editable Word document. Layout is best effort; review the exported document before sharing.");
-   widgets::hint(ui,p,"Images are limited to 2048 pixels per side. Safe groups remain editable. Pages with complex transparency are preserved as page images instead of failing; text on those pages is not editable in Word. Complex layouts and merged table cells may need corrections in Word.");
+   widgets::hint(ui,p,"Layout may change. Check complex layouts and merged cells after export.");
+   widgets::hint(ui,p,"Images: max 2048 px per side. Pages with complex transparency export as images; their text is not editable.");
    if Btn::new("Export Word document...").look(Look::Primary).enabled(idle).show(ui,p).clicked() {self.dialog.launch(|| rfd::FileDialog::new().add_filter("Word document",&["docx"]).set_file_name("document.docx").save_file().map(Request::ExportWord));}
   });
         if !self.open { self.dialog.cancel(); return None; }

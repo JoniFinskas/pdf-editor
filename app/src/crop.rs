@@ -46,7 +46,7 @@ impl Crop {
                     egui::DragValue::new(&mut page).range(1..=pages.max(1)),
                 );
                 self.page = (page - 1) as u16;
-                widgets::caption(ui, p, "Visible box in PDF points, from the bottom-left");
+                widgets::caption(ui, p, "PDF points · bottom-left origin");
                 widgets::numbers(
                     ui,
                     p,
@@ -60,7 +60,7 @@ impl Crop {
                 widgets::hint(
                     ui,
                     p,
-                    "Cropping hides content outside the visible box. Use Redact when content must be removed.",
+                    "Crop hides content. Use Redact to remove it.",
                 );
                 widgets::actions(ui, |ui| {
                     if Btn::new("Apply crop")

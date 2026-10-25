@@ -186,6 +186,8 @@ All destinations retain the core exclusive-create and original-file protections.
 
 ## PDF comparison
 
+- `Document::comparison_snapshot() -> Document`: returns an independent in-memory version sharing immutable current bytes and source identity, preserving the protected flag and substitution policy without copying undo/redo history.
+
 - `PagePair { left: Option<u16>, right: Option<u16> }`: original/revised zero-based page indices; `None` means an inserted or deleted page.
 - `Engine::comparison_fingerprint(doc, page)` -> session-only `u64` fingerprint of page dimensions, a 64-pixel preview and text. Used for matching, not security or persistent identity.
 - `align_comparison_pages(left_fingerprints, right_fingerprints)` -> ordered `Vec<PagePair>`. Preserves exact-match anchors, pairs edited gaps by order and emits missing sides. LCS memory is limited to four million `u16` cells; larger documents use 64-page lookahead. Accepts at most 32,767 pages per file.
@@ -195,7 +197,7 @@ All destinations retain the core exclusive-create and original-file protections.
 - `compare_pixels(left, right, overlay)` -> differing pixel count; optionally tint differences magenta in each optional RGBA image. Missing pixels differ, equal pixels are unchanged. Validates raster buffers and limits each raster to 1.1 megapixels and the union canvas to 2.2 megapixels.
 - `Engine::compare_page(left, right, page, overlay)` -> `ComparePage` containing optional side images, text changes, changed-pixel count and raster-space highlight rectangles. Uses a shared scale capped at one megapixel and 4096 pixels per edge, permits missing pages on either side, rejects an index missing on both. Documents remain unchanged.
 
-Comparison UI runs loading, page matching, text extraction, rendering and raster comparison on a background thread with bounded queues, cancellable between pages. It retains one displayed page pair, one pristine worker preview and numeric summaries, and compares saved files rather than unsaved editor state. TextChange includes optional before/after excerpts limited to 160 characters plus an ellipsis per side. Excerpts remain in memory. Switching overlay modes reuses the pristine preview rather than reparsing the PDFs. Encrypted inputs accept transient passwords. Matching uses unchanged-page anchors by default; page-number mode is available explicitly and is the fallback if fingerprinting fails. Repeated pages, reordered pages and modified gaps remain best effort. Raster previews may omit changes smaller than their resolution. No source text is written to logs or disk.
+Comparison UI runs loading, page matching, text extraction, rendering and raster comparison on a background thread with bounded queues, cancellable between pages. It retains one displayed page pair, one pristine worker preview and numeric summaries, and compares immutable editor snapshots by default, including applied unsaved edits. The worker retains the opening snapshot across saves and can load a recorded or explicitly chosen saved original. Two-file mode opens saved paths and rejects the same canonical file. Pending text must apply successfully before snapshot capture; stale or closed requests are ignored. No plaintext comparison PDFs are written. TextChange includes optional before/after excerpts limited to 160 characters plus an ellipsis per side. Excerpts remain in memory. Switching overlay modes reuses the pristine preview rather than reparsing the PDFs. Encrypted inputs accept transient passwords. Matching uses unchanged-page anchors by default; page-number mode is available explicitly and is the fallback if fingerprinting fails. Repeated pages, reordered pages and modified gaps remain best effort. Raster previews may omit changes smaller than their resolution. No source text is written to logs or disk. A bounded private `comparison-origins.bin` records source/copy paths and copy size/modification time after successful unencrypted saves, excluding protected sources. Unchanged copies resolve their recorded original on reopen. Filename-only suggestions require confirmation and are never recorded as ancestry. Passwords stay in memory until comparison closes.
 
 ### Windows shell boundary
 
@@ -328,7 +330,7 @@ pages retain editable text and tables. Export never modifies source history.
 SanitizeOptions.flatten_visible rebuilds a document of up to 100 pages using
 bounded rendered images, retaining page dimensions and one undo step. It copies
 no original objects, text layer, scripts or metadata. SanitizeReport.rasterized_pages
-identifies this mode. Editable sanitization remains the default and fails closed
+identifies this mode. Comment and link options remove their appearances before rendering; widgets remain visible while their interactive dictionaries are discarded. Visible edits remain as pixels. Fresh saved output contains no original object graph or incremental edit chain; local undo and optional recovery copies remain separate. Editable sanitization remains the default and fails closed
 when visibility cannot be verified.
 
 

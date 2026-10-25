@@ -94,7 +94,7 @@ impl Stamps {
                     widgets::field(ui, p, "Text", |ui| {
                         ui.add(widgets::text_field(&mut self.stamp.template, width));
                     });
-                    widgets::hint(ui, p, "Tokens: {page}, {pages}, {date}. Date is editable and fixed for this operation.");
+                    widgets::hint(ui, p, "Tokens: {page}, {pages}, {date}. Date stays fixed for this operation.");
                 }
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
@@ -136,7 +136,7 @@ impl Stamps {
                     "Opacity",
                     egui::Slider::new(&mut self.stamp.opacity, 0.0..=1.0),
                 );
-                widgets::caption(ui, p, "PDF points: left offset and edge margin (watermark uses bottom baseline)");
+                widgets::caption(ui, p, "PDF points · left offset and edge margin; watermark uses bottom baseline");
                 widgets::numbers(
                     ui,
                     p,
