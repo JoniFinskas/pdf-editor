@@ -99,11 +99,11 @@ fn paint_transformed(ui: &Ui, layer: egui::LayerId, plane: Plane, virtual_origin
             continue;
         };
         let mut clipped = egui::epaint::Mesh::with_texture(mesh.texture_id);
+        let mut polygon = Vec::with_capacity(7);
+        let mut next = Vec::with_capacity(7);
         for indices in mesh.indices.as_chunks::<3>().0 {
-            let mut polygon = indices
-                .iter()
-                .map(|&index| mesh.vertices[index as usize])
-                .collect::<Vec<_>>();
+            polygon.clear();
+            polygon.extend(indices.iter().map(|&index| mesh.vertices[index as usize]));
             for edge in 0..4 {
                 let distance = |v: egui::epaint::Vertex| match edge {
                     0 => v.pos.x - primitive.clip_rect.left(),
@@ -111,7 +111,7 @@ fn paint_transformed(ui: &Ui, layer: egui::LayerId, plane: Plane, virtual_origin
                     2 => v.pos.y - primitive.clip_rect.top(),
                     _ => primitive.clip_rect.bottom() - v.pos.y,
                 };
-                let mut next = Vec::new();
+                next.clear();
                 for index in 0..polygon.len() {
                     let a = polygon[index];
                     let b = polygon[(index + 1) % polygon.len()];
@@ -136,10 +136,10 @@ fn paint_transformed(ui: &Ui, layer: egui::LayerId, plane: Plane, virtual_origin
                         });
                     }
                 }
-                polygon = next;
+                std::mem::swap(&mut polygon, &mut next);
             }
             let base = clipped.vertices.len() as u32;
-            for mut vertex in polygon {
+            for mut vertex in polygon.iter().copied() {
                 vertex.pos = plane.point((vertex.pos - virtual_origin).to_pos2());
                 clipped.vertices.push(vertex);
             }
@@ -328,6 +328,155 @@ pub(super) fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn transformed_clipping_preserves_area_uvs_and_vertex_colors() {
+        let ctx = Context::default();
+        let origin = Pos2::ZERO;
+        let clip = Rect::from_min_size(origin, vec2(10., 10.));
+        let plane = Plane {
+            origin: pos2(100., 100.),
+            x: vec2(0.9, 0.2),
+            y: vec2(-0.2, 0.9),
+        };
+        let layer = egui::LayerId::new(egui::Order::Foreground, Id::new("generated-clip-triangle"));
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900., 600.))),
+                ..Default::default()
+            },
+            |ui| {
+                let mut mesh = egui::epaint::Mesh::default();
+                for (pos, color) in [
+                    (pos2(0., 0.), Color32::RED),
+                    (pos2(20., 0.), Color32::GREEN),
+                    (pos2(0., 20.), Color32::BLUE),
+                ] {
+                    mesh.vertices.push(egui::epaint::Vertex {
+                        pos,
+                        uv: (pos.to_vec2() / 20.).to_pos2(),
+                        color,
+                    });
+                }
+                mesh.indices = vec![0, 1, 2];
+                let mut child = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(clip));
+                child.set_clip_rect(clip);
+                child.painter().add(Shape::mesh(mesh));
+                paint_transformed(ui, layer, plane, origin);
+            },
+        );
+        output.textures_delta.clear();
+        let mut area = 0.;
+        for shape in &output.shapes {
+            if let Shape::Mesh(mesh) = &shape.shape {
+                for vertex in &mesh.vertices {
+                    let local = plane.inverse(vertex.pos).unwrap();
+                    assert!(clip.expand(0.0001).contains(local));
+                    assert!(vertex.uv.distance((local.to_vec2() / 20.).to_pos2()) < 0.0001);
+                    let expected = [
+                        255. * (1. - (local.x + local.y) / 20.),
+                        255. * local.x / 20.,
+                        255. * local.y / 20.,
+                    ];
+                    for (channel, expected) in vertex.color.to_array()[..3].iter().zip(expected) {
+                        assert!((f32::from(*channel) - expected).abs() <= 2.);
+                    }
+                }
+                for indices in mesh.indices.as_chunks::<3>().0 {
+                    let [a, b, c] = indices.map(|i| mesh.vertices[i as usize].pos);
+                    let ab = b - a;
+                    let ac = c - a;
+                    area += (ab.x * ac.y - ab.y * ac.x).abs() / 2.;
+                }
+            }
+        }
+        assert!(
+            (area - 85.).abs() < 0.001,
+            "Clipped triangle must fill the transformed square: {area}"
+        );
+    }
+    #[test]
+    #[ignore = "Generated text paint timing; run alone for comparable measurements"]
+    fn generated_affine_paint_timings() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let engine = pdf_editor_core::Engine::new(&root.join("target/debug/pdfium.dll")).unwrap();
+        let doc = engine
+            .open(&root.join("tests/fixtures/generated/transformed.pdf"))
+            .unwrap();
+        let object = engine.text_objects(&doc, 0).unwrap().remove(0);
+        let text = format!("{} ", object.text).repeat(1024);
+        let ctx = Context::default();
+        theme::install(&ctx);
+        let origin = pos2(-20000., -20000.);
+        let clip = Rect::from_min_size(origin, vec2(16000., 15.));
+        let plane = Plane {
+            origin: pos2(100., 100.),
+            x: vec2(0.9, 0.2),
+            y: vec2(-0.2, 0.9),
+        };
+        let layer = egui::LayerId::new(egui::Order::Foreground, Id::new("generated-paint-bench"));
+        let mut samples = Vec::new();
+        let mut vertices = 0;
+        let mut fingerprint = 0;
+        for iteration in 0..23 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900., 600.))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let galley = ui.fonts_mut(|fonts| {
+                        fonts.layout_no_wrap(text.clone(), FontId::proportional(8.), Color32::BLACK)
+                    });
+                    let mut child =
+                        ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(clip));
+                    child.set_clip_rect(clip);
+                    child.painter().galley(origin, galley, Color32::BLACK);
+                    let start = std::time::Instant::now();
+                    paint_transformed(ui, layer, plane, origin);
+                    if iteration >= 3 {
+                        samples.push(start.elapsed().as_micros());
+                    }
+                },
+            );
+            vertices = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    Shape::Mesh(mesh) => Some(mesh.vertices.len()),
+                    _ => None,
+                })
+                .sum::<usize>();
+            use std::hash::{Hash, Hasher};
+            let mut hash = std::hash::DefaultHasher::new();
+            for shape in &output.shapes {
+                if let Shape::Mesh(mesh) = &shape.shape {
+                    mesh.indices.hash(&mut hash);
+                    for v in &mesh.vertices {
+                        [
+                            v.pos.x.to_bits(),
+                            v.pos.y.to_bits(),
+                            v.uv.x.to_bits(),
+                            v.uv.y.to_bits(),
+                        ]
+                        .hash(&mut hash);
+                        v.color.to_array().hash(&mut hash);
+                    }
+                }
+            }
+            fingerprint = hash.finish();
+            output.textures_delta.clear();
+        }
+        samples.sort_unstable();
+        assert!(vertices > 1000);
+        println!(
+            "affine_paint samples={} median_us={} p95_us={} vertices={vertices} fingerprint={fingerprint}",
+            samples.len(),
+            samples[samples.len() / 2],
+            samples[(samples.len() - 1) * 95 / 100]
+        );
+    }
     fn key(key: Key, modifiers: egui::Modifiers) -> egui::Event {
         egui::Event::Key {
             key,

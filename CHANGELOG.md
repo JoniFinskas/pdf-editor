@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Reduce temporary allocations when painting rotated/skewed text while preserving clipping, texture coordinates and colors.
+
 - Wait for pending text edits before exports, printing and common document tools; cancel queued actions when edits fail or the document changes.
 
 - Keep rotated/skewed text selections active beyond the edit box and prevent accidental applies on selection release.

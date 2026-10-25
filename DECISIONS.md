@@ -965,3 +965,11 @@ running tools against the previous document contents. Keep preview requests and
 explicit undo/discard behavior separate, and leave independent image conversion
 available without an open document. Generated real-worker extracts verify both
 successful edits and rejected drafts repeatedly without changing the source.
+
+## Affine paint allocation
+
+Reuse two small polygon buffers throughout affine mesh clipping. Preserve the
+existing clipping/interpolation algorithm and output ordering. The generated-text
+debug benchmark measured 5,537 to 3,587 microseconds median over 20 samples with
+identical mesh fingerprints; this measures the painting loop, not whole-app latency.
+Check clipped area, texture coordinates and vertex colors independently.
