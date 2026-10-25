@@ -836,3 +836,11 @@ selected shows, preserving original glyph encodings and font resources.
 Verification checks decoded content and every native object transform. Native
 object operations also check extracted text before accepting a candidate, since
 regenerating Type3 content can lose text. Unsafe results leave the document intact.
+
+### PDF engine transaction serialization
+
+Serialize complete fallible core operations with a process-wide mutex and a
+thread-local nesting marker. The pinned binding does not lock every native save
+entry point. Concurrent extraction can otherwise interfere with document loading,
+text extraction and editing. Nested core calls reuse their outer transaction;
+panic recovery restores the nesting marker and releases the lock.

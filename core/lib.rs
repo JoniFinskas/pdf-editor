@@ -70,6 +70,8 @@ pub use stamps::{BatesNumber, RangeStamp, StampPlacement, TextStamp, stamp_date_
 pub use startup::startup_path;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod concurrency_tests;
 
 use pdfium_render::prelude::*;
 pub use settings::{Settings, Substitution};
@@ -110,7 +112,29 @@ impl From<PdfiumError> for Error {
 fn err(message: &str) -> Error {
     Error(message.into())
 }
+static PDFIUM_OPERATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+thread_local! {
+    static IN_OPERATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn guarded<T>(f: impl FnOnce() -> Result<T>) -> Result<T> {
+    // Serialize complete transactions: the binding's per-call locks do not cover
+    // every native entry point (including versioned saves of extracted pages).
+    // Core methods call each other, so only the outermost call owns the lock.
+    let nested = IN_OPERATION.with(|active| active.get());
+    let _lock = if nested {
+        None
+    } else {
+        Some(PDFIUM_OPERATION.lock().unwrap_or_else(|e| e.into_inner()))
+    };
+    struct ResetOperation(bool);
+    impl Drop for ResetOperation {
+        fn drop(&mut self) {
+            IN_OPERATION.with(|active| active.set(self.0));
+        }
+    }
+    let _reset = ResetOperation(nested);
+    IN_OPERATION.with(|active| active.set(true));
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
         .map_err(|_| err("Malformed document or font could not be processed"))?
 }

@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Serialize PDF engine transactions across tabs and comparison jobs to prevent concurrent native saves from corrupting processing results.
+
 - Select glyph-based text as a logical block for movement, resizing, copying and deletion, preserving relative glyph positions and atomic undo.
 
 - Keep close confirmation cancellable during pending work, including Escape before underlying editors consume it.

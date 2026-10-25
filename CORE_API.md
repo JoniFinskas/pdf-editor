@@ -56,8 +56,9 @@ I/O, lopdf and PDFium errors intentionally discard internal diagnostic details.
 - Save As leaves the original path and history unchanged. On an I/O failure a
   newly created destination can be partial; the original remains untouched.
 - Call engine work off the UI thread for large PDFs. The process-wide PDFium
-  binding is synchronized by pdfium-render. Do not initialize another independent
-  PDFium binding in the same process.
+  runtime serializes complete core transactions across threads, including nested
+  core calls and native versioned saves. Do not initialize another independent
+  PDFium binding in the same process or bypass the core with native calls.
 
 The README records supported font formats, unsupported mappings and resource
 limits. The core has no UI, dialog, network or telemetry dependencies.
