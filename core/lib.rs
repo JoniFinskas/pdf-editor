@@ -48,6 +48,7 @@ pub use pictures::PlacedPicture;
 mod ocr;
 mod organize;
 mod pages;
+mod page_forms;
 pub use organize::page_ranges;
 mod passwords;
 pub use passwords::PASSWORD_REQUIRED;

@@ -844,3 +844,13 @@ thread-local nesting marker. The pinned binding does not lock every native save
 entry point. Concurrent extraction can otherwise interfere with document loading,
 text extraction and editing. Nested core calls reuse their outer transaction;
 panic recovery restores the nesting marker and releases the lock.
+
+### Form-aware page transfers
+
+Native page import copies widget annotations without their AcroForm field tree
+and default resources. Restore the selected field ancestry, clone reachable form
+resources and map widget/page references to the imported pages. Filter Kids to
+selected widgets, alias imported default fonts, and make colliding root names
+unique so repeated imports remain independent. Reject XFA, repeated form pages,
+unsupported resource conflicts and references to unselected pages atomically.
+Verify the editable field count before accepting or writing the result.

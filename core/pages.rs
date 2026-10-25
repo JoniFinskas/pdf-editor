@@ -45,6 +45,7 @@ impl Engine {
             let mut pdf = parse(&doc.bytes)?;
             let mut pages: Vec<_> = pdf.get_pages().into_values().collect();
             let count = pages.len();
+            let mut expected_fields = None;
             match edit {
                 PageEdit::Rotate { page } => {
                     let id = *pages
@@ -83,6 +84,7 @@ impl Engine {
                         return Err(err("Invalid insertion position"));
                     }
                     let source = self.open(path)?;
+                    expected_fields = Some(self.form_fields(doc)?.len() + self.form_fields(&source)?.len());
                     let source_pdf = self.pdfium.load_pdf_from_byte_slice(&source.bytes, None)?;
                     let added = source_pdf.pages().len();
                     if count + added as usize > 10_000 {
@@ -95,9 +97,19 @@ impl Engine {
                         *before as i32,
                     )?;
                     pdf = parse(&destination.save_to_bytes()?)?;
+                    let source_pdf = parse(&source.bytes)?;
+                    let imported: Vec<_> = pdf.get_pages().into_values()
+                        .skip(*before as usize).take(added as usize).collect();
+                    let mapping: Vec<_> = source_pdf.get_pages().into_values().zip(imported).collect();
+                    crate::page_forms::restore(&source_pdf, &mut pdf, &mapping)?;
                 }
             }
             let candidate = self.candidate(doc, pdf)?;
+            if let Some(expected) = expected_fields
+                && self.form_fields(&candidate)?.len() != expected
+            {
+                return Err(err("Page insertion could not preserve form fields; document unchanged"));
+            }
             doc.accept(candidate.bytes);
             Ok(())
         })

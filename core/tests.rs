@@ -7,6 +7,9 @@ use lopdf::{
 use std::sync::Mutex;
 static PDFIUM: Mutex<()> = Mutex::new(());
 
+#[path = "stress_tests.rs"]
+mod stress_tests;
+
 #[test]
 fn grouped_text_preparation_keeps_page_transparency_and_allows_editing() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());

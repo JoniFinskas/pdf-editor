@@ -5,6 +5,7 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 ## [Unreleased]
 
 - Serialize PDF engine transactions across tabs and comparison jobs to prevent concurrent native saves from corrupting processing results.
+- Preserve editable fields, appearances and default fonts when inserting, merging, splitting or extracting form pages; keep repeated imports independent.
 
 - Select glyph-based text as a logical block for movement, resizing, copying and deletion, preserving relative glyph positions and atomic undo.
 

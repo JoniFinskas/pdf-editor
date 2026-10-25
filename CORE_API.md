@@ -333,3 +333,10 @@ when visibility cannot be verified.
 ObjectAction::Resize accepts a selection on one page. Its common bounding box
 maps to the requested bounds; each object's transform uses the same scale and
 translation, preserving relative placement. The operation remains atomic.
+
+Page insertion/merge and extraction/split preserve AcroForm field ancestry,
+normal appearances, values and default fonts. Imported fields with colliding root
+names receive a numeric suffix. Shared groups retain only selected widgets during
+extraction. XFA, repeated form-page selections, conflicting non-font default
+resources and form references to unselected pages return errors without changing
+the destination or creating an output file.

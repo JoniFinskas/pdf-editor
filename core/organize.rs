@@ -76,7 +76,19 @@ impl Engine {
                 index as i32,
             )?;
         }
-        self.candidate(doc, parse(&destination.save_to_bytes()?)?)
+        let mut pdf = parse(&destination.save_to_bytes()?)?;
+        let source = parse(&doc.bytes)?;
+        let source_pages: Vec<_> = source.get_pages().into_values().collect();
+        let target_pages: Vec<_> = pdf.get_pages().into_values().collect();
+        let mapping: Vec<_> = pages.iter().zip(target_pages)
+            .map(|(page, target)| (source_pages[*page as usize], target)).collect();
+        crate::page_forms::restore(&source, &mut pdf, &mapping)?;
+        let candidate = self.candidate(doc, pdf)?;
+        let expected = self.form_fields(doc)?.iter().filter(|field| pages.contains(&field.page)).count();
+        if self.form_fields(&candidate)?.len() != expected {
+            return Err(err("Page extraction could not preserve form fields; no file was created"));
+        }
+        Ok(candidate)
     }
     /// Each semicolon-separated range produces a separate, exclusively-created file.
     pub fn split_pdf(&self, doc: &Document, ranges: &str, folder: &Path) -> Result<Vec<PathBuf>> {
