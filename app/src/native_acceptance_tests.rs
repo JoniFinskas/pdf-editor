@@ -151,7 +151,7 @@ impl eframe::App for Acceptance {
                     self.select(self.output.clone());
                 } else {
                     self.editor
-                        .password_action(Request::SaveAs(self.output.clone()));
+                        .document_action(Request::SaveAs(self.output.clone()));
                 }
                 self.stage = 3;
             }

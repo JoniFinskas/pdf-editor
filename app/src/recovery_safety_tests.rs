@@ -95,7 +95,7 @@ fn recovery_save_rejects_private_storage_before_dispatch_and_keeps_edits() {
         } else {
             Request::SaveAs(path.clone())
         };
-        app.password_action(request);
+        app.document_action(request);
         assert_eq!(app.busy, 0, "Recovery storage save reached the worker");
         assert!(!path.exists());
         assert!(app.doc.as_ref().unwrap().dirty());
@@ -103,7 +103,7 @@ fn recovery_save_rejects_private_storage_before_dispatch_and_keeps_edits() {
     }
     assert!(app.banners.iter().any(|b| b.text.contains("recovery")));
     let output = folder.join("kept-copy.pdf");
-    app.password_action(Request::SaveAs(output.clone()));
+    app.document_action(Request::SaveAs(output.clone()));
     workflow_settle(&mut app, &ctx);
     assert!(!app.doc.as_ref().unwrap().dirty());
     eframe::App::on_exit(&mut app, None);
@@ -143,7 +143,7 @@ fn recovery_without_source_metadata_suggests_a_filename_outside_private_storage(
         PathBuf::from("Recovered_edited.pdf")
     );
     let output = folder.join("restored.pdf");
-    app.password_action(Request::SaveAs(output.clone()));
+    app.document_action(Request::SaveAs(output.clone()));
     workflow_settle(&mut app, &ctx);
     assert!(output.exists());
     assert!(!snapshot.exists());
@@ -191,7 +191,7 @@ fn recovery_directory_junctions_preserve_external_files_and_reject_save_aliases(
         } else {
             "saved.pdf"
         });
-        app.password_action(if encrypted {
+        app.document_action(if encrypted {
             Request::SavePassword(output.clone(), "generated-password".into())
         } else {
             Request::SaveAs(output.clone())

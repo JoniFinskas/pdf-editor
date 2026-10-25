@@ -322,8 +322,7 @@ impl EditorApp {
                 .clicked()
                 && let Some((_, regions)) = selection
             {
-                self.busy += 1;
-                self.send(Request::HighlightText(regions));
+                self.document_action(Request::HighlightText(regions));
             }
         }
     }
@@ -400,8 +399,7 @@ impl EditorApp {
         });
         self.qol.arrange_open = open;
         if let Some(request) = request {
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
     }
 
@@ -551,8 +549,7 @@ impl EditorApp {
                 self.banner(BannerKind::Warning, "Select text before applying a font.");
                 return;
             }
-            self.busy += 1;
-            self.send(Request::FormatText(
+            self.document_action(Request::FormatText(
                 objects,
                 pdf_editor_core::TextFormat {
                     font: self.qol.family.trim().into(),
@@ -619,9 +616,7 @@ impl EditorApp {
             });
         }
         if let Some(request) = request {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         let _ = p;
     }
@@ -656,9 +651,7 @@ impl EditorApp {
             });
         self.qol.pages_open = open;
         if apply {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(Request::PageBatch(PageBatch::Blank {
+            self.document_action(Request::PageBatch(PageBatch::Blank {
                 before: self.qol.insert_before as u16,
                 width: self.qol.blank_width,
                 height: self.qol.blank_height,
@@ -668,7 +661,7 @@ impl EditorApp {
 
     pub(super) fn save(&mut self) {
         if self.qol.working_copy.is_some() {
-            self.password_action(Request::SaveWorkingCopy);
+            self.document_action(Request::SaveWorkingCopy);
         } else {
             self.save_as();
         }

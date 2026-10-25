@@ -76,7 +76,7 @@ fn generated_recovery_snapshot_survives_crash_and_restores_unsaved_edits() {
     app.redo();workflow_settle(&mut app,&ctx);
     assert_eq!(app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().lines[0].text,"AB");
     let output = folder.join("restored-copy.pdf");
-    app.password_action(Request::SaveAs(output.clone()));
+    app.document_action(Request::SaveAs(output.clone()));
     workflow_settle(&mut app, &ctx);
     assert!(
         !copy.exists(),
@@ -571,7 +571,7 @@ fn generated_workflow_edits_moves_resizes_copies_and_saves_through_real_workers(
     if output.exists() {
         std::fs::remove_file(&output).unwrap();
     }
-    destination.password_action(Request::SaveAs(output.clone()));
+    destination.document_action(Request::SaveAs(output.clone()));
     workflow_settle(&mut destination, &other_ctx);
     assert!(!destination.doc.as_ref().unwrap().dirty());
     destination.open_path(output.clone());
@@ -692,10 +692,10 @@ fn repeated_worker_failures_release_busy_states_and_keep_the_editor_usable() {
         wait(&mut app);
         assert!(!app.opening);
         assert_eq!(app.doc.as_ref().unwrap().generation, generation);
-        app.password_action(Request::SaveAs(collision.clone()));
+        app.document_action(Request::SaveAs(collision.clone()));
         wait(&mut app);
         assert!(!app.doc.as_ref().unwrap().dirty());
-        assert!(app.pending_save.is_none());
+        assert!(app.pending_action.is_none());
         assert!(app.banners.len() <= 4);
         app.banners.clear();
         let at = workflow_line(&app, &ctx, 0);

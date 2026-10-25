@@ -474,7 +474,7 @@ pub struct EditorApp {
     picker: crate::dialogs::Picker,
     insert_dialog: crate::dialogs::ToolDialog<Request>,
     picker_save: bool,
-    pending_save: Option<Request>,
+    pending_action: Option<Request>,
     pending_comparison: Option<u64>,
     compare_origin: Option<PathBuf>,
     recent_files: Vec<PathBuf>,
@@ -869,7 +869,7 @@ impl EditorApp {
             picker: crate::dialogs::Picker::default(),
             insert_dialog: Default::default(),
             picker_save: false,
-            pending_save: None,
+            pending_action: None,
             pending_comparison: None,
             compare_origin: None,
             recent_files: config_path
@@ -959,7 +959,7 @@ impl EditorApp {
     fn engine_stopped(&mut self) {
         if self.engine_alive {
             self.engine_alive = false;
-            self.pending_save = None;
+            self.pending_action = None;
             self.pending_comparison=None;
             self.busy = 0;
             self.opening = false;
@@ -1057,11 +1057,11 @@ impl EditorApp {
         }
     }
 
-    /// Save or sanitize only after preceding edits have succeeded.
+    /// Run document actions only after preceding edits have succeeded.
     /// A rejected edit cancels the intent instead of using an older version.
-    fn password_action(&mut self, request: Request) {
-        if matches!(request, Request::SaveAs(_) | Request::SavePassword(..) | Request::SaveWorkingCopy | Request::ExportSanitized(..) | Request::Sanitize(..)) {
-            if self.doc.is_none() || !self.engine_alive || self.pending_save.is_some() {
+    fn document_action(&mut self, request: Request) {
+        if !matches!(request, Request::OpenPassword(..)) {
+            if self.doc.is_none() || !self.engine_alive || self.opening || self.pending_action.is_some() {
                 return;
             }
             let destination=match &request {
@@ -1079,7 +1079,7 @@ impl EditorApp {
                 return;
             }
             if self.busy > 0 {
-                self.pending_save = Some(request);
+                self.pending_action = Some(request);
                 return;
             }
         }
@@ -1269,8 +1269,8 @@ impl EditorApp {
         for reply in replies {
             self.handle(ctx, reply);
         }
-        if self.busy == 0 && let Some(request) = self.pending_save.take() {
-            self.password_action(request);
+        if self.busy == 0 && let Some(request) = self.pending_action.take() {
+            self.document_action(request);
         }
         if self.busy==0 && let Some(id)=self.pending_comparison.take() && self.compare.accepts_current(id) {
             self.busy+=1;self.send(Request::ComparisonSnapshot(id));
@@ -1441,6 +1441,7 @@ impl EditorApp {
                 can_undo,
                 can_redo,
             } => {
+                self.pending_action = None;
                 self.sanitize.close();
                 self.compare.reset_document();self.pending_comparison=None;
                 self.compare_origin=if protected {None}else{self.config_path.as_deref().and_then(|config|crate::comparison_origin::resolve(config,&path).ok().flatten())};
@@ -1833,9 +1834,9 @@ impl EditorApp {
                 }
                 self.busy = self.busy.saturating_sub(1);
                 self.pending_comparison=None;self.compare.preparation_failed(&message);
-                if self.pending_save.take().is_some() {
+                if self.pending_action.take().is_some() {
                     self.banner(BannerKind::Warning,
-                        "Save cancelled because a pending change failed. Correct the edit and save again.");
+                        "Cancelled because a pending edit failed. Apply or discard the edit first.");
                 }
                 self.restoring = None;
                 let message = if std::mem::take(&mut self.opening) {
@@ -2077,11 +2078,9 @@ impl EditorApp {
                 .add_filter("PDF document", &["pdf"]).pick_file()
                 .map(|path| Request::Pages(pdf_editor_core::PageEdit::Insert { path,before })));
         }
-        if let Some(batch) = batch {self.commit_edit(); self.busy+=1;self.send(Request::PageBatch(batch));}
+        if let Some(batch) = batch {self.document_action(Request::PageBatch(batch));}
         if let Some(action) = action {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(Request::Pages(action));
+            self.document_action(Request::Pages(action));
         }
     }
 
@@ -2247,8 +2246,7 @@ impl EditorApp {
                 .clicked()
                 && let Some((page, at)) = self.text_tool.at
             {
-                self.busy += 1;
-                self.send(Request::AddText {
+                self.document_action(Request::AddText {
                     text: pdf_editor_core::NewText {
                         page,
                         x: 0.0,
@@ -2531,11 +2529,9 @@ impl EditorApp {
                 self.scan_cleanup.open = true;
             }
             Tool::Bookmarks => {
-                self.commit_edit();
                 self.bookmarks.open = true;
                 self.pages_open = false;
-                self.busy += 1;
-                self.worker.send(Request::Bookmarks);
+                self.document_action(Request::Bookmarks);
             }
             Tool::Drawing => self.drawing.open = true,
             Tool::Crop => self.crop.open = true,
@@ -2558,15 +2554,11 @@ impl EditorApp {
             }
             Tool::Ocr => {
                 let page = self.doc.as_ref().map_or(0, |d| d.current_page as u16);
-                self.commit_edit();
-                self.busy += 1;
-                self.send(Request::Ocr(page));
+                self.document_action(Request::Ocr(page));
             }
             Tool::Pictures => {
                 self.pictures.open = true;
-                self.commit_edit();
-                self.busy += 1;
-                self.send(Request::Pictures);
+                self.document_action(Request::Pictures);
             }
             Tool::Markup => {
                 self.markup.open = true;
@@ -2574,23 +2566,17 @@ impl EditorApp {
                     self.markup.draft.page = o.page;
                     self.markup.draft.bounds = o.bounds;
                 }
-                self.commit_edit();
-                self.busy += 1;
-                self.send(Request::Annotations);
+                self.document_action(Request::Annotations);
             }
             Tool::Organize => self.organize.open = true,
             Tool::Replace => self.replace.open = true,
             Tool::Forms => {
-                self.commit_edit();
                 self.forms.open = true;
-                self.busy += 1;
-                self.send(Request::FormFields);
+                self.document_action(Request::FormFields);
             }
             Tool::Signatures => self.signatures.open = true,
             Tool::Print => {
-                self.commit_edit();
-                self.busy += 1;
-                self.send(Request::Print);
+                self.document_action(Request::Print);
             }
         }
     }
@@ -4424,9 +4410,7 @@ impl eframe::App for EditorApp {
         let ctx = ui.ctx().clone();
         let p = theme::palette(ui);
         if let Some(request) = self.insert_dialog.poll(&ctx,self.doc.is_some(),self.busy == 0) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
 
         self.poll(&ctx);
@@ -4478,9 +4462,7 @@ impl eframe::App for EditorApp {
                     });
                 match action {
                     Some(crate::bookmarks::Action::Request(request)) => {
-                        self.commit_edit();
-                        self.busy += 1;
-                        self.send(request);
+                        self.document_action(request);
                     }
                     Some(crate::bookmarks::Action::Navigate(page)) => {
                         self.commit_edit();
@@ -4545,9 +4527,7 @@ impl eframe::App for EditorApp {
             self.busy == 0,
             self.doc.as_ref().map_or(0, |d| d.pages.len()),
         ) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         let drawing_was_active = self.drawing.active;
         self.drawing.show(&ctx, &p);
@@ -4560,20 +4540,14 @@ impl eframe::App for EditorApp {
             self.busy == 0,
             self.doc.as_ref().map_or(0, |d| d.pages.len()),
         ) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         if let Some(request) = self.word.show(&ctx, &p, self.busy == 0) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         let selecting_table = self.tables.selecting;
         if let Some(request) = self.tables.show(&ctx, &p, self.busy == 0) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         if !selecting_table && self.tables.selecting {
             self.commit_edit();
@@ -4581,34 +4555,26 @@ impl eframe::App for EditorApp {
             self.drawing.active = false;
         }
         if let Some(request) = self.export.show(&ctx, &p, self.busy == 0) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         if let Some(request) = self.stamps.show(&ctx, &p, self.busy == 0) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         self.compare.show(&ctx, &p);
         if self.compare.take_refresh() {self.refresh_comparison();}
         if let Some(request) = self.sanitize.show_for(&ctx, &p, self.busy == 0,
             self.doc.as_ref().is_some_and(|doc|doc.protected)) {
-            self.password_action(request);
+            self.document_action(request);
         }
         if let Some(request) = self.compression.show(&ctx, &p, self.busy == 0) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         if let Some(index) = self.privacy.jump.take() {
             self.find.active = index;
             self.go_match();
         }
         if let Some(request) = self.privacy.show(&ctx, &p, self.busy == 0) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         if let Some(request) = self.redaction.show(
             &ctx,
@@ -4616,9 +4582,7 @@ impl eframe::App for EditorApp {
             self.busy == 0,
             self.doc.as_ref().map_or(0, |d| d.pages.len()),
         ) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         if let Some(request) = self.pictures.show(
             &ctx,
@@ -4626,9 +4590,7 @@ impl eframe::App for EditorApp {
             self.busy == 0,
             self.doc.as_ref().map_or(0, |d| d.pages.len()),
         ) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         if let Some(request) = self.markup.show(
             &ctx,
@@ -4636,31 +4598,23 @@ impl eframe::App for EditorApp {
             self.busy == 0,
             self.doc.as_ref().map_or(0, |d| d.pages.len()),
         ) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         if let Some(request) = self.organize.show(&ctx, &p, self.busy == 0) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         if let Some(request) = self.password.show(&ctx, &p, self.busy == 0) {
-            self.password_action(request);
+            self.document_action(request);
         }
         if self.qol.replace_context.as_ref().is_some_and(|context|self.doc.as_ref().is_none_or(|d|*context!=(d.generation,self.current_search_options()))) {self.replace.count=None;}
         let mut replace=std::mem::take(&mut self.replace);
         let replace_request=replace.show_with_options(&ctx,&p,self.busy==0,|ui|self.search_options_ui(ui));
         self.replace=replace;
         if let Some(request) = replace_request {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         if let Some(request) = self.forms.show(&ctx, &p, self.busy == 0) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         let signature_folder = self
             .config_path
@@ -4672,9 +4626,7 @@ impl eframe::App for EditorApp {
             self.signatures
                 .show(&ctx, &p, signature_folder.as_deref(), pages, self.busy == 0)
         {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+            self.document_action(request);
         }
         self.qol_windows(&ctx, &p);
         self.banners(&ctx, toolbar_bottom, &p);
@@ -5532,6 +5484,7 @@ mod tests {
     include!("sanitize_export_workflow_tests.rs");
     include!("tile_workflow_tests.rs");
     include!("rotated_workflow_tests.rs");
+    include!("action_workflow_tests.rs");
     #[cfg(windows)]
     mod native_acceptance_tests { include!("native_acceptance_tests.rs"); }
     use super::*;
@@ -5676,7 +5629,7 @@ mod tests {
             picker: crate::dialogs::Picker::default(),
             insert_dialog: Default::default(),
             picker_save: false,
-            pending_save: None,
+            pending_action: None,
             pending_comparison: None,
             compare_origin: None,
                 recent_files: vec![],
@@ -6847,10 +6800,10 @@ mod tests {
                 } else {
                     Request::SaveAs("generated-copy.pdf".into())
                 };
-                app.password_action(request);
+                app.document_action(request);
                 assert!(matches!(inbox.try_recv().unwrap(), Request::Edit { .. }));
                 assert!(inbox.try_recv().is_err(), "Save must wait for the edit reply");
-                assert!(app.pending_save.is_some());
+                assert!(app.pending_action.is_some());
                 app.poll(&ctx);
                 assert!(inbox.try_recv().is_err());
                 let reply = if succeeds {
@@ -6864,7 +6817,7 @@ mod tests {
                 };
                 outbox.send(reply).unwrap();
                 app.poll(&ctx);
-                assert!(app.pending_save.is_none());
+                assert!(app.pending_action.is_none());
                 if succeeds {
                     let saved = inbox.try_recv().unwrap();
                     assert!(if encrypted { matches!(saved, Request::SavePassword(..)) }
@@ -6873,11 +6826,11 @@ mod tests {
                 } else {
                     assert!(inbox.try_recv().is_err(), "Rejected edits must not write a file");
                     assert_eq!(app.doc.as_ref().unwrap().edit.as_ref().unwrap().text, "new draft");
-                    assert!(app.banners.iter().any(|b| b.text.starts_with("Save cancelled")));
+                    assert!(app.banners.iter().any(|b| b.text.starts_with("Cancelled because")));
                     assert_eq!(app.busy, 0);
-                    app.password_action(Request::SaveAs("retry-copy.pdf".into()));
+                    app.document_action(Request::SaveAs("retry-copy.pdf".into()));
                     assert!(inbox.try_recv().is_err(),"Retrying Save must not silently omit a rejected draft");
-                    assert!(app.pending_save.is_none());
+                    assert!(app.pending_action.is_none());
                 }
                 app.poll(&ctx);
                 assert!(inbox.try_recv().is_err(), "Save must dispatch only once");

@@ -18,9 +18,9 @@ fn in_memory_sanitize_waits_for_pending_text_and_cancels_after_rejection() {
         focus: false,
         rejected_text: None,
     });
-    app.password_action(Request::Sanitize(Default::default()));
+    app.document_action(Request::Sanitize(Default::default()));
     assert!(matches!(inbox.try_recv().unwrap(), Request::Edit { .. }));
-    assert!(matches!(app.pending_save, Some(Request::Sanitize(_))));
+    assert!(matches!(app.pending_action, Some(Request::Sanitize(_))));
     app.handle(
         &ctx,
         Reply::Failed {
@@ -30,7 +30,7 @@ fn in_memory_sanitize_waits_for_pending_text_and_cancels_after_rejection() {
         },
     );
     app.poll(&ctx);
-    assert!(app.pending_save.is_none());
+    assert!(app.pending_action.is_none());
     assert!(inbox.try_recv().is_err());
 }
 
@@ -52,7 +52,7 @@ fn sanitized_export_commits_pending_text_but_keeps_editor_history_and_savepoint(
         flatten_visible: true,
         ..Default::default()
     };
-    app.password_action(Request::ExportSanitized(options, output.clone()));
+    app.document_action(Request::ExportSanitized(options, output.clone()));
     workflow_settle(&mut app, &ctx);
     assert!(output.exists());
     assert!(app.doc.as_ref().unwrap().dirty());
@@ -91,7 +91,7 @@ fn sanitized_export_rejects_recovery_destinations_and_failed_pending_edits() {
         .unwrap()
         .next_path()
         .with_file_name("export.pdf");
-    app.password_action(Request::ExportSanitized(options, destination));
+    app.document_action(Request::ExportSanitized(options, destination));
     assert!(inbox.try_recv().is_err());
     let (object, rect) = glyph("AB", 30., 40.);
     app.doc.as_mut().unwrap().edit = Some(EditState {
@@ -108,7 +108,7 @@ fn sanitized_export_rejects_recovery_destinations_and_failed_pending_edits() {
         rejected_text: None,
     });
     let output = folder.join("verified.pdf");
-    app.password_action(Request::ExportSanitized(options, output.clone()));
+    app.document_action(Request::ExportSanitized(options, output.clone()));
     assert!(matches!(inbox.try_recv().unwrap(), Request::Edit { .. }));
     app.handle(
         &ctx,
@@ -119,7 +119,7 @@ fn sanitized_export_rejects_recovery_destinations_and_failed_pending_edits() {
         },
     );
     app.poll(&ctx);
-    assert!(app.pending_save.is_none());
+    assert!(app.pending_action.is_none());
     assert!(!output.exists());
     assert!(inbox.try_recv().is_err());
     drop(app.session.take());

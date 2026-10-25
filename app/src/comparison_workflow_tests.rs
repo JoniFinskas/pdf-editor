@@ -73,7 +73,7 @@ fn comparison_detects_unsaved_text_over_an_image_and_keeps_original_after_save()
     assert!(changed.0 > 0 && changed.1 > 0);
     assert_eq!(app.compare.test_origin(), Some(source.as_path()));
     let copy = folder.join("arbitrary-copy.pdf");
-    app.password_action(Request::SaveAs(copy.clone()));
+    app.document_action(Request::SaveAs(copy.clone()));
     workflow_settle(&mut app, &ctx);
     app.open_tool(Tool::Compare);
     assert!(comparison_settle(&mut app, &ctx).1 > 0);
@@ -112,7 +112,7 @@ fn comparison_reopens_saved_copies_with_recorded_original_and_includes_pending_t
     app.open_tool(Tool::Compare);
     assert!(comparison_settle(&mut app, &ctx).0 > 0);
     let copy = folder.join("custom-version.pdf");
-    app.password_action(Request::SaveAs(copy.clone()));
+    app.document_action(Request::SaveAs(copy.clone()));
     workflow_settle(&mut app, &ctx);
     app.open_path(copy.clone());
     workflow_settle(&mut app, &ctx);
@@ -194,7 +194,7 @@ fn comparison_waits_for_success_and_discards_a_late_snapshot_after_close() {
 fn comparison_of_protected_document_uses_memory_without_plaintext_exports() {
     let (mut app, ctx, fixture) = qol_worker();
     let encrypted = fixture.with_file_name("encrypted.pdf");
-    app.password_action(Request::OpenPassword(encrypted, "fixture-reader".into()));
+    app.document_action(Request::OpenPassword(encrypted, "fixture-reader".into()));
     workflow_settle(&mut app, &ctx);
     assert!(app.doc.as_ref().unwrap().protected);
     app.open_tool(Tool::Compare);

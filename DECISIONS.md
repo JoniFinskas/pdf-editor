@@ -955,3 +955,13 @@ Do not interpret a captured release as a click-away, even when its short travel
 remains below the toolkit's drag threshold.
 Verify both directions across rotated/skewed planes and replacement/undo through
 the real worker with a generated transformed PDF.
+
+## Ordered document actions
+
+Reuse the save intent barrier for document tools, exports and printing. Keep
+one pending action until preceding work succeeds; cancel it on failure, document
+replacement or engine shutdown. Reject unchanged failed drafts rather than
+running tools against the previous document contents. Keep preview requests and
+explicit undo/discard behavior separate, and leave independent image conversion
+available without an open document. Generated real-worker extracts verify both
+successful edits and rejected drafts repeatedly without changing the source.

@@ -120,7 +120,7 @@ fn qol_text_highlight_batch_pages_and_working_copy_survive_real_worker_roundtrip
     let folder = root.join(format!("target/qol-workflow-{}", std::process::id()));
     std::fs::create_dir_all(&folder).unwrap();
     let copy = folder.join("working.pdf");
-    app.password_action(Request::SaveAs(copy.clone()));
+    app.document_action(Request::SaveAs(copy.clone()));
     workflow_settle(&mut app, &ctx);
     assert_eq!(app.qol.working_copy.as_ref(), Some(&copy));
     assert!(!app.doc.as_ref().unwrap().dirty());

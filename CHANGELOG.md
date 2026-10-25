@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Wait for pending text edits before exports, printing and common document tools; cancel queued actions when edits fail or the document changes.
+
 - Keep rotated/skewed text selections active beyond the edit box and prevent accidental applies on selection release.
 
 - Add Sanitize & save with on-disk verification before atomic publication, image-only desktop defaults, protected-source acknowledgement and cooperative cancellation.
