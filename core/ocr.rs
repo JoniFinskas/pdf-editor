@@ -29,11 +29,14 @@ impl Engine {
             let scale = (200.0f32 / 72.0)
                 .min(2500.0 / info.width.max(info.height))
                 .min((12_000_000.0 / (info.width * info.height)).sqrt());
+            operation::checkpoint("Rendering OCR page", 0, 3)?;
             let image = self.render(doc, page, scale)?;
+            operation::checkpoint("Recognizing text", 1, 3)?;
             let words = recognize(&image)?;
             if words.is_empty() {
                 return Err(err("Windows OCR did not recognize any text on this page"));
             }
+            operation::checkpoint("Adding OCR text", 2, 3)?;
             self.add_ocr_words(doc, page, scale, &words)?;
             Ok(words.len())
         })
@@ -150,6 +153,7 @@ impl Engine {
                 return Err(err("OCR text layer failed verification"));
             }
         }
+        operation::checkpoint("Adding OCR text", 3, 3)?;
         doc.accept(candidate.bytes);
         Ok(())
     }

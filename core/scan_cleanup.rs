@@ -40,6 +40,7 @@ pub fn detect_scan_corners(picture: &Picture) -> Result<[[f32; 2]; 4]> {
     );
     let mut mask = vec![false; w * h];
     for y in 0..h {
+        if y % 32 == 0 { operation::checkpoint("Processing scan rows", y, h)?; }
         for x in 0..w {
             let i = ((y as u32 * step * picture.width + x as u32 * step) * 4) as usize;
             mask[y * w + x] = gray(&picture.rgba[i..i + 4]) > 180;
@@ -47,6 +48,7 @@ pub fn detect_scan_corners(picture: &Picture) -> Result<[[f32; 2]; 4]> {
     }
     let mut largest = Vec::new();
     for index in 0..mask.len() {
+        if index % 4096 == 0 { operation::checkpoint("Detecting scan edges", index, mask.len())?; }
         if !mask[index] {
             continue;
         }
@@ -163,6 +165,7 @@ pub fn clean_scan(picture: &Picture, options: &ScanOptions) -> Result<Picture> {
     let (sin, cos) = angle.sin_cos();
     let mut rgba = vec![255; (w * h * 4) as usize];
     for y in 0..h {
+        if y % 32 == 0 { operation::checkpoint("Processing scan rows", y as usize, h as usize)?; }
         for x in 0..w {
             let (cx, cy) = (
                 x as f32 - (w - 1) as f32 / 2.0,
@@ -310,6 +313,7 @@ impl Engine {
             if options.ocr {
                 self.ocr_page(&mut candidate, page)?;
             }
+            operation::checkpoint("Applying scan cleanup", 1, 1)?;
             doc.accept(candidate.bytes);
             Ok(())
         })

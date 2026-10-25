@@ -365,6 +365,21 @@ pub(crate) fn edit_styled(
     targets: &[(usize, String)],
     style: Option<(f32, [u8; 3])>,
 ) -> Result<(Vec<u8>, EditResult)> {
+    edit_with_font(engine, state, selected, targets, style, None)
+}
+
+pub(crate) fn edit_formatted(
+    engine: &Engine, state: &Document, selected: &TextObject,
+    targets: &[(usize, String)], font: &fonts::Font, size: f32, color: [u8; 3],
+) -> Result<(Vec<u8>, EditResult)> {
+    edit_with_font(engine, state, selected, targets, Some((size, color)), Some(font))
+}
+
+fn edit_with_font(
+    engine: &Engine, state: &Document, selected: &TextObject,
+    targets: &[(usize, String)], style: Option<(f32, [u8; 3])>,
+    forced_font: Option<&fonts::Font>,
+) -> Result<(Vec<u8>, EditResult)> {
     #[cfg(test)]
     REPAIR_PASSES.with(|count| count.set(0));
     let (ordinal, _) = targets.first().ok_or_else(|| err("Nothing to edit"))?;
@@ -395,7 +410,9 @@ pub(crate) fn edit_styled(
         || text.is_empty()
         || (embedded_original.is_some() && encode(&pdf, &run.font, text).is_ok())
         || type3_covers(&pdf, &run.font, text);
-    let chosen = if reuse {
+    let chosen = if let Some(font) = forced_font {
+        Some(font.clone())
+    } else if reuse {
         None
     } else if let Some(font) = embedded_original {
         Some(font)
@@ -477,7 +494,7 @@ pub(crate) fn edit_styled(
         }
         for (i, replacement) in changes.iter().rev() {
             let r = &records[*i];
-            let bytes = if style.is_some() {
+            let bytes = if style.is_some() && forced_font.is_none() {
                 vec![]
             } else if let Some(f) = &embedded {
                 f.encode(replacement)?
@@ -521,7 +538,7 @@ pub(crate) fn edit_styled(
                 revised.push(Operation::new("q", vec![]));
                 revised.push(Operation::new(
                     "Tf",
-                    vec![Object::Name(r.key.clone()), size.into()],
+                    vec![Object::Name(new_key.clone().unwrap_or_else(|| r.key.clone())), size.into()],
                 ));
                 for operator in ["rg", "RG"] {
                     revised.push(Operation::new(
@@ -532,7 +549,9 @@ pub(crate) fn edit_styled(
                             .collect(),
                     ));
                 }
-                revised.push(if original.operator == "'" || original.operator == "\"" {
+                revised.push(if forced_font.is_some() {
+                    Operation::new("Tj", vec![Object::String(bytes, lopdf::StringFormat::Hexadecimal)])
+                } else if original.operator == "'" || original.operator == "\"" {
                     Operation::new(
                         "Tj",
                         vec![

@@ -42,7 +42,8 @@ impl Engine {
                 return Err(err("Select 1 to 100 PDFs to merge"));
             }
             let mut candidate = self.candidate(doc, parse(&doc.bytes)?)?;
-            for path in paths {
+            for (index, path) in paths.iter().enumerate() {
+                operation::checkpoint("Merging PDFs", index, paths.len())?;
                 let before = self.pages(&candidate)?.len() as u16;
                 self.edit_pages(
                     &mut candidate,
@@ -53,12 +54,17 @@ impl Engine {
                 )?;
                 candidate.undo.clear();
             }
+            operation::checkpoint("Merging PDFs", paths.len(), paths.len())?;
             doc.accept(candidate.bytes);
             Ok(())
         })
     }
     pub fn extract_pages(&self, doc: &Document, pages: &[u16], path: &Path) -> Result<()> {
-        guarded(|| self.extracted(doc, pages)?.save_as(path))
+        guarded(|| {
+            let extracted = self.extracted(doc, pages)?;
+            operation::checkpoint("Extracting pages", pages.len(), pages.len())?;
+            extracted.save_as(path)
+        })
     }
     fn extracted(&self, doc: &Document, pages: &[u16]) -> Result<Document> {
         if pages.is_empty() || pages.len() > 10000 {
@@ -67,6 +73,7 @@ impl Engine {
         let source = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
         let mut destination = self.pdfium.create_new_pdf()?;
         for (index, page) in pages.iter().enumerate() {
+            operation::checkpoint("Extracting pages", index, pages.len())?;
             if i32::from(*page) >= source.pages().len() {
                 return Err(err("Invalid selected page"));
             }
@@ -109,8 +116,11 @@ impl Engine {
                 outputs.push((pages, path));
             }
             let mut created = vec![];
-            for (pages, path) in outputs {
-                if let Err(error) = self.extract_pages(doc, &pages, &path) {
+            let count = outputs.len();
+            for (index, (pages, path)) in outputs.into_iter().enumerate() {
+                let result = operation::checkpoint("Splitting PDF", index, count)
+                    .and_then(|_| self.extract_pages(doc, &pages, &path));
+                if let Err(error) = result {
                     for path in &created {
                         let _ = fs::remove_file(path);
                     }

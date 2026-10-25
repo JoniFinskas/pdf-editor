@@ -38,7 +38,9 @@ impl Engine {
                 pages: 0,
             };
             let mut total = 0usize;
-            for (index, page) in self.pages(doc)?.iter().enumerate() {
+            let pages = self.pages(doc)?;
+            for (index, page) in pages.iter().enumerate() {
+                operation::checkpoint("Preparing print pages", index, pages.len())?;
                 let scale =
                     (300.0_f32 / 72.0).min((15_000_000.0 / (page.width * page.height)).sqrt());
                 let image = self.render(doc, index as u16, scale)?;
@@ -58,6 +60,7 @@ impl Engine {
                 file.write_all(&bitmap)?;
                 job.pages += 1;
             }
+            operation::checkpoint("Preparing print pages", pages.len(), pages.len())?;
             Ok(job)
         })
     }

@@ -78,13 +78,16 @@ impl Engine {
             let original = doc;
             let mut raster_pages = std::collections::BTreeSet::new();
             let mut expanded = self.candidate(doc, parse(&doc.bytes)?)?;
-            for page in 0..self.pages(&expanded)?.len() {
+            let count = self.pages(&expanded)?.len();
+            for page in 0..count {
+                operation::checkpoint("Preparing Word pages", page, count)?;
                 let mut groups = 0usize;
                 while let Some(item) = self
                     .page_items(&expanded, page as u16)?
                     .into_iter()
                     .find(|item| item.kind == "XObjectForm")
                 {
+                    operation::checkpoint("Expanding page groups", page, count)?;
                     groups += 1;
                     if groups > 20000 {
                         return Err(err("Word export contains too many groups"));
@@ -111,6 +114,7 @@ impl Engine {
             let mut image_id = 0u32;
             let mut budget = 0usize;
             for (page_index, page) in native.pages().iter().enumerate() {
+                operation::checkpoint("Exporting Word", page_index, count)?;
                 if page_index > 0 {
                     body.push_str("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>");
                 }
@@ -251,7 +255,9 @@ impl Engine {
     ("[Content_Types].xml".into(),br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#.to_vec()),
     ("_rels/.rels".into(),br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#.to_vec()),
     ("word/_rels/document.xml.rels".into(),rels.into_bytes()),("word/document.xml".into(),body.into_bytes())]);
-            write_new(path, &package(&entries)?)
+            let bytes = package(&entries)?;
+            operation::checkpoint("Writing Word document", count, count)?;
+            write_new(path, &bytes)
         })
     }
 }

@@ -4180,3 +4180,6 @@ fn glyph_selection_resize_and_delete_preserve_atomic_undo() {
     assert_eq!(e.text_objects(&doc,0).unwrap().len(),before.len()-11);
     assert!(doc.undo());assert_eq!(doc.bytes,original);
 }
+
+#[path = "text_qol_tests.rs"]
+mod text_qol_tests;

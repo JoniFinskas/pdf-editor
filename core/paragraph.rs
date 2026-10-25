@@ -366,6 +366,7 @@ impl Engine {
             // Prepare one encoded run through the same fallback tiers as line edits.
             let mut result = self.edit_group(&mut candidate, &p.objects, &plain)?;
             if plain.is_empty() {
+                operation::checkpoint("Applying paragraph", 1, 1)?;
                 doc.accept(candidate.bytes);
                 return Ok(result);
             }
@@ -468,6 +469,7 @@ impl Engine {
                 return Err(err("Paragraph bounds exceed the page"));
             }
             for (i, l) in lines.iter().enumerate() {
+                operation::checkpoint("Laying out paragraph", i, lines.len())?;
                 if l.is_empty() {
                     continue;
                 }
@@ -583,6 +585,7 @@ impl Engine {
                 );
             }
             result.objects_changed = p.objects.len();
+            operation::checkpoint("Applying paragraph", 1, 1)?;
             doc.accept(final_doc.bytes);
             Ok(result)
         })

@@ -87,7 +87,9 @@ impl Engine {
                         .map(|_| *id)
                 })
                 .collect();
-            for id in ids {
+            let count = ids.len();
+            for (index, id) in ids.into_iter().enumerate() {
+                operation::checkpoint("Compressing images", index, count)?;
                 let original = pdf.get_object(id)?.as_stream()?.clone();
                 let Ok(image) = raw_image(&original) else {
                     skipped += 1;
@@ -169,6 +171,7 @@ impl Engine {
                     skipped,
                 });
             }
+            operation::checkpoint("Compressing images", count, count)?;
             doc.accept(candidate.bytes);
             Ok(CompressionReport {
                 before,

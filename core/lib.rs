@@ -1,5 +1,8 @@
 //! Headless PDF editing. Page indices are zero based; geometry is in PDF points.
 mod office_package;
+pub mod operation;
+pub use operation::{OperationControl, OperationProgress};
+mod history;
 mod table_export;
 mod word_export;
 pub use table_export::{TableFormat, TableGrid};
@@ -13,6 +16,8 @@ pub use bookmarks::{Bookmark, BookmarkEdit, BookmarkSet};
 
 mod annotations;
 mod save;
+mod working_copy;
+pub use working_copy::WorkingCopy;
 mod change_state;
 pub use annotations::{Annotation, Markup, MarkupKind};
 mod compression;
@@ -26,6 +31,8 @@ mod export;
 pub use drawing::{Drawing, DrawingKind};
 mod features;
 mod objects;
+mod object_layout;
+pub use object_layout::ObjectLayout;
 mod ungroup;
 
 
@@ -48,6 +55,8 @@ pub use pictures::PlacedPicture;
 mod ocr;
 mod organize;
 mod pages;
+mod page_batch;
+pub use page_batch::PageBatch;
 mod page_forms;
 pub use organize::page_ranges;
 mod passwords;
@@ -66,13 +75,19 @@ mod stamps;
 mod spelling;
 pub use spelling::{SpellingIssue, check_spelling, replace_spelling};
 mod startup;
-pub use search::SearchMatch;
+pub use search::{SearchMatch, SearchOptions, SearchHit};
+mod text_selection;
+pub use text_selection::{TextCharacter, TextSelection, selected_text};
+mod text_format;
+pub use text_format::TextFormat;
 pub use stamps::{BatesNumber, RangeStamp, StampPlacement, TextStamp, stamp_date_today};
 pub use startup::startup_path;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod concurrency_tests;
+#[cfg(test)]
+mod qol_geometry_tests;
 
 use pdfium_render::prelude::*;
 pub use settings::{Settings, Substitution};
@@ -507,6 +522,7 @@ fn render_config(page: &PdfPage<'_>, scale: f32) -> Result<PdfRenderConfig> {
         .render_annotations(true))
 }
 impl Document {
+    pub fn revision(&self) -> u64 { self.revision }
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }

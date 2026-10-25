@@ -53,6 +53,7 @@ impl Engine {
             if encoded.get_ref().len() > MAX_FILE {
                 return Err(err("Export image exceeds 64 MiB"));
             }
+            operation::checkpoint("Writing image", 1, 1)?;
             let mut file = fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -104,8 +105,10 @@ impl Engine {
                 return Err(err("Export filenames already exist; choose another folder"));
             }
             let mut created = vec![];
-            for (page, path) in pages.iter().zip(paths) {
-                if let Err(e) = self.export_page_image(doc, *page, dpi, format, &path) {
+            for (index, (page, path)) in pages.iter().zip(paths).enumerate() {
+                let result = operation::checkpoint("Exporting images", index, pages.len())
+                    .and_then(|_| self.export_page_image(doc, *page, dpi, format, &path));
+                if let Err(e) = result {
                     for path in created {
                         let _ = fs::remove_file(path);
                     }

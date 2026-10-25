@@ -7,6 +7,7 @@ use skrifa::{
 };
 use std::{collections::BTreeMap, path::PathBuf};
 
+#[derive(Clone)]
 pub(crate) struct Font {
     pub bytes: Vec<u8>,
     pub name: String,
@@ -168,6 +169,19 @@ pub(crate) fn find(name: &str, text: &str) -> Result<Font> {
     }
     best.map(|(_, f)| f)
         .ok_or_else(|| err("No embeddable system font contains every required glyph"))
+}
+/// Explicit formatting requires the requested family and style, without fallback.
+pub(crate) fn find_style(name: &str, bold: bool, italic: bool, text: &str) -> Result<Font> {
+    if name.trim().is_empty() || name.len() > 256 || name.chars().any(char::is_control) {
+        return Err(err("Choose an installed font family"));
+    }
+    let requested = format!("{}{}{}", family(name), if bold { " Bold" } else { "" },
+        if italic { " Italic" } else { "" });
+    let font = find(&requested, text)?;
+    if !font.exact {
+        return Err(err("Requested font family and style cannot embed every selected character; choose another font"));
+    }
+    Ok(font)
 }
 fn read_u32(data: &[u8], offset: usize) -> Result<u32> {
     let raw = data

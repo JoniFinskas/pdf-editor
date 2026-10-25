@@ -51,6 +51,23 @@ impl Document {
             if password.is_empty() {
                 return self.save_as(path);
             }
+            let export = Document {
+                bytes: self.output_bytes(password)?,
+                original: self.original.clone(),
+                undo: vec![],
+                redo: vec![],
+                revision: self.revision,
+                protected: true,
+                substitution: self.substitution,
+            };
+            export.save_as(path)
+        })
+    }
+    pub(crate) fn output_bytes(&self, password: &str) -> Result<Vec<u8>> {
+        guarded(|| {
+            if password.is_empty() {
+                return Ok(self.bytes.clone());
+            }
             if password.len() > 127 || password.contains('\0') {
                 return Err(err("Save password must contain at most 127 UTF-8 bytes"));
             }
@@ -76,16 +93,7 @@ impl Document {
             if bytes.len() > MAX_FILE {
                 return Err(err("Encrypted PDF exceeds 64 MiB"));
             }
-            let export = Document {
-                bytes,
-                original: self.original.clone(),
-                undo: vec![],
-                redo: vec![],
-                revision: self.revision,
-                protected: true,
-                substitution: self.substitution,
-            };
-            export.save_as(path)
+            Ok(bytes)
         })
     }
 }

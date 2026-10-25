@@ -51,6 +51,9 @@ impl Engine {
         let mut selected = items.to_vec();
         selected.sort_by_key(|i| i.index);
         selected.dedup_by_key(|i| i.index);
+        if selected.len() != items.len() {
+            return Err(err("Duplicate object selection"));
+        }
         Ok(ObjectClipboard {
             bytes: doc.bytes.clone(),
             items: selected,
@@ -167,6 +170,16 @@ impl Engine {
             {
                 return Err(err("Selection is stale or spans pages"));
             }
+            let current = self.page_items(doc, first.page)?;
+            let mut indices: Vec<_> = items.iter().map(|item| item.index).collect();
+            indices.sort_unstable();
+            indices.dedup();
+            if indices.len() != items.len() {
+                return Err(err("Duplicate object selection"));
+            }
+            if indices.iter().any(|index| !current.iter().any(|item| item.index == *index)) {
+                return Err(err("Object no longer exists"));
+            }
             let (dx, dy) = match action {
                 ObjectAction::Move { dx, dy } | ObjectAction::Duplicate { dx, dy } => (dx, dy),
                 ObjectAction::Delete | ObjectAction::Resize { .. } | ObjectAction::BringToFront | ObjectAction::SendToBack => (0.0, 0.0),
@@ -199,6 +212,12 @@ impl Engine {
                     || dimensions.iter().any(|v| !v.is_finite() || *v < 0.01)
                 {
                     return Err(err("Invalid object size"));
+                }
+                if [bounds.left-old.left, bounds.bottom-old.bottom,
+                    bounds.right-old.right, bounds.top-old.top]
+                    .iter().all(|difference| difference.abs() < 0.0001)
+                {
+                    return Ok(());
                 }
                 let sx = dimensions[2] / dimensions[0];
                 let sy = dimensions[3] / dimensions[1];

@@ -116,7 +116,7 @@ impl Engine {
     }
 }
 
-fn flatten(pdf: &mut lopdf::Document, pages: &[ObjectId]) -> Result<()> {
+pub(crate) fn flatten(pdf: &mut lopdf::Document, pages: &[ObjectId]) -> Result<()> {
     // Materialize inheritable attributes before replacing the page tree.
     let parent = pdf.new_object_id();
     for &id in pages {

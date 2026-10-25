@@ -112,7 +112,10 @@ impl Engine {
             let pages = pdf.new_object_id();
             let mut kids = Vec::new();
             let mut total = 0;
+            let pictures = pictures.into_iter();
+            let count = pictures.size_hint().1.unwrap_or(100).min(100);
             for picture in pictures {
+                operation::checkpoint("Converting images", kids.len(), count)?;
                 let picture = picture?;
                 validate_picture(&picture)?;
                 if kids.len() >= 100 {
@@ -180,6 +183,7 @@ impl Engine {
                 protected: false,
                 substitution: Substitution::default(),
             };
+            operation::checkpoint("Finalizing image PDF", count, count)?;
             self.candidate(&seed, pdf)
         })
     }
