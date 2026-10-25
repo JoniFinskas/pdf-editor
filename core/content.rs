@@ -417,7 +417,7 @@ fn edit_with_font(
     } else if let Some(font) = embedded_original {
         Some(font)
     } else {
-        Some(fonts::find(&selected.font, text)?)
+        Some(fonts::find_for_object(selected, text)?)
     };
     let whole =
         chosen.as_ref().is_some_and(|f| !f.exact) && state.substitution == Substitution::Document;
@@ -461,7 +461,7 @@ fn edit_with_font(
     }
     let chosen = if let Some(f) = chosen {
         if whole {
-            Some(fonts::find(&selected.font, &combined)?)
+            Some(fonts::find_for_object(selected, &combined)?)
         } else {
             Some(f)
         }
@@ -835,6 +835,7 @@ mod tests {
             text: text.into(),
             font: String::new(),
             size: 12.0,
+            quad: [[0.;2];4],
             bounds: crate::Bounds {
                 left: 0.0,
                 bottom: 0.0,

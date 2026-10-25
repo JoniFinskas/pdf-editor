@@ -5,10 +5,11 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
 
 ## P1: Next
 
-- **Manual checks of untested paths.** Test the native Open and Save As
-  dialogs, drag and drop from Explorer, and the close confirmation from the
-  title bar. Also check display scales other than 150% and a long editing
-  session on generated documents.
+- **Interactive release acceptance.** Complete physical drag/drop from Explorer
+  and real monitor-scale transitions. Opt-in generated-data tests cover native
+  Open/Save As selection, editor workflows, OLE drop delivery, close
+  cancellation, repeated edits and 100–200% rendered scales; physical gestures and
+  extended sessions remain separate manual acceptance.
 - **Unusual graphics-state edit latency.** Dense pages use one-pass character
   indexing; cursor repairs batch predictable translations and anchor eligible
   text chains. Generated 150-repair cases improved from 456–565 ms median to
@@ -17,20 +18,11 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
 
 ## P2: Soon
 
-- **Closer fallback fonts.** When a browser-printed Type3 font lacks a typed
-  character, the line falls back to the closest installed TrueType font,
-  usually Arial. Existing text can choose an explicit family/style; automatic
-  fallback matching could additionally rank visual width and weight.
-- **Rotated and skewed text.** The edit box is always horizontal, so rotated
-  runs are edited in an axis-aligned box. Rotate the box to the text matrix.
 - **Icon glyphs.** Runs whose text differs between the two parsers (icon fonts)
   keep their place in the page mapping but cannot be edited.
 
 ## P3: Later
 
-- **Sharp rendering at high zoom.** Textures are capped below the core's
-  16 megapixel render limit, so very large zoom levels upscale. Render visible
-  tiles instead of whole pages.
 - **Dependency exceptions to revisit.**
   - clipboard-win 5.4.2 was below the 14-day age floor when pinned; replace it
     once a later release passes the floor.

@@ -4,6 +4,13 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Add Sanitize & save with on-disk verification before atomic publication, image-only desktop defaults, protected-source acknowledgement and cooperative cancellation.
+- Reject retained content aliases and forged/unused payloads during sanitization and verification; write deterministic sanitized copies and check rebuilt image metadata.
+- Rank fallback fonts using run width, weight and slant; align rotated/skewed text editing, selection, caret and IME with the page geometry.
+- Render high-zoom viewport tiles at display resolution with bounded queues/caches, preserving forms and annotations across pan, edits and display-scale changes.
+- Add opt-in isolated native desktop acceptance for generated-document workflows, OLE drops, scaled rendering and close cancellation; normalize native dialog directories.
+
+
 - Compare current unsaved edits against an immutable opening original; retain explicit originals and encrypted-input passwords across refreshes.
 - Remember originals for app-saved unencrypted copies in private local settings; offer older filename matches for confirmation and reject identical comparison files.
 - Simplify comparison, tool panels, editor chrome and settings while retaining actionable warnings and errors.

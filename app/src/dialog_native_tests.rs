@@ -80,3 +80,30 @@ fn native_picker_open_cancel_timings() {
     }
     eprintln!("native_picker (run, dispatch_ms, ready_ms, completion_ms, responsive_poll_ticks): {timings:?}");
 }
+
+#[test]
+#[ignore = "Selects generated paths in real Windows Open and Save As dialogs"]
+fn native_open_and_save_as_select_generated_paths() {
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let folder=root.join(format!("target/native-picker-files-{}",std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let input=folder.join("generated input.pdf");let output=folder.join("generated output.pdf");
+    std::fs::copy(root.join("tests/fixtures/generated/unicode-cid.pdf"),&input).unwrap();
+    let original=std::fs::read(&input).unwrap();
+    for save in [false,true] {
+        let expected=if save {output.clone()} else {input.clone()};
+        let mut picker=Picker::default();let parent=folder.canonicalize().unwrap();let name=expected.file_name().unwrap().to_string_lossy().into_owned();
+        picker.start(move || {
+            let dialog=rfd::FileDialog::new().set_title("PDF Editor generated picker acceptance").set_directory(parent).set_file_name(name).add_filter("PDF",&["pdf"]);
+            if save {dialog.save_file()}else{dialog.pick_file()}
+        }).unwrap();
+        eprintln!("native mode save={save}");
+        crate::native_controls::select_file(&expected).unwrap();
+        let deadline=Instant::now()+Duration::from_secs(25);
+        let selected=loop {if let Some(result)=picker.poll(){break result.unwrap().unwrap();}
+            assert!(Instant::now()<deadline,"Native picker did not complete");std::thread::sleep(Duration::from_millis(10));};
+        assert_eq!(selected,expected);
+    }
+    assert_eq!(std::fs::read(&input).unwrap(),original);assert!(!output.exists());
+    std::fs::remove_dir_all(folder).unwrap();
+}

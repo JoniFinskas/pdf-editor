@@ -10,6 +10,14 @@ pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write_with(path, |file| file.write_all(bytes))
 }
 
+pub(crate) fn write_verified_new(
+    path: &Path,
+    bytes: &[u8],
+    verify: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+    transaction_verified(path, |file| file.write_all(bytes), None, verify)
+}
+
 fn write_with(path: &Path, write: impl FnOnce(&mut fs::File) -> io::Result<()>) -> io::Result<()> {
     transaction(path, write, None)
 }
@@ -45,6 +53,15 @@ fn transaction(
     write: impl FnOnce(&mut fs::File) -> io::Result<()>,
     expected: Option<&[u8]>,
 ) -> io::Result<()> {
+    transaction_verified(path, write, expected, |_| Ok(()))
+}
+
+fn transaction_verified(
+    path: &Path,
+    write: impl FnOnce(&mut fs::File) -> io::Result<()>,
+    expected: Option<&[u8]>,
+    verify: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<()> {
     if let Some(expected) = expected {
         verify_existing(path, expected)?;
     }
@@ -71,7 +88,7 @@ fn transaction(
     };
     let result = write(&mut file).and_then(|_| file.sync_all());
     drop(file);
-    let result = result.and_then(|_| {
+    let result = result.and_then(|_| verify(&temp)).and_then(|_| {
         if let Some(expected) = expected {
             verify_existing(path, expected)?;
         }
@@ -124,7 +141,10 @@ mod tests {
     use super::*;
     #[test]
     fn failed_write_never_publishes_partial_output_or_replaces_existing_file() {
-        let dir = std::env::temp_dir().join(format!("pdf-save-{}", std::process::id()));
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(format!("target/pdf-save-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let output = dir.join("generated.pdf");
         assert!(
@@ -132,6 +152,14 @@ mod tests {
                 file.write_all(b"partial")?;
                 Err(io::Error::other("simulated interrupted write"))
             })
+            .is_err()
+        );
+        assert!(!output.exists());
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        assert!(
+            write_verified_new(&output, b"unverified", |_| Err(io::Error::other(
+                "verification rejected"
+            )))
             .is_err()
         );
         assert!(!output.exists());

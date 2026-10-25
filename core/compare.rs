@@ -483,6 +483,7 @@ mod tests {
             text: text.into(),
             font: "Test".into(),
             size: 12.,
+            quad: [[0.;2];4],
             bounds: Bounds {
                 left: 0.,
                 bottom: 0.,

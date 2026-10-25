@@ -476,3 +476,287 @@ fn ordinary_sanitize_option_matrix_persists_removals_and_keeps_editability() {
         }
     }
 }
+
+#[test]
+fn verified_sanitized_export_reopens_both_modes_without_changing_editor_or_source() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    for flatten_visible in [false, true] {
+        for remove_comments in [false, true] {
+            for remove_links in [false, true] {
+                let input = temp(&format!(
+                    "verify-input-{flatten_visible}-{remove_comments}-{remove_links}.pdf"
+                ));
+                let output = temp(&format!(
+                    "verify-output-{flatten_visible}-{remove_comments}-{remove_links}.pdf"
+                ));
+                let _ = fs::remove_file(&output);
+                fs::write(&input, workflow_fixture(flatten_visible)).unwrap();
+                let mut doc = e.open(&input).unwrap();
+                let target = e.text_objects(&doc, 0).unwrap().remove(0);
+                e.edit(&mut doc, &target, "VISIBLE_EDIT").unwrap();
+                let before = doc.bytes.clone();
+                let revision = doc.revision();
+                let options = SanitizeOptions {
+                    flatten_visible,
+                    remove_comments,
+                    remove_links,
+                };
+                assert!(e.verify_sanitized(&doc, options).is_err());
+                e.export_sanitized(&doc, options, &output).unwrap();
+                assert_eq!(doc.bytes, before);
+                assert_eq!(doc.revision(), revision);
+                assert!(doc.can_undo());
+                assert_eq!(fs::read(&input).unwrap(), workflow_fixture(flatten_visible));
+                let saved = e.open(&output).unwrap();
+                e.verify_sanitized(&saved, options).unwrap();
+                let bytes = fs::read(&output).unwrap();
+                assert!(e.export_sanitized(&doc, options, &output).is_err());
+                assert_eq!(fs::read(&output).unwrap(), bytes);
+                if flatten_visible {
+                    assert_rebuilt_structure(&parse(&bytes).unwrap());
+                } else {
+                    no_payload_markers(&parse(&bytes).unwrap());
+                }
+                assert!(e.export_sanitized(&doc, options, &input).is_err());
+                fs::remove_file(input).unwrap();
+                fs::remove_file(output).unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn verified_export_rejects_original_content_aliases_including_indirect_arrays() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    for array in [false, true] {
+        let mut pdf = parse(&workflow_fixture(false)).unwrap();
+        let page = pdf.get_pages()[&1];
+        let mut bytes = pdf.get_page_content_with_limit(page, MAX_STREAM).unwrap();
+        bytes.extend_from_slice(b"\nBT 3 Tr (ALIAS_HIDDEN_PAYLOAD) Tj ET\n");
+        pdf.change_page_content(page, bytes).unwrap();
+        let contents = pdf
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"Contents")
+            .unwrap()
+            .clone();
+        if array {
+            let group = pdf.add_object(Object::Array(vec![contents.clone()]));
+            pdf.get_dictionary_mut(page).unwrap().set("Contents", group);
+        }
+        pdf.catalog_mut().unwrap().set("Private", contents);
+        let input = temp(&format!("alias-input-{array}.pdf"));
+        let output = temp(&format!("alias-output-{array}.pdf"));
+        let _ = fs::remove_file(&output);
+        let mut source = Vec::new();
+        pdf.save_to(&mut source).unwrap();
+        fs::write(&input, &source).unwrap();
+        let mut doc = e.open(&input).unwrap();
+        let original = doc.bytes.clone();
+        assert!(
+            e.export_sanitized(&doc, SanitizeOptions::default(), &output)
+                .is_err()
+        );
+        assert!(!output.exists());
+        assert_eq!(doc.bytes, original);
+        assert!(e.sanitize(&mut doc, SanitizeOptions::default()).is_err());
+        assert_eq!(doc.bytes, original);
+        let options = SanitizeOptions {
+            flatten_visible: true,
+            ..Default::default()
+        };
+        e.export_sanitized(&doc, options, &output).unwrap();
+        let clean = e.open(&output).unwrap();
+        e.verify_sanitized(&clean, options).unwrap();
+        assert!(
+            parse(&clean.bytes)
+                .unwrap()
+                .objects
+                .values()
+                .filter_map(|object| object.as_stream().ok())
+                .all(|stream| !stream
+                    .get_plain_content_with_limit(MAX_STREAM)
+                    .unwrap_or_else(|_| stream.content.clone())
+                    .windows(20)
+                    .any(|part| part == b"ALIAS_HIDDEN_PAYLOAD"))
+        );
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+    }
+}
+
+#[test]
+fn rebuilt_verification_rejects_unrecognized_catalog_extras() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let path = temp("raster-verify-extra.pdf");
+    fs::write(&path, workflow_fixture(false)).unwrap();
+    let mut doc = e.open(&path).unwrap();
+    let options = SanitizeOptions {
+        flatten_visible: true,
+        ..Default::default()
+    };
+    e.sanitize(&mut doc, options).unwrap();
+    let mut pdf = parse(&doc.bytes).unwrap();
+    pdf.catalog_mut()
+        .unwrap()
+        .set("Private", Object::string_literal("HIDDEN_CATALOG_PAYLOAD"));
+    let extra = e.candidate(&doc, pdf).unwrap();
+    assert!(e.verify_sanitized(&extra, options).is_err());
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn rebuilt_verification_rejects_embedded_jpeg_metadata() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let input = temp("verify-jpeg-extra.pdf");
+    fs::write(&input, workflow_fixture(false)).unwrap();
+    let mut doc = e.open(&input).unwrap();
+    let options = SanitizeOptions {
+        flatten_visible: true,
+        ..Default::default()
+    };
+    e.sanitize(&mut doc, options).unwrap();
+    let mut pdf = parse(&doc.bytes).unwrap();
+    let image = pdf
+        .objects
+        .values_mut()
+        .find_map(|object| {
+            object.as_stream_mut().ok().filter(|stream| {
+                stream
+                    .dict
+                    .get(b"Subtype")
+                    .and_then(Object::as_name)
+                    .is_ok_and(|kind| kind == b"Image")
+            })
+        })
+        .unwrap();
+    let payload = b"Exif\0\0SYNTHETIC_MARKER!";
+    let mut bytes = vec![255, 216, 255, 225];
+    bytes.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+    bytes.extend_from_slice(payload);
+    bytes.extend_from_slice(&image.content[2..]);
+    image.set_content(bytes);
+    let extra = e.candidate(&doc, pdf).unwrap();
+    assert_eq!(
+        e.render(&doc, 0, 1.).unwrap().rgba,
+        e.render(&extra, 0, 1.).unwrap().rgba
+    );
+    assert!(e.verify_sanitized(&extra, options).is_err());
+    fs::remove_file(input).unwrap();
+}
+
+#[test]
+fn editable_export_keeps_legitimately_shared_page_content_editable() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    for shared_array in [false, true] {
+        let mut pdf = parse(&generated("AB", false, 0, 0., false, false)).unwrap();
+        let page = pdf.get_pages()[&1];
+        if shared_array {
+            let contents = pdf
+                .get_dictionary(page)
+                .unwrap()
+                .get(b"Contents")
+                .unwrap()
+                .clone();
+            let array = pdf.add_object(Object::Array(vec![contents]));
+            pdf.get_dictionary_mut(page).unwrap().set("Contents", array);
+        }
+        let child = pdf.add_object(pdf.get_dictionary(page).unwrap().clone());
+        let parent = pdf
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"Parent")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        pdf.get_dictionary_mut(parent)
+            .unwrap()
+            .set("Kids", vec![page.into(), child.into()]);
+        pdf.get_dictionary_mut(parent).unwrap().set("Count", 2);
+        let mut bytes = Vec::new();
+        pdf.save_to(&mut bytes).unwrap();
+        let input = temp(&format!("shared-content-{shared_array}.pdf"));
+        let output = temp(&format!("shared-content-clean-{shared_array}.pdf"));
+        let _ = fs::remove_file(&output);
+        fs::write(&input, bytes).unwrap();
+        let doc = e.open(&input).unwrap();
+        e.export_sanitized(&doc, SanitizeOptions::default(), &output)
+            .unwrap();
+        let clean = e.open(&output).unwrap();
+        assert_eq!(e.pages(&clean).unwrap().len(), 2);
+        for page in [0, 1] {
+            assert_eq!(e.text_objects(&clean, page).unwrap()[0].text, "AB");
+        }
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+    }
+}
+
+#[test]
+fn verification_bypass_repeated_page_references_cannot_hide_content_aliases() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut pdf = parse(&workflow_fixture(false)).unwrap();
+    let page = pdf.get_pages()[&1];
+    let parent = pdf
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Parent")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    pdf.get_dictionary_mut(parent)
+        .unwrap()
+        .set("Kids", vec![page.into(), page.into()]);
+    pdf.get_dictionary_mut(parent).unwrap().set("Count", 2);
+    let contents = pdf
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Contents")
+        .unwrap()
+        .clone();
+    pdf.catalog_mut().unwrap().set("Private", contents);
+    let input = temp("repeated-page-alias.pdf");
+    let output = temp("repeated-page-clean.pdf");
+    let _ = fs::remove_file(&output);
+    let mut bytes = Vec::new();
+    pdf.save_to(&mut bytes).unwrap();
+    fs::write(&input, bytes).unwrap();
+    let doc = e.open(&input).unwrap();
+    assert!(
+        e.export_sanitized(&doc, SanitizeOptions::default(), &output)
+            .is_err()
+    );
+    assert!(!output.exists());
+    fs::remove_file(input).unwrap();
+}
+
+#[test]
+fn verification_bypass_forged_xref_streams_cannot_hide_unused_payloads() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let input = temp("forged-xref-source.pdf");
+    fs::write(&input, workflow_fixture(false)).unwrap();
+    let mut doc = e.open(&input).unwrap();
+    let options = SanitizeOptions {
+        flatten_visible: true,
+        ..Default::default()
+    };
+    e.sanitize(&mut doc, options).unwrap();
+    let mut pdf = parse(&doc.bytes).unwrap();
+    pdf.add_object(Stream::new(
+        dictionary! {"Type"=>"XRef","W"=>vec![1.into(),2.into(),1.into()],"Size"=>1},
+        b"HIDDEN_UNUSED_PAYLOAD".to_vec(),
+    ));
+    let mut bytes = Vec::new();
+    pdf.save_to(&mut bytes).unwrap();
+    let mut extra = doc.comparison_snapshot();
+    extra.bytes = bytes;
+    assert!(e.verify_sanitized(&extra, options).is_err());
+    fs::remove_file(input).unwrap();
+}

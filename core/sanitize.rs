@@ -1,5 +1,7 @@
 use crate::*;
 use lopdf::{Dictionary, Object, Stream, content::Content};
+#[path="sanitize_verify.rs"]
+mod verification;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SanitizeOptions {
@@ -33,12 +35,81 @@ impl std::fmt::Display for SanitizeReport {
         ].into_iter().filter(|(count, _)| *count > 0)
             .map(|(count, label)| format!("{count} {label}")).collect();
         if removed.is_empty() {
-            return f.write_str("No removable metadata or hidden content found.");
+            return f.write_str("Sanitized. Save As to keep the cleaned copy.");
         }
         write!(f, "Removed {}. Save As to keep the cleaned copy.", removed.join(", "))
     }
 }
 impl Engine {
+    /// Export and verify a new sanitized copy without changing the editor or its history.
+    /// Output is unencrypted; the source and existing destinations are never replaced.
+    pub fn export_sanitized(&self, doc: &Document, options: SanitizeOptions, path: &Path) -> Result<SanitizeReport> {
+        guarded(|| {
+            let mut copy = doc.comparison_snapshot();
+            operation::checkpoint("Sanitizing copy",0,1)?;
+            let report = self.sanitize(&mut copy, options)?;
+            self.verify_sanitized(&copy, options)?;
+            operation::checkpoint("Writing sanitized copy",0,1)?;
+            save::write_verified_new(path, &copy.bytes, |temporary| {
+                operation::checkpoint("Verifying saved copy",0,1).map_err(std::io::Error::other)?;
+                let saved = self.open(temporary).map_err(std::io::Error::other)?;
+                if saved.bytes != copy.bytes {
+                    return Err(std::io::Error::other("Sanitized copy verification failed"));
+                }
+                self.verify_sanitized(&saved, options).map_err(std::io::Error::other)?;
+                operation::checkpoint("Publishing sanitized copy",1,1).map_err(std::io::Error::other)
+            })?;
+            Ok(report)
+        })
+    }
+
+    /// Check the selected sanitization guarantees; this does not assess visible content.
+    pub fn verify_sanitized(&self, doc: &Document, options: SanitizeOptions) -> Result<()> {
+        guarded(|| {
+            let pdf = parse(&doc.bytes)?;
+            if pdf.trailer.has(b"Prev") || pdf.trailer.has(b"Info") {
+                return Err(err("Sanitized copy contains metadata or saved revisions"));
+            }
+            verification::base(&pdf,&doc.bytes)?;
+            let mut check = doc.comparison_snapshot();
+            let report = self.sanitize(&mut check, SanitizeOptions { flatten_visible: false, ..options })?;
+            if report != SanitizeReport::default() {
+                return Err(err("Sanitized copy still contains removable content"));
+            }
+            if options.flatten_visible {
+                verification::raster(&pdf)?;
+                fn raster_only(object: &Object, depth: usize) -> Result<()> {
+                    if depth > 128 { return Err(err("Sanitized object nesting limit exceeded")); }
+                    match object {
+                        Object::Dictionary(dict) => {
+                            for (key, value) in dict.iter() {
+                                if matches!(key.as_slice(), b"Font"|b"FontDescriptor"|b"ToUnicode"|b"Annots"|b"AcroForm"|b"Outlines"|b"StructTreeRoot") {
+                                    return Err(err("Rebuilt copy contains non-image document content"));
+                                }
+                                raster_only(value, depth + 1)?;
+                            }
+                        }
+                        Object::Stream(stream) => raster_only(&Object::Dictionary(stream.dict.clone()), depth + 1)?,
+                        Object::Array(values) => for value in values { raster_only(value, depth + 1)?; },
+                        _ => (),
+                    }
+                    Ok(())
+                }
+                for object in pdf.objects.values() { raster_only(object, 0)?; }
+                for (&number, &id) in &pdf.get_pages() {
+                    let operators = Content::decode(&pdf.get_page_content_with_limit(id, MAX_STREAM)?)?;
+                    if operators.operations.iter().any(|op| !matches!(op.operator.as_str(), "q"|"Q"|"cm"|"Do"))
+                        || !self.page_text_characters(doc, (number - 1) as u16)?.is_empty() {
+                        return Err(err("Rebuilt copy contains non-image page content"));
+                    }
+                }
+            }
+            // Loading every page also verifies the saved page tree and native parser.
+            self.pages(doc)?;
+            Ok(())
+        })
+    }
+
     fn sanitize_visible(&self, doc: &mut Document, options: SanitizeOptions) -> Result<SanitizeReport> {
         let mut source = parse(&doc.bytes)?;
         // Remove requested annotation appearances before rendering. Widgets remain
@@ -64,6 +135,7 @@ impl Engine {
         let sizes=self.pages(&source)?;
         if sizes.len()>100 {return Err(err("Visible-page sanitization supports up to 100 pages per document"));}
         let pictures=sizes.iter().enumerate().map(|(index,size)| {
+            operation::checkpoint("Rebuilding pages",index,sizes.len())?;
             let scale=2.0_f32.min(2048.0/size.width.max(size.height));
             self.render(&source,index as u16,scale).map(|image| Picture {
                 width:image.width,height:image.height,rgba:image.rgba
@@ -83,12 +155,14 @@ impl Engine {
             pdf.get_dictionary_mut(*id)?.set("MediaBox",vec![Object::Integer(0),Object::Integer(0),
                 Object::Real(size.width),Object::Real(size.height)]);
         }
+        verification::canonicalize(&mut pdf);
         let candidate=self.candidate(doc,pdf)?;
         for index in 0..sizes.len() {
             if !self.text_objects(&candidate,index as u16)?.is_empty() {
                 return Err(err("Visible-page sanitization verification failed; document unchanged"));
             }
         }
+        operation::checkpoint("Applying sanitized pages",sizes.len(),sizes.len())?;
         doc.accept(candidate.bytes);
         Ok(SanitizeReport {rasterized_pages:sizes.len(),..Default::default()})
     }
@@ -110,7 +184,8 @@ impl Engine {
             }
             let pages = pdf.get_pages();
             let mut walk = Walk::default();
-            for id in pages.values() {
+            for (index,id) in pages.values().enumerate() {
+                operation::checkpoint("Sanitizing pages",index,pages.len())?;
                 let resources = page_resources(&pdf, *id)?;
                 let content = pdf.get_page_content_with_limit(*id, MAX_STREAM)?;
                 let cleaned =
@@ -194,7 +269,9 @@ impl Engine {
             for object in pdf.objects.values_mut() {
                 clean_object(object, &mut report, 0)?;
             }
+            verification::canonicalize(&mut pdf);
             let candidate = self.candidate(doc, pdf)?;
+            operation::checkpoint("Applying sanitized pages",pages.len(),pages.len())?;
             doc.accept(candidate.bytes);
             Ok(report)
         })
@@ -260,6 +337,36 @@ fn reject_payload_aliases(pdf: &lopdf::Document) -> Result<()> {
     for object in pdf.objects.values() {
         scan(pdf, object, 0, &mut counts, &mut payloads)?;
     }
+    // Count only actual page-content edges. Shared streams used by several
+    // pages are safe once every Contents entry is replaced; aliases from any
+    // other dictionary retain the old bytes and must fail closed.
+    fn content_edges(pdf:&lopdf::Document,value:&Object,expected:&mut std::collections::BTreeMap<lopdf::ObjectId,usize>,seen:&mut std::collections::BTreeSet<lopdf::ObjectId>,active:&mut std::collections::BTreeSet<lopdf::ObjectId>,depth:usize)->Result<()> {
+        if depth>128{return Err(err("Sanitize content nesting limit exceeded"));}
+        match value {
+            Object::Reference(id)=>{
+                *expected.entry(*id).or_default()+=1;
+                if active.contains(id) {return Err(err("Sanitize content reference cycle"));}
+                if seen.insert(*id) {
+                    active.insert(*id);
+                    content_edges(pdf,pdf.get_object(*id)?,expected,seen,active,depth+1)?;
+                    active.remove(id);
+                }
+            }
+            Object::Array(values)=>for value in values {content_edges(pdf,value,expected,seen,active,depth+1)?;},
+            Object::Stream(_)=>(),
+            _=>return Err(err("Unsupported page content structure")),
+        }Ok(())
+    }
+    let mut expected=std::collections::BTreeMap::new();let mut seen=std::collections::BTreeSet::new();
+    let pages=pdf.get_pages().values().copied().collect::<std::collections::BTreeSet<_>>();
+    for page in pages {
+        if let Ok(contents)=pdf.get_dictionary(page)?.get(b"Contents") {
+            content_edges(pdf,contents,&mut expected,&mut seen,&mut Default::default(),0)?;
+        }
+    }
+    if expected.iter().any(|(id,count)|counts.get(id).copied().unwrap_or_default()>*count) {
+        return Err(err("Sanitize cannot safely remove aliased page content. Use Rebuild visible pages; no changes were made"));
+    }
     for payload in &payloads {
         let mut object = payload;
         let mut seen = std::collections::BTreeSet::new();
@@ -269,7 +376,7 @@ fn reject_payload_aliases(pdf: &lopdf::Document) -> Result<()> {
                 || seen.len() > 128
             {
                 return Err(err(
-                    "Sanitize cannot safely remove an aliased attachment, script or metadata payload; no changes were made",
+                    "Sanitize cannot safely remove aliased content or metadata. Use Rebuild visible pages; no changes were made",
                 ));
             }
             object = pdf

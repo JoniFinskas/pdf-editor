@@ -385,3 +385,22 @@ atomically updates only that session-owned destination, checking its last writte
 bytes and rejecting redirected files or detected external changes. Original
 identity remains protected. The token retains encryption in memory; it is never
 serialized or persisted in session/recovery files.
+
+## Verified sanitized export and viewport rendering
+
+- `TextObject::quad: [[f32; 2]; 4]`: tight PDF-space corners in bottom-left, bottom-right, top-right, top-left order; preserves rotation, skew and reflection for editing geometry.
+- `Engine::export_sanitized(document, options, path) -> Result<SanitizeReport>`: sanitizes an independent snapshot, verifies canonical candidate bytes, writes and reopens a flushed same-directory temporary file, verifies it, and exclusively publishes the new unencrypted copy. Does not change the editor, history or source; failure/cancellation removes temporary output.
+- `Engine::verify_sanitized(document, options) -> Result<()>`: verifies the current sanitizer's canonical output format and requested cleanup. Requires a deterministic classic-xref serialization with no unused or extra raw bytes. Rebuilt mode additionally checks the minimal raster graph, page operators, empty text layer and fresh RGB JPEG metadata rules. Rejects unsupported formats rather than certifying them; does not assess visible content or arbitrary retained semantic data in editable mode.
+- `Engine::render_tile(document, page, scale, [x, y, width, height]) -> Result<Image>`: renders a full-page raster-space region with annotations and form data. Tile sides are at most 2048 pixels, full-page raster sides at most one million; dimensions and bounds are validated. A small gutter keeps clipping outside the returned region.
+- `Engine::render_tiles(document, page, scale, rectangles) -> Result<Vec<Image>>`: opens one document/page for a batch of 1–16 tiles, at most 4,194,304 returned pixels total. Shares tile validation and preserves input order.
+
+The desktop requests 512-pixel tiles only for visible regions above the whole-page
+render cap. At most one batch is in flight per page; stale scale/generation replies
+are discarded before cache eviction. Whole-page previews and tiles share a 128 MiB
+per-document GPU budget. Cancelling a sanitize/export checks safe page and publication
+boundaries. Native calls already running finish before cancellation takes effect.
+
+Editable sanitization distinguishes legitimate shared page Contents from aliases
+through unrelated objects, including indirect arrays and repeated page references.
+Unknown image-only graph entries, fake cross-reference streams, JPEG EXIF/XMP/comment
+segments and trailing image payloads fail verification.

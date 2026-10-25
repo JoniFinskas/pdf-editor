@@ -451,7 +451,14 @@ prefix and fixed-width sequence in document order; overflow aborts the operation
 
 ### Sanitize document
 
-Document → Sanitize document removes metadata, embedded files, executable actions
+**Sanitize & save…** creates a new copy, reopens and verifies the written bytes,
+then publishes it. The open document and its undo history stay unchanged.
+Image-only rebuilding is selected by default. Protected inputs require an explicit
+**Export without password** choice; originals and existing destinations are never
+replaced. Cancelled or failed verification leaves no published copy.
+
+
+Document → Sanitize document removes PDF metadata, embedded files, executable actions
 and text using invisible rendering or zero opacity. Options also remove comments
 and link annotations. A report lists removed entries; Save As writes a fresh copy,
 and Undo restores the original. Recovery snapshots can still contain original data.
@@ -459,14 +466,19 @@ Layers, soft masks, clipping and mixed hidden/visible text blocks are rejected
 without changes. Same-color, occluded and off-page text are not detected; this tool
 is not a complete visual-concealment audit.
 
-Sanitization also rejects XFA forms, retained annotation appearances, unused retained Form
+Editable cleanup preserves text and forms, and verifies the supported PDF cleanup.
+It does not assess visible content, embedded-image metadata or arbitrary opaque
+payloads. Use rebuilding when preparing a copy after removing private data.
+Rebuilt exports also reject image metadata and unexpected document extras.
+
+Sanitization also rejects aliased page-content streams, XFA forms, retained annotation appearances, unused retained Form
 streams, Forms without their own resources, and aliased attachment/script/metadata payloads.
 These cases leave the original document unchanged. For complex documents,
 **Rebuild visible pages** creates image-only pages from the current appearance
 (up to 100 pages, at most 2048 pixels per side). No original text layer, metadata,
 scripts, forms or attachments are copied. Page dimensions are preserved, but text
-is no longer searchable or editable and interactive links are removed. This is an
-explicit option; Undo restores the original. Comment/drawing and link options
+is no longer searchable or editable and interactive links are removed. This mode is
+selected by default in the desktop tool; Undo restores the original. Comment/drawing and link options
 control whether their visible appearances are included in the rebuilt images;
 interactive annotation data is always removed.
 
@@ -536,3 +548,16 @@ target. Release commits one undoable move.
 Word export keeps supported text, tables and images editable. Complex compositing
 that cannot be expanded safely is preserved as a page image instead of aborting
 the export. Those image-only pages are not text-editable in Word.
+
+### Text geometry and high zoom
+
+Automatic font fallback considers the original run width, family category, weight
+and slant after checking glyph coverage and embedding permissions. Exact installed
+families still take priority; an explicit family remains available in font settings.
+Rotated and skewed text uses an aligned editor, including pointer selection, caret,
+copy/paste, text undo and IME positioning. Paragraphs keep Ctrl+Enter to apply.
+
+High zoom renders visible page tiles at display resolution, including form values
+and annotations. A smaller whole-page preview remains while tiles load. Cache and
+batch limits bound memory; edits, pan, zoom and display-scale changes invalidate
+stale results.

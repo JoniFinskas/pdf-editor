@@ -907,3 +907,40 @@ remove repeated tutorials and static status prose. Generated sanitization tests
 cover both modes, all comment/link combinations, visible edits, fresh saves,
 removed payloads and exact undo/redo. Rebuilt output is image-only; visible edits
 remain, and local undo/recovery can retain source content.
+
+## Verified exports and desktop editing fidelity
+
+Export sanitization from an independent snapshot and publish only after the flushed
+file has been reopened and verified. Keep the editor savepoint/history unchanged.
+New outputs are unencrypted; protected inputs require an explicit desktop choice.
+Default the desktop tool to page rebuilding for sharing; retain editable cleanup
+with its supported-content limits. Verification certifies the selected cleanup,
+not visible content or every possible opaque payload in editable documents.
+
+Write sanitized documents with a fixed PDF header, classic cross-reference table,
+Root/Size trailer, pruned and renumbered objects. Compare canonical bytes on
+verification, rejecting raw extras and unused objects instead of exempting streams
+by a claimed type. Validate rebuilt JPEG metadata and minimal document roles.
+Count page-content graph edges once per page object and indirect container so
+legitimate sharing remains editable while unrelated aliases fail closed.
+
+Use native quadrilateral bounds and the page transform for affine editing. Keep
+the native TextEdit keyboard/history/IME behavior, map pointer selection into local
+coordinates and transform clipped paint meshes back to the page. Rank non-exact
+font candidates by category, width, weight and slant; preserve glyph, licensing and
+exact-family checks.
+
+Render display-resolution viewport tiles with a shared page load per bounded
+batch. Keep small whole-page previews while tiles arrive, share the raster cache
+budget and drop stale replies before they can evict current data.
+
+Native acceptance bypasses normal startup, instance forwarding, settings and
+recovery. It owns only generated inputs and its own windows. Declare the already
+resolved pinned winit version as a test-only dependency for its platform event-loop
+extension; add no runtime packages or features. Real foreground keyboard testing is
+opt-in, guarded by window ownership; normal native workflow checks use owned-window
+messages and the registered OLE drop target. Raw reports and captures stay local.
+
+Allow the portable build script to select either executable while preserving its
+default workspace build and path-remapping flags. A locked desktop executable must
+not prevent rebuilding the console binary or require closing a running editor.

@@ -11,6 +11,8 @@ mod scan_cleanup;
 
 mod compare;
 mod comparison_origin;
+#[cfg(all(test,windows))]
+mod native_controls;
 mod compression;
 mod crop;
 mod drawing;

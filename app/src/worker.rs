@@ -21,6 +21,7 @@ const SAMPLE_SCALE: f32 = 4.0;
 const SAMPLE_SPAN: f32 = 1000.0;
 
 pub enum Request {
+    RenderTiles {page:u16,scale:f32,regions:Vec<[u32;4]>},
     ComparisonSnapshot(u64),
     Characters(u16),
     FindOptions(String, pdf_editor_core::SearchOptions),
@@ -58,6 +59,7 @@ pub enum Request {
     Bates(pdf_editor_core::RangeStamp, pdf_editor_core::BatesNumber),
     Compress(u32, u8),
     Sanitize(pdf_editor_core::SanitizeOptions),
+    ExportSanitized(pdf_editor_core::SanitizeOptions, PathBuf),
 
     PrivacyPreview(pdf_editor_core::PrivacyQuery),
     PrivacyApply(pdf_editor_core::RedactionPreview),
@@ -158,6 +160,8 @@ impl PageTransform {
 }
 
 pub enum Reply {
+    Tiles {generation:u64,page:u16,scale:f32,images:Result<Vec<([u32;4],pdf_editor_core::Image)>,String>},
+    SanitizedExported(PathBuf),
     ComparisonSnapshot {id:u64,generation:u64,original:Arc<Document>,current:Arc<Document>},
     Characters {generation:u64,page:u16,characters:Result<Vec<pdf_editor_core::TextCharacter>,String>},
     SearchResults {generation:u64,query:String,hits:Vec<pdf_editor_core::SearchHit>,boxes:Vec<(u16,Vec<[f32;4]>)>},
@@ -438,7 +442,7 @@ fn run(
         }
         let batch = coalesce(batch);
         for request in batch {
-            let cancellable=matches!(&request,Request::CleanupScan(..)|Request::ImagesToPdf(..)|Request::Merge(..)|Request::Extract(..)|Request::Split(..)|Request::ExportWord(..)|Request::ExportImages(..)|Request::Compress(..)|Request::Ocr(..)|Request::PageBatch(..)|Request::LayoutItems(..)|Request::HighlightText(..)|Request::FormatText(..)|Request::Replace {..}|Request::ReplaceOptions {..}|Request::EditParagraph(..)|Request::Print);
+            let cancellable=matches!(&request,Request::Sanitize(..)|Request::ExportSanitized(..)|Request::CleanupScan(..)|Request::ImagesToPdf(..)|Request::Merge(..)|Request::Extract(..)|Request::Split(..)|Request::ExportWord(..)|Request::ExportImages(..)|Request::Compress(..)|Request::Ocr(..)|Request::PageBatch(..)|Request::LayoutItems(..)|Request::HighlightText(..)|Request::FormatText(..)|Request::Replace {..}|Request::ReplaceOptions {..}|Request::EditParagraph(..)|Request::Print);
             let control = if cancellable {active.start()} else {Default::default()};
             let reply = catch_unwind(AssertUnwindSafe(|| {
                 pdf_editor_core::operation::with_control(&control, || {
@@ -474,6 +478,7 @@ fn coalesce(batch: Vec<Request>) -> Vec<Request> {
             Request::Objects { page } => Some((0,*page)),
             Request::Render { page,.. } => Some((1,*page)),
             Request::Thumbnail(page) => Some((2,*page)),
+            Request::RenderTiles {page,..} => Some((3,*page)),
             _ => None,
         }
     }
@@ -529,6 +534,11 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
+        Request::RenderTiles {page,scale,regions}=>{
+            let doc=state.doc.as_ref()?;
+            let images=engine.render_tiles(doc,page,scale,&regions).map(|images|regions.into_iter().zip(images).collect()).map_err(|e|e.to_string());
+            Some(Reply::Tiles {generation:state.generation,page,scale,images})
+        }
         Request::ComparisonSnapshot(id)=>{
             let doc=state.doc.as_ref()?;
             let original=state.comparison_original.clone().unwrap_or_else(||Arc::new(doc.comparison_snapshot()));
@@ -696,6 +706,10 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 state.generation += 1;
                 Some(changed(state,ChangeKind::Edit,Some("Redaction applied. The document is flattened; Save As writes a sanitized copy.".into()),1))
             }
+            Err(e) => failed(e),
+        },
+        Request::ExportSanitized(options,path) => match engine.export_sanitized(state.doc.as_ref()?,options,&path) {
+            Ok(_) => Some(Reply::SanitizedExported(path)),
             Err(e) => failed(e),
         },
         Request::Sanitize(options) => match engine.sanitize(state.doc.as_mut()?, options) {
@@ -1302,7 +1316,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
 
 fn page_of(request: &Request) -> Option<u16> {
     match request {
-        Request::Render { page, .. } | Request::Objects { page } | Request::Thumbnail(page) => {
+        Request::Render { page, .. } | Request::RenderTiles {page,..} | Request::Objects { page } | Request::Thumbnail(page) => {
             Some(*page)
         }
         _ => None,

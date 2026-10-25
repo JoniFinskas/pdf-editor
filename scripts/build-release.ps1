@@ -1,3 +1,4 @@
+param([ValidateSet('pdf-editor', 'pdf-editor-cli')][string]$Binary)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repo = Split-Path $PSScriptRoot -Parent
@@ -18,7 +19,10 @@ try {
     $env:CARGO_ENCODED_RUSTFLAGS = $flags -join [char]31
     Push-Location $repo
     try {
-        & cargo build --workspace --release --locked --offline -j 1
+        $arguments = @('build', '--release', '--locked', '--offline', '-j', '1')
+        if ($Binary) { $arguments += @('--bin', $Binary) }
+        else { $arguments += '--workspace' }
+        & cargo @arguments
         if ($LASTEXITCODE -ne 0) { throw 'Portable release build failed.' }
     } finally { Pop-Location }
 } finally { $env:CARGO_ENCODED_RUSTFLAGS = $previous }

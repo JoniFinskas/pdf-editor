@@ -7,6 +7,7 @@ mod table_export;
 mod word_export;
 pub use table_export::{TableFormat, TableGrid};
 mod compare;
+mod render_tile;
 pub use compare::{ChangeKind, ComparePage, PagePair, TextChange, align_comparison_pages, compare_pixels, compare_text};
 
 mod paragraph;
@@ -208,6 +209,8 @@ pub struct TextObject {
     pub text: String,
     pub font: String,
     pub size: f32,
+    /// Tight corners in PDF points: bottom-left, bottom-right, top-right, top-left.
+    pub quad: [[f32;2];4],
     pub bounds: Bounds,
     pub color: [u8; 4],
     pub matrix: [f32; 6],
@@ -313,6 +316,7 @@ impl Engine {
                             .ok_or_else(|| err("Text object index changed unexpectedly"))?),
                         font: text.font().name(),
                         size: text.unscaled_font_size().value,
+                        quad: [[b.x1().value,b.y1().value],[b.x2().value,b.y2().value],[b.x3().value,b.y3().value],[b.x4().value,b.y4().value]],
                         bounds: Bounds {
                             left: b.left().value,
                             bottom: b.bottom().value,

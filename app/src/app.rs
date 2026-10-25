@@ -9,6 +9,10 @@ mod qol;
 mod qol_sessions;
 #[path = "qol_gestures.rs"]
 mod qol_gestures;
+#[path = "tiles.rs"]
+mod tiles;
+#[path = "affine_edit.rs"]
+mod affine_edit;
 use crate::icons::Icon;
 use crate::recovery::{self, AutoSave, Orphan, Session};
 use crate::theme::{self, Palette};
@@ -649,6 +653,7 @@ struct DocView {
 }
 
 struct PageView {
+    tiles: tiles::PageTiles,
     thumbnail_generation: Option<u64>,
     thumbnail: Option<TextureHandle>,
     pending_thumbnail: bool,
@@ -672,11 +677,14 @@ fn trim_page_cache_to(pages: &mut [PageView], incoming: usize, bytes: usize, lim
     for (index, page) in pages.iter_mut().enumerate() {
         if index == incoming {
             page.texture = None;
+            total=total.saturating_add(page.tiles.bytes());
         } else if let Some(texture) = &page.texture {
             let size = texture.handle.size();
-            let cost = size[0].saturating_mul(size[1]).saturating_mul(4);
+            let cost = size[0].saturating_mul(size[1]).saturating_mul(4).saturating_add(page.tiles.bytes());
             total = total.saturating_add(cost);
             cached.push((index, cost));
+        } else if page.tiles.bytes()>0 {
+            let cost=page.tiles.bytes();total=total.saturating_add(cost);cached.push((index,cost));
         }
     }
     cached.sort_unstable_by_key(|(index, _)| std::cmp::Reverse(index.abs_diff(incoming)));
@@ -685,8 +693,21 @@ fn trim_page_cache_to(pages: &mut [PageView], incoming: usize, bytes: usize, lim
             break;
         }
         pages[index].texture = None;
+        pages[index].tiles.discard_cache();
         total = total.saturating_sub(cost);
     }
+}
+
+fn reserve_tiles(pages:&mut [PageView],incoming:usize,extra:usize) {
+    let cost=|page:&PageView|page.texture.as_ref().map_or(0,|texture|texture.handle.byte_size())+page.tiles.bytes();
+    let mut total=pages.iter().map(cost).sum::<usize>().saturating_add(extra);
+    let mut candidates=(0..pages.len()).filter(|&index|index!=incoming).collect::<Vec<_>>();
+    candidates.sort_by_key(|&index|std::cmp::Reverse(index.abs_diff(incoming)));
+    for index in candidates {
+        if total<=128*1024*1024 {break;}
+        total=total.saturating_sub(cost(&pages[index]));pages[index].texture=None;pages[index].tiles.discard_cache();
+    }
+    if total>128*1024*1024 {pages[incoming].tiles.discard_cache();}
 }
 
 struct PageTexture {
@@ -982,8 +1003,12 @@ impl EditorApp {
         if self.picker.pending() { return; }
         if let Some(path) = path { self.open_path(path); return; }
         self.picker_save = false;
-        if let Err(error) = self.picker.start(|| rfd::FileDialog::new()
-            .set_title("Open PDF").add_filter("PDF document", &["pdf"]).pick_file()) {
+        let directory=self.doc.as_ref().map(|doc|&doc.source).or_else(||self.recent_files.first()).and_then(|path|path.parent()).map(std::path::Path::to_path_buf);
+        if let Err(error) = self.picker.start(move || {
+            let mut dialog=rfd::FileDialog::new().set_title("Open PDF").add_filter("PDF document", &["pdf"]);
+            if let Some(directory)=directory.and_then(|path|path.canonicalize().ok()) {dialog=dialog.set_directory(directory);}
+            dialog.pick_file()
+        }) {
             self.banner(BannerKind::Error, format!("Cannot open file picker: {error}"));
         }
     }
@@ -1024,7 +1049,7 @@ impl EditorApp {
         if let Err(error) = self.picker.start(move || {
             let mut dialog = rfd::FileDialog::new().set_title("Save As")
                 .add_filter("PDF document", &["pdf"]);
-            if let Some(dir) = suggested.parent().filter(|dir|!dir.as_os_str().is_empty()) { dialog = dialog.set_directory(dir); }
+            if let Some(dir) = suggested.parent().and_then(|dir|dir.canonicalize().ok()) { dialog = dialog.set_directory(dir); }
             if let Some(name) = suggested.file_name() { dialog = dialog.set_file_name(name.to_string_lossy()); }
             dialog.save_file()
         }) {
@@ -1032,15 +1057,15 @@ impl EditorApp {
         }
     }
 
-    /// Save only after all preceding edits have succeeded. A rejected edit
-    /// cancels this intent instead of writing an older document version.
+    /// Save or sanitize only after preceding edits have succeeded.
+    /// A rejected edit cancels the intent instead of using an older version.
     fn password_action(&mut self, request: Request) {
-        if matches!(request, Request::SaveAs(_) | Request::SavePassword(..) | Request::SaveWorkingCopy) {
+        if matches!(request, Request::SaveAs(_) | Request::SavePassword(..) | Request::SaveWorkingCopy | Request::ExportSanitized(..) | Request::Sanitize(..)) {
             if self.doc.is_none() || !self.engine_alive || self.pending_save.is_some() {
                 return;
             }
             let destination=match &request {
-                Request::SaveAs(path)|Request::SavePassword(path,_)=>Some(path),
+                Request::SaveAs(path)|Request::SavePassword(path,_)|Request::ExportSanitized(_,path)=>Some(path),
                 Request::SaveWorkingCopy=>self.qol.working_copy.as_ref(),
                 _=>None,
             };
@@ -1050,7 +1075,7 @@ impl EditorApp {
             }
             self.commit_edit();
             if self.doc.as_ref().and_then(|d|d.edit.as_ref()).is_some_and(|e|e.text != e.line.text) {
-                self.banner(BannerKind::Warning,"Correct the rejected text edit or press Escape to discard it before saving.");
+                self.banner(BannerKind::Warning,"Apply the text edit or press Escape to discard it first.");
                 return;
             }
             if self.busy > 0 {
@@ -1255,6 +1280,20 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::Tiles {generation,page,scale,images}=>{
+                if self.doc.as_ref().is_none_or(|doc|doc.generation!=generation) {return;}
+                if self.doc.as_ref().and_then(|doc|doc.pages.get(usize::from(page))).is_none_or(|view|!view.tiles.accepts(scale,generation)) {return;}
+                if let Ok(images)=&images && let Some(doc)=self.doc.as_mut() && usize::from(page)<doc.pages.len() {
+                    reserve_tiles(&mut doc.pages,usize::from(page),images.iter().map(|(_,image)|image.rgba.len()).sum());
+                }
+                if let Some(view)=self.page_mut(page) && let Some(error)=view.tiles.receive(ctx,scale,generation,images) {
+                    self.banner(BannerKind::Warning,format!("Sharp preview unavailable: {error}"));
+                }
+            }
+            Reply::SanitizedExported(path)=>{
+                self.busy=self.busy.saturating_sub(1);
+                self.banner(BannerKind::Success,format!("Saved and verified: {}",path.file_name().unwrap_or_default().to_string_lossy()));
+            }
             Reply::ComparisonSnapshot {id,generation,original,current}=>{
                 self.busy=self.busy.saturating_sub(1);
                 if !self.compare.accepts_current(id) {return;}
@@ -1402,6 +1441,7 @@ impl EditorApp {
                 can_undo,
                 can_redo,
             } => {
+                self.sanitize.close();
                 self.compare.reset_document();self.pending_comparison=None;
                 self.compare_origin=if protected {None}else{self.config_path.as_deref().and_then(|config|crate::comparison_origin::resolve(config,&path).ok().flatten())};
                 self.tools_open=false;
@@ -1471,6 +1511,7 @@ impl EditorApp {
                     pages: pages
                         .into_iter()
                         .map(|info| PageView {
+                            tiles: Default::default(),
                             thumbnail_generation: None,
                             thumbnail: None,
                             pending_thumbnail: false,
@@ -1639,6 +1680,7 @@ impl EditorApp {
                         doc.pages = pages
                             .into_iter()
                             .map(|info| PageView {
+                            tiles: Default::default(),
                                 thumbnail_generation: None,
                                 info,
                                 thumbnail: None,
@@ -1657,6 +1699,7 @@ impl EditorApp {
                         // Keep the previous preview until its replacement arrives.
                         page.thumbnail_generation = None;
                         page.pending_thumbnail = false;
+                        page.tiles.clear();
                         page.pending_render = None;
                         page.pending_objects = None;
                         page.objects = None;
@@ -3304,7 +3347,11 @@ impl EditorApp {
                 };
 
                 // Request a sharp render and the text objects when stale.
-                let wanted = render_scale(&page.info, scale * ppp);
+                let requested=scale*ppp;
+                let capped=render_scale(&page.info,requested);
+                let wanted=if capped<requested/1.02 {
+                    render_scale(&page.info,capped.min((2_000_000.0/(page.info.width*page.info.height)).sqrt()))
+                }else{capped};
                 let stale = page.texture.as_ref().is_none_or(|t| {
                     t.generation != doc.generation || (t.scale - wanted).abs() > wanted * 0.01
                 });
@@ -3334,7 +3381,14 @@ impl EditorApp {
                 if !local.intersects(viewport) {
                     continue;
                 }
+                let sharp_scale=(scale*ppp*64.).floor()/64.;
+                if sharp_scale>wanted*1.02 && surface_ready && page.error.is_none() {
+                    if let Some(regions)=page.tiles.plan(&page.info,rect,ui.clip_rect(),sharp_scale,doc.generation) {
+                        requests.push(Request::RenderTiles {page:page_no,scale:sharp_scale,regions});
+                    }
+                } else {page.tiles.clear();}
                 paint_page(&painter, ui, rect, page, p);
+                page.tiles.paint(&painter,rect,&page.info,doc.generation);
                 if let Some(selected) = self.text_tool.selection.get(self.text_tool.selected)
                     && selected.page == page_no
                     && let Some(objects) = &page.objects
@@ -3860,6 +3914,7 @@ impl EditorApp {
                 for (index, page) in doc.pages.iter_mut().enumerate() {
                     if index + KEEP_PAGES < first || index > last_visible + KEEP_PAGES {
                         page.texture = None;
+                        page.tiles.clear();
                         page.objects = None;
                     }
                 }
@@ -4012,7 +4067,7 @@ impl EditorApp {
                 {
                     choice = Some(true);
                 }
-                if Btn::new("Cancel")
+                if Btn::new("Cancel").id("unsaved-cancel")
                     .look(Look::Outline)
                     .min_width(84.0)
                     .show(ui, p)
@@ -4537,10 +4592,9 @@ impl eframe::App for EditorApp {
         }
         self.compare.show(&ctx, &p);
         if self.compare.take_refresh() {self.refresh_comparison();}
-        if let Some(request) = self.sanitize.show(&ctx, &p, self.busy == 0) {
-            self.commit_edit();
-            self.busy += 1;
-            self.send(request);
+        if let Some(request) = self.sanitize.show_for(&ctx, &p, self.busy == 0,
+            self.doc.as_ref().is_some_and(|doc|doc.protected)) {
+            self.password_action(request);
         }
         if let Some(request) = self.compression.show(&ctx, &p, self.busy == 0) {
             self.commit_edit();
@@ -5128,6 +5182,16 @@ fn edit_box(
     let page_rect = *page_rects.get(edit.page)?;
     let screen = to_screen(edit.line.rect, page_rect, scale);
     let first = &edit.line.objects[0];
+    let transform=doc.pages.get(edit.page).and_then(|page|page.objects.as_ref()).map(|objects|objects.transform);
+    if let Some(transform)=transform
+        && let Some((plane,size))=affine_edit::line_plane(&edit.line,&transform,page_rect,scale)
+        && (plane.x.y.abs()>0.001 || plane.y.x.abs()>0.001 || plane.x.x<0.0 || plane.y.y<0.0) {
+        let [r,g,b,alpha]=first.color;
+        let color=if alpha<32 {Color32::BLACK}else{Color32::from_rgb(r,g,b)};
+        let [a,b,c,d,_,_]=first.matrix;
+        let font=FontId::proportional((first.size*(a*d-b*c).abs().sqrt()*scale).clamp(6.,240.));
+        return affine_edit::show(ui,edit,Id::new(("edit-box",edit.page,first.index,first.revision)),(plane,size),font,color,p);
+    }
 
     // Match the visible glyph size: the object's font size scaled by its
     // matrix. Bounds are glyph-tight (cap height without descenders is about
@@ -5465,6 +5529,11 @@ mod tests {
     include!("qol_workflow_tests.rs");
     include!("recovery_safety_tests.rs");
     include!("comparison_workflow_tests.rs");
+    include!("sanitize_export_workflow_tests.rs");
+    include!("tile_workflow_tests.rs");
+    include!("rotated_workflow_tests.rs");
+    #[cfg(windows)]
+    mod native_acceptance_tests { include!("native_acceptance_tests.rs"); }
     use super::*;
 
     #[test]
@@ -5511,6 +5580,7 @@ mod tests {
             text: text.into(),
             font: "F".into(),
             size: 10.0,
+            quad: [[0.;2];4],
             bounds: pdf_editor_core::Bounds {
                 left,
                 bottom: baseline - 2.0,

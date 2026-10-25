@@ -15,6 +15,11 @@ path = "src/main.rs"
 pdf-editor-core = { path = "../core" }
 eframe = { version = "=0.36.2", default-features = false, features = ["accesskit", "glow"] }
 rfd = { version = "=0.17.2", default-features = false }
+
+[dev-dependencies]
+# The native acceptance harness needs the platform extension of the same winit
+# already used by eframe. No additional runtime dependency or features.
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
 [[bin]]
 name = "pdf-editor-cli"
 path = "src/cli_main.rs"

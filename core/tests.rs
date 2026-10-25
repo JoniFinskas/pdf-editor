@@ -5,6 +5,8 @@ use lopdf::{
     dictionary,
 };
 use std::sync::Mutex;
+#[path = "render_tile_tests.rs"]
+mod render_tile_tests;
 static PDFIUM: Mutex<()> = Mutex::new(());
 #[path = "sanitize_workflow_tests.rs"]
 mod sanitize_workflow_tests;

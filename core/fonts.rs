@@ -68,6 +68,92 @@ pub(crate) fn embedded_font(doc: &Document, font: &Dictionary, text: &str) -> Op
     check().ok()
 }
 pub(crate) fn find(name: &str, text: &str) -> Result<Font> {
+    find_ranked(name, text, None)
+}
+pub(crate) fn find_for_object(object: &crate::TextObject, text: &str) -> Result<Font> {
+    let [a, b, _, _, _, _] = object.matrix;
+    let width = (object.quad[1][0] - object.quad[0][0])
+        .hypot(object.quad[1][1] - object.quad[0][1])
+        / (object.size * a.hypot(b));
+    let reference = (width.is_finite() && width > 0.0 && !object.text.is_empty())
+        .then_some((object.text.as_str(), width));
+    find_ranked(&object.font, text, reference)
+}
+fn category(name: &str) -> u32 {
+    let name = family(name);
+    if ["symbol", "dingbat", "emoji", "icons", "wingding", "webding"]
+        .iter()
+        .any(|word| name.contains(word))
+    {
+        3
+    } else if ["mono", "courier", "consolas", "typewriter"]
+        .iter()
+        .any(|word| name.contains(word))
+    {
+        0
+    } else if !name.contains("sans")
+        && [
+            "serif",
+            "times",
+            "georgia",
+            "cambria",
+            "garamond",
+            "palatino",
+            "baskerville",
+        ]
+        .iter()
+        .any(|word| name.contains(word))
+    {
+        1
+    } else {
+        2
+    }
+}
+fn requested_weight(name: &str) -> f32 {
+    let name = name.to_lowercase();
+    if name.contains("black") || name.contains("heavy") {
+        900.
+    } else if name.contains("extrabold") || name.contains("ultrabold") {
+        800.
+    } else if name.contains("semibold") || name.contains("demibold") {
+        600.
+    } else if name.contains("bold") {
+        700.
+    } else if name.contains("medium") {
+        500.
+    } else if name.contains("light") {
+        300.
+    } else if name.contains("thin") {
+        100.
+    } else {
+        400.
+    }
+}
+fn fallback_rank(
+    name: &str,
+    candidate: &str,
+    weight: f32,
+    italic: bool,
+    reference_width: Option<(f32, f32)>,
+) -> [u32; 3] {
+    let class = u32::from(category(name) != category(candidate));
+    let slant = name.to_lowercase().contains("italic") || name.to_lowercase().contains("oblique");
+    let width = reference_width.map_or(0, |(wanted, actual)| {
+        ((actual / wanted).ln().abs().min(2.) * 1000.) as u32
+    });
+    let weight = (requested_weight(name) - weight).abs() as u32;
+    let preferred = match category(name) {
+        0 => "consolas",
+        1 => "timesnewroman",
+        _ => "arial",
+    };
+    [
+        class,
+        u32::from(slant != italic) * 1000 + weight + width,
+        u32::from(family(candidate) != preferred),
+    ]
+}
+fn find_ranked(name: &str, text: &str, reference: Option<(&str, f32)>) -> Result<Font> {
     let mut roots = vec![PathBuf::from(r"C:\Windows\Fonts")];
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
         roots.push(PathBuf::from(local).join("Microsoft/Windows/Fonts"));
@@ -86,7 +172,7 @@ pub(crate) fn find(name: &str, text: &str) -> Result<Font> {
     let lower = name.to_lowercase();
     let bold = lower.contains("bold");
     let italic = lower.contains("italic") || lower.contains("oblique");
-    let mut best: Option<(u32, Font)> = None;
+    let mut best: Option<([u32; 4], Font)> = None;
     for path in paths {
         let Ok(collection) = read_limited(&path, MAX_STREAM) else {
             continue;
@@ -118,20 +204,29 @@ pub(crate) fn find(name: &str, text: &str) -> Result<Font> {
                 && (attr.style != skrifa::attribute::Style::Normal) == italic;
             let exact = (family(&family_name) == wanted || family(&full) == wanted) && style_match;
             let score = if exact {
-                0
+                [0, 0, 0, 0]
             } else {
-                let preferred = if wanted.contains("courier") || wanted.contains("mono") {
-                    "consolas"
-                } else if wanted.contains("times") || wanted.contains("serif") {
-                    "timesnewroman"
-                } else {
-                    "arial"
-                };
-                10 + if family(&family_name) == preferred {
-                    0
-                } else {
-                    10
-                } + if style_match { 0 } else { 5 }
+                let measured = reference.and_then(|(sample, wanted)| {
+                    let glyphs = face.glyph_metrics(Size::new(1.), LocationRef::default());
+                    let actual = sample.chars().try_fold(0., |sum, c| {
+                        face.charmap()
+                            .map(c)
+                            .and_then(|gid| glyphs.advance_width(gid))
+                            .map(|width| sum + width)
+                    })?;
+                    (wanted > 0. && actual > 0.).then_some((wanted, actual))
+                });
+                let mut rank = fallback_rank(
+                    name,
+                    &family_name,
+                    attr.weight.value(),
+                    attr.style != skrifa::attribute::Style::Normal,
+                    measured,
+                );
+                if reference.is_some() && measured.is_none() {
+                    rank[1] = rank[1].saturating_add(1000);
+                }
+                [1, rank[0], rank[1], rank[2]]
             };
             if best.as_ref().is_some_and(|(s, _)| *s <= score)
                 || !text
@@ -163,7 +258,10 @@ pub(crate) fn find(name: &str, text: &str) -> Result<Font> {
                 break;
             }
         }
-        if best.as_ref().is_some_and(|(score, _)| *score == 0) {
+        if best
+            .as_ref()
+            .is_some_and(|(score, _)| *score == [0, 0, 0, 0])
+        {
             break;
         }
     }
@@ -175,11 +273,17 @@ pub(crate) fn find_style(name: &str, bold: bool, italic: bool, text: &str) -> Re
     if name.trim().is_empty() || name.len() > 256 || name.chars().any(char::is_control) {
         return Err(err("Choose an installed font family"));
     }
-    let requested = format!("{}{}{}", family(name), if bold { " Bold" } else { "" },
-        if italic { " Italic" } else { "" });
+    let requested = format!(
+        "{}{}{}",
+        family(name),
+        if bold { " Bold" } else { "" },
+        if italic { " Italic" } else { "" }
+    );
     let font = find(&requested, text)?;
     if !font.exact {
-        return Err(err("Requested font family and style cannot embed every selected character; choose another font"));
+        return Err(err(
+            "Requested font family and style cannot embed every selected character; choose another font",
+        ));
     }
     Ok(font)
 }
@@ -370,4 +474,44 @@ pub(crate) fn system_names() -> Result<Vec<String>> {
     names.sort();
     names.dedup();
     Ok(names)
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use super::*;
+    #[test]
+    fn fallback_ranking_matches_category_weight_slant_and_measured_width() {
+        assert_eq!(category("Generic Sans Serif"), 2);
+        assert!(
+            fallback_rank("MissingMono", "Consolas", 400., false, None)
+                < fallback_rank("MissingMono", "Arial", 400., false, None)
+        );
+        assert!(
+            fallback_rank("Missing Serif", "Georgia", 400., false, None)
+                < fallback_rank("Missing Serif", "Arial", 400., false, None)
+        );
+        assert!(
+            fallback_rank(
+                "Missing Sans Bold",
+                "Other Sans",
+                700.,
+                false,
+                Some((10., 10.))
+            ) < fallback_rank(
+                "Missing Sans Bold",
+                "Other Sans",
+                400.,
+                false,
+                Some((10., 10.))
+            )
+        );
+        assert!(
+            fallback_rank("Missing Sans", "Other Sans", 400., false, Some((10., 10.2)))
+                < fallback_rank("Missing Sans", "Arial", 400., false, Some((10., 15.)))
+        );
+        assert!(
+            fallback_rank("Missing Sans Italic", "Other Sans", 400., true, None)
+                < fallback_rank("Missing Sans Italic", "Arial", 400., false, None)
+        );
+    }
 }
