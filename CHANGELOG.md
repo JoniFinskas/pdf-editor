@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Reset previous-document form fields and designer state when opening a PDF; load current fields automatically when the Forms panel is open.
+
 - Refresh open annotation and image lists after edits, undo/redo and document replacement; retain unchanged selections and annotation drafts while clearing stale handles.
 
 - Ignore delayed search results after scope, selection or matching options change, preventing stale highlights and unexpected page jumps.

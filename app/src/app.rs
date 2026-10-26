@@ -1596,6 +1596,12 @@ impl EditorApp {
                 self.pictures.items.clear();
                 self.pictures.selected = None;
                 self.refresh_tool_lists();
+                self.forms.fields.clear();
+                self.forms.designer = Default::default();
+                if self.forms.open {
+                    self.busy += 1;
+                    self.send(Request::FormFields);
+                }
             }
             Reply::Rendered {
                 generation,

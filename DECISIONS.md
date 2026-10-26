@@ -1028,3 +1028,12 @@ generations. Preserve a selection only when its identity and displayed source
 content still match; keep unapplied draft controls intact. Clear old document
 handles before refreshing a replacement. Generated workflows verify repeated
 updates, image moves, deletion, undo/redo and reopening an unchanged source.
+
+## Form state on document replacement
+
+Clear cached fill fields and designer state after a successful document open.
+Reload fields only for an open Forms panel. Separate documents can have identical
+field indices and revision numbers, so the previous panel must not remain usable
+for a new source. Generated forms with different values verify replacement,
+closed-panel lazy loading and switching to a document without forms. Preserve the
+existing explicit refresh behavior for edits within the same document.

@@ -1,5 +1,78 @@
 // Document actions and dependent tool state track acknowledged changes.
 #[test]
+fn forms_panel_replaces_previous_document_fields_and_loads_only_when_open() {
+    let (mut app, ctx, plain) = qol_worker();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let forms = root.join("tests/fixtures/generated/forms.pdf");
+    let original = std::fs::read(&forms).unwrap();
+    let folder = recovery_safety_folder("form-document-switch");
+    let second = folder.join("generated-second-form.pdf");
+    let engine = pdf_editor_core::Engine::new(&root.join("target/debug/pdfium.dll")).unwrap();
+    let mut generated = engine.open(&forms).unwrap();
+    let field = engine
+        .form_fields(&generated)
+        .unwrap()
+        .into_iter()
+        .find(|f| matches!(f.value, pdf_editor_core::FieldValue::Text(_)))
+        .unwrap();
+    let value = pdf_editor_core::FieldValue::Text("Generated second document".into());
+    engine.fill_field(&mut generated, &field, &value).unwrap();
+    generated.save_as(&second).unwrap();
+    let second_bytes = std::fs::read(&second).unwrap();
+    app.open_path(forms.clone());
+    workflow_settle(&mut app, &ctx);
+    app.open_tool(Tool::Forms);
+    workflow_settle(&mut app, &ctx);
+    let previous = app
+        .forms
+        .fields
+        .iter()
+        .find(|f| f.name == field.name)
+        .unwrap()
+        .clone();
+    assert_ne!(previous.value, value);
+    app.open_path(second.clone());
+    workflow_settle(&mut app, &ctx);
+    assert!(app.forms.open);
+    let current = app
+        .forms
+        .fields
+        .iter()
+        .find(|f| f.name == field.name)
+        .unwrap();
+    assert_eq!(current.value, value);
+    assert_eq!(previous.revision, current.revision);
+    app.forms.open = false;
+    app.open_path(forms.clone());
+    workflow_settle(&mut app, &ctx);
+    assert!(
+        app.forms.fields.is_empty(),
+        "Closed panel loaded document fields"
+    );
+    app.open_tool(Tool::Forms);
+    workflow_settle(&mut app, &ctx);
+    assert_eq!(
+        app.forms
+            .fields
+            .iter()
+            .find(|f| f.name == field.name)
+            .unwrap()
+            .value,
+        previous.value
+    );
+    app.open_path(plain);
+    workflow_settle(&mut app, &ctx);
+    assert!(app.forms.fields.is_empty());
+    assert!(app.forms.designer.fields.is_empty());
+    assert_eq!(std::fs::read(forms).unwrap(), original);
+    assert_eq!(std::fs::read(&second).unwrap(), second_bytes);
+    std::fs::remove_file(second).unwrap();
+    std::fs::remove_dir(folder).unwrap();
+}
+
+#[test]
 fn tool_list_refreshes_are_limited_to_open_panels_and_changed_generations() {
     for changed in [false, true] {
         for flags in 0..4 {
