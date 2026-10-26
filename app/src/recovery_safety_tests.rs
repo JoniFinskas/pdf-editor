@@ -1,5 +1,73 @@
 // Recovery boundary checks use generated PDFs and isolated runtime folders.
 #[test]
+fn stopped_worker_send_preserves_generated_text_draft_and_close_warning() {
+    let (mut app,ctx,source)=qol_worker();
+    let original=std::fs::read(&source).unwrap();
+    let line=app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().lines[0].clone();
+    let generation=app.doc.as_ref().unwrap().generation;
+    let (mock,inbox,_outbox)=mock_app();
+    app.worker=mock.worker;
+    drop(inbox);
+    app.doc.as_mut().unwrap().edit=Some(EditState {page:0,line,text:"Generated unsent draft".into(),focus:false,rejected_text:None});
+    assert!(app.commit_edit());
+    assert!(!app.engine_alive);
+    assert_eq!(app.busy,0);
+    let doc=app.doc.as_ref().unwrap();
+    assert_eq!(doc.edit.as_ref().map(|edit|edit.text.as_str()),Some("Generated unsent draft"));
+    assert!(doc.pending_edit.is_none() && doc.applying.is_none());
+    assert!(!doc.dirty());
+    assert_eq!(doc.generation,generation);
+    assert!(TabbedApp::needs_warning(&app));
+    assert!(app.banners.iter().any(|banner|banner.text.contains("Copy the draft")));
+    for _ in 0..3 {assert!(!app.commit_edit());}
+    let mut commands=Vec::new();
+    for events in [vec![],vec![workflow_key(Key::A,egui::Modifiers::COMMAND),egui::Event::Copy]] {
+        let mut output=ctx.run_ui(egui::RawInput {
+            screen_rect:Some(Rect::from_min_size(Pos2::ZERO,vec2(1000.,900.))),events,..Default::default()
+        },|ui| {let p=theme::palette(ui);egui::CentralPanel::default().show(ui,|ui|app.canvas(ui,&p));});
+        output.textures_delta.clear();
+        commands.extend(output.platform_output.commands);
+    }
+    assert!(commands.iter().any(|command|matches!(command,egui::OutputCommand::CopyText(text) if text=="Generated unsent draft")));
+    app.request_open(Some("other-generated.pdf".into()));
+    assert!(matches!(app.confirm,Some(Pending::Open(_))));
+    assert_eq!(std::fs::read(source).unwrap(),original);
+    let mut input=egui::RawInput::default();
+    input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().events.push(egui::ViewportEvent::Close);
+    let mut output=ctx.run_ui(input,|ui|app.close_guard(ui.ctx()));
+    output.textures_delta.clear();
+    assert!(matches!(app.confirm,Some(Pending::Close)));
+}
+
+#[test]
+fn stopped_worker_poll_restores_unacknowledged_draft_without_retrying() {
+    let ctx=Context::default();
+    let (mut app,inbox,outbox)=mock_app();
+    opened(&mut app,&ctx);
+    let (object,rect)=glyph("AB",30.,40.);
+    app.doc.as_mut().unwrap().edit=Some(EditState {
+        page:0,text:"Generated pending draft".into(),focus:false,rejected_text:None,
+        line:Line {objects:vec![object],rect,text:"AB".into(),paragraph:None,fallback:None},
+    });
+    assert!(app.commit_edit());
+    assert!(matches!(inbox.try_recv().unwrap(),Request::Edit {..}));
+    drop(outbox);
+    app.poll(&ctx);
+    let doc=app.doc.as_ref().unwrap();
+    let edit=doc.edit.as_ref().expect("Disconnected worker hid the unacknowledged draft");
+    assert_eq!(edit.text,"Generated pending draft");
+    assert!(edit.focus);
+    assert_eq!(edit.rejected_text.as_ref(),Some(&edit.text));
+    assert!(doc.pending_edit.is_none() && doc.applying.is_none());
+    assert!(TabbedApp::needs_warning(&app));
+    assert!(app.banners.iter().any(|banner|banner.text.contains("Copy the draft")));
+    assert!(!app.commit_edit());
+    assert!(inbox.try_recv().is_err());
+    app.engine_stopped();
+    assert_eq!(app.doc.as_ref().unwrap().edit.as_ref().unwrap().text,"Generated pending draft");
+}
+
+#[test]
 fn extraction_rejects_recovery_storage_before_cleanup_can_delete_the_export() {
     let (mut app, ctx, _) = qol_worker();
     let folder = recovery_safety_folder("extract-output");

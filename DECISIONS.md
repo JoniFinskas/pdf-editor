@@ -994,3 +994,11 @@ confirmed an extracted file could otherwise be deleted during recovery cleanup.
 Keep image conversion independent of an open document, while requiring a live
 engine. Always clear busy/opening/pending state after a failed worker send, even
 when shutdown was already reported; emit the restart notice only once.
+
+## Unacknowledged drafts after worker disconnection
+
+Reuse normal failed-edit restoration when a worker send or reply channel fails.
+Restore the pending draft with focus and suppress unchanged automatic retries,
+preserving close/open warnings without claiming the PDF mutation succeeded.
+Keep the original generation and savepoint; advise copying the draft before
+restart. Generated-document tests cover send failure and missing acknowledgement.

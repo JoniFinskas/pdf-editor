@@ -793,6 +793,15 @@ enum Pending {
 }
 
 impl DocView {
+    fn restore_failed_edit(&mut self) {
+        self.applying = None;
+        self.reopen = None;
+        if let Some(mut edit) = self.pending_edit.take() {
+            edit.rejected_text = Some(edit.text.clone());
+            edit.focus = true;
+            self.edit = Some(edit);
+        }
+    }
     fn dirty(&self) -> bool {
         self.changes.is_dirty()
     }
@@ -961,11 +970,14 @@ impl EditorApp {
         self.pending_comparison=None;
         self.busy = 0;
         self.opening = false;
+        if let Some(doc) = &mut self.doc { doc.restore_failed_edit(); }
         if self.engine_alive {
             self.engine_alive = false;
+            let draft = self.doc.as_ref().is_some_and(|doc|doc.edit.as_ref().is_some_and(|edit|edit.text != edit.line.text));
             self.banner(
                 BannerKind::Error,
-                "The PDF engine stopped. Restart the editor to continue.",
+                if draft {"The PDF engine stopped. Copy the draft before restarting."}
+                else {"The PDF engine stopped. Restart the editor to continue."},
             );
         }
     }
@@ -1852,13 +1864,7 @@ impl EditorApp {
                     message
                 };
                 if let Some(doc) = &mut self.doc {
-                    doc.applying = None;
-                    doc.reopen = None;
-                    if let Some(mut edit) = doc.pending_edit.take() {
-                        edit.rejected_text = Some(edit.text.clone());
-                        edit.focus = true;
-                        doc.edit = Some(edit);
-                    }
+                    doc.restore_failed_edit();
                 }
                 let kind=if message=="Operation cancelled" {BannerKind::Warning} else {BannerKind::Error};
                 self.banner(kind, message);

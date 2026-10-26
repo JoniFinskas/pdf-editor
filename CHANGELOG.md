@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Keep pending text drafts visible and preserve close warnings after worker disconnection; prevent automatic retries and advise copying before restart.
+
 - Reject exports into reserved recovery storage and keep busy state clear after engine shutdown, including standalone image conversion.
 
 - Improve keyboard control of page navigation and password dialogs; retain focus after invalid input and discard closed password-field undo history.
