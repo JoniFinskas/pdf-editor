@@ -22,10 +22,13 @@ pub(crate) fn base_name(name: &str) -> &str {
         name
     }
 }
-pub(crate) fn family(name: &str) -> String {
+fn normalized_face(name: &str) -> String {
     base_name(name)
         .to_lowercase()
-        .replace([' ', '-', ','], "")
+        .replace([' ', '-', ',', '_'], "")
+}
+pub(crate) fn family(name: &str) -> String {
+    normalized_face(name)
         .replace("bold", "")
         .replace("italic", "")
         .replace("oblique", "")
@@ -110,7 +113,7 @@ fn category(name: &str) -> u32 {
     }
 }
 fn requested_weight(name: &str) -> f32 {
-    let name = name.to_lowercase();
+    let name = normalized_face(name);
     if name.contains("black") || name.contains("heavy") {
         900.
     } else if name.contains("extrabold") || name.contains("ultrabold") {
@@ -121,6 +124,10 @@ fn requested_weight(name: &str) -> f32 {
         700.
     } else if name.contains("medium") {
         500.
+    } else if name.contains("extralight") || name.contains("ultralight") {
+        200.
+    } else if name.contains("semilight") || name.contains("demilight") {
+        350.
     } else if name.contains("light") {
         300.
     } else if name.contains("thin") {
@@ -137,7 +144,8 @@ fn fallback_rank(
     reference_width: Option<(f32, f32)>,
 ) -> [u32; 3] {
     let class = u32::from(category(name) != category(candidate));
-    let slant = name.to_lowercase().contains("italic") || name.to_lowercase().contains("oblique");
+    let lower = base_name(name).to_lowercase();
+    let slant = lower.contains("italic") || lower.contains("oblique");
     let width = reference_width.map_or(0, |(wanted, actual)| {
         ((actual / wanted).ln().abs().min(2.) * 1000.) as u32
     });
@@ -169,8 +177,9 @@ fn find_ranked(name: &str, text: &str, reference: Option<(&str, f32)>) -> Result
     }
     paths.sort();
     let wanted = family(name);
-    let lower = name.to_lowercase();
-    let bold = lower.contains("bold");
+    let wanted_face = normalized_face(name);
+    let weight = requested_weight(name);
+    let lower = base_name(name).to_lowercase();
     let italic = lower.contains("italic") || lower.contains("oblique");
     let mut best: Option<([u32; 4], Font)> = None;
     for path in paths {
@@ -200,9 +209,10 @@ fn find_ranked(name: &str, text: &str, reference: Option<(&str, f32)>) -> Result
                 continue;
             }
             let attr = face.attributes();
-            let style_match = (attr.weight.value() >= 600.0) == bold
+            let style_match = (attr.weight.value() - weight).abs() < 1.0
                 && (attr.style != skrifa::attribute::Style::Normal) == italic;
-            let exact = (family(&family_name) == wanted || family(&full) == wanted) && style_match;
+            let exact = normalized_face(&full) == wanted_face
+                || (family(&family_name) == wanted || family(&full) == wanted) && style_match;
             let score = if exact {
                 [0, 0, 0, 0]
             } else {
@@ -273,14 +283,31 @@ pub(crate) fn find_style(name: &str, bold: bool, italic: bool, text: &str) -> Re
     if name.trim().is_empty() || name.len() > 256 || name.chars().any(char::is_control) {
         return Err(err("Choose an installed font family"));
     }
-    let requested = format!(
-        "{}{}{}",
-        family(name),
-        if bold { " Bold" } else { "" },
-        if italic { " Italic" } else { "" }
-    );
-    let font = find(&requested, text)?;
+    let request = |family: &str| {
+        format!(
+            "{}{}{}",
+            family,
+            if bold { " Bold" } else { "" },
+            if italic { " Italic" } else { "" }
+        )
+    };
+    let font = find(&request(&family(name)), text)?;
     if !font.exact {
+        // Legacy font families can include a weight: e.g. Segoe UI Semibold
+        // has a Regular face. Resolve the real family instead of leaving "Semi".
+        let named = find(name, text)?;
+        if named.exact {
+            let face = FontRef::new(&named.bytes).map_err(|_| err("Invalid system font"))?;
+            if let Some(family) = face
+                .localized_strings(StringId::FAMILY_NAME)
+                .english_or_first()
+            {
+                let matched = find(&request(&family.to_string()), text)?;
+                if matched.exact {
+                    return Ok(matched);
+                }
+            }
+        }
         return Err(err(
             "Requested font family and style cannot embed every selected character; choose another font",
         ));
@@ -479,6 +506,17 @@ pub(crate) fn system_names() -> Result<Vec<String>> {
 #[cfg(test)]
 mod fallback_tests {
     use super::*;
+    #[test]
+    fn named_weight_aliases_handle_separators_and_intermediate_weights() {
+        for (name, weight) in [
+            ("Missing Sans Extra Bold", 800.),
+            ("Missing Sans Extra-Light", 200.),
+            ("Missing Sans Semi Light", 350.),
+            ("Missing Sans Demi-Bold", 600.),
+        ] {
+            assert_eq!(requested_weight(name), weight, "{name}");
+        }
+    }
     #[test]
     fn fallback_ranking_matches_category_weight_slant_and_measured_width() {
         assert_eq!(category("Generic Sans Serif"), 2);

@@ -1065,3 +1065,9 @@ Reuse the native object-and-clip transformation transaction for mixed selections
 ## Selected text font readout
 
 Display the BaseFont names already read by PDFium for selected text objects. Remove six-uppercase-letter subset prefixes only from compact labels; retain exact PDF names on hover and report differing or missing faces as mixed or unknown. Keep the current PDF font separate from unapplied replacement choices, clear inactive selections and reuse the current selection iterator without cloning text objects for display. Hash selected object identities before lookup so large selections avoid repeated linear membership scans. Font inspection does not guess from page pixels or change document content.
+
+## Exact font face and weight matching
+
+Strip subset prefixes before inferring weight or slant, and normalize face-name separators before comparing PostScript names. An installed named face is an exact match when glyph coverage and embedding permissions pass. Family-based exact matches require the requested numeric weight and slant instead of grouping all heavy weights as Bold. Normalize compound weight names and distinguish Extra Light and Semi Light. If explicit formatting cannot resolve a weighted family through the normalized name, use the installed face's actual legacy family metadata before applying style modifiers; never accept a different fallback family as explicit formatting. Preserve existing width/category fallback ranking, coverage checks and license guards.
+
+Generated tests cover named regular/bold-italic/black/semibold faces, misleading subset codes, compound weight aliases, embedded and nonembedded edits across four page rotations and affine text transforms, Nordic/Euro replacements, deletion, unsupported-glyph rejection, neighbour pixels, exact undo/redo history and saved raster equality.
