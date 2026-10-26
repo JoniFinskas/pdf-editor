@@ -1,5 +1,136 @@
 // Generated-document integration for selection, batch operations and working copies.
 #[test]
+fn qol_generated_search_replies_cannot_restore_an_old_scope() {
+    fn next_search(app: &mut EditorApp, ctx: &Context) -> Reply {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let mut search = None;
+            for reply in app.worker.poll().expect("Generated worker disconnected") {
+                if matches!(reply, Reply::Found { .. } | Reply::SearchResults { .. }) {
+                    assert!(search.is_none());
+                    search = Some(reply);
+                } else {
+                    app.handle(ctx, reply);
+                }
+            }
+            if let Some(reply) = search {
+                return reply;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Search reply timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+    let (mut app, ctx, source) = qol_worker();
+    let original = std::fs::read(&source).unwrap();
+    app.document_action(Request::PageBatch(pdf_editor_core::PageBatch::Duplicate {
+        pages: vec![0],
+        before: 1,
+    }));
+    workflow_settle(&mut app, &ctx);
+    for page in [0, 1] {
+        app.send(Request::Characters(page));
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app.qol.characters.len() < 2 {
+        app.poll(&ctx);
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let first = app.qol.characters[&0]
+        .iter()
+        .position(|c| c.text == "A")
+        .unwrap();
+    let last = app.qol.characters[&0]
+        .iter()
+        .position(|c| c.text == "B")
+        .unwrap();
+    // Hold genuine worker results while changing the UI, without relying on timing.
+    for refresh_only in [false, true] {
+        for case in 0..6 {
+            app.qol.search_open = case != 0;
+            app.qol.case_sensitive = false;
+            app.qol.whole_word = false;
+            app.qol.scope = match case {
+                1 => 1,
+                4 => 2,
+                5 => 3,
+                _ => 0,
+            };
+            app.qol.pages.clear();
+            app.qol.pages.insert(0);
+            app.qol.anchor = Some((0, first));
+            app.qol.end = Some((0, last));
+            app.go_to_page(0);
+            app.find.query = match case {
+                2 => "ab",
+                3 => "A",
+                _ => "AB",
+            }
+            .into();
+            app.find.matches.clear();
+            app.qol.hits.clear();
+            app.find.active = 7;
+            app.find.refresh_only = refresh_only;
+            app.send(Request::Find(app.find.query.clone()));
+            let stale = next_search(&mut app, &ctx);
+            assert!(match &stale {
+                Reply::Found { matches, .. } => !matches.is_empty(),
+                Reply::SearchResults { hits, .. } => !hits.is_empty(),
+                _ => unreachable!(),
+            });
+            app.go_to_page(1);
+            match case {
+                0 => app.qol.scope = 1,
+                2 => app.qol.case_sensitive = true,
+                3 => app.qol.whole_word = true,
+                4 => {
+                    app.qol.pages.clear();
+                    app.qol.pages.insert(1);
+                }
+                5 => {
+                    app.qol.anchor = Some((1, first));
+                    app.qol.end = Some((1, last));
+                }
+                _ => {}
+            }
+            let scroll = app.doc.as_ref().unwrap().scroll_to;
+            app.send(Request::Find(app.find.query.clone()));
+            app.handle(&ctx, stale);
+            assert!(
+                app.find.matches.is_empty(),
+                "Stale case {case} populated matches"
+            );
+            assert!(
+                app.qol.hits.is_empty(),
+                "Stale case {case} populated excerpts"
+            );
+            assert_eq!(app.doc.as_ref().unwrap().current_page, 1);
+            assert_eq!(app.doc.as_ref().unwrap().scroll_to, scroll);
+            assert_eq!(app.find.active, 7);
+            assert_eq!(app.find.refresh_only, refresh_only);
+            let current = next_search(&mut app, &ctx);
+            app.handle(&ctx, current);
+            assert!(!app.find.refresh_only);
+            assert_eq!(app.find.active, 0);
+            if matches!(case, 2 | 3) {
+                assert!(app.find.matches.is_empty());
+                assert!(app.qol.hits.is_empty());
+            } else {
+                assert!(!app.find.matches.is_empty());
+                assert!(!app.qol.hits.is_empty());
+                assert!(app.find.matches.iter().all(|(page, _)| *page == 1));
+                assert!(app.qol.hits.iter().all(|hit| hit.page == 1));
+            }
+        }
+    }
+    assert!(!app.banners.iter().any(|b| b.kind == BannerKind::Error));
+    assert_eq!(std::fs::read(source).unwrap(), original);
+}
+
+#[test]
 fn qol_scoped_search_refresh_uses_the_remaining_page_selection() {
     for scope in [1, 2] {
         let ctx = Context::default();

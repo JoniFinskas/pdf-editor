@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Ignore delayed search results after scope, selection or matching options change, preventing stale highlights and unexpected page jumps.
+
 - Refresh scoped search after page and selection updates, keeping results valid when deleting the last page or using undo/redo.
 
 - Keep pending text drafts visible and preserve close warnings after worker disconnection; prevent automatic retries and advise copying before restart.

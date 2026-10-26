@@ -164,7 +164,7 @@ pub enum Reply {
     SanitizedExported(PathBuf),
     ComparisonSnapshot {id:u64,generation:u64,original:Arc<Document>,current:Arc<Document>},
     Characters {generation:u64,page:u16,characters:Result<Vec<pdf_editor_core::TextCharacter>,String>},
-    SearchResults {generation:u64,query:String,hits:Vec<pdf_editor_core::SearchHit>,boxes:Vec<(u16,Vec<[f32;4]>)>},
+    SearchResults {generation:u64,query:String,options:pdf_editor_core::SearchOptions,hits:Vec<pdf_editor_core::SearchHit>,boxes:Vec<(u16,Vec<[f32;4]>)>},
     WorkingCopySaved {path:PathBuf,encrypted:bool},
 
     TableDetected(pdf_editor_core::TableGrid),
@@ -551,7 +551,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             match engine.find_text_with_options(doc,&query,&options).and_then(|hits| {
                 let boxes=search_boxes(engine,doc,&hits)?; Ok((hits,boxes))
             }) {
-                Ok((hits,boxes))=>Some(Reply::SearchResults {generation:state.generation,query,hits,boxes}),
+                Ok((hits,boxes))=>Some(Reply::SearchResults {generation:state.generation,query,options,hits,boxes}),
                 Err(e)=>failed(e),
             }
         }

@@ -1010,3 +1010,12 @@ current page and invalidated selections have been updated. Capturing the scope
 before these updates could search a deleted page or keep results for a selection
 no longer shown. Generated-document deletion and repeated undo/redo tests verify
 that result pages remain valid and the source stays unchanged.
+
+## Search reply scope validation
+
+Carry the existing search options in scoped worker replies and compare them with
+the current controls before installing matches or navigating. Plain search replies
+are valid only for default options. Generation and query alone cannot distinguish
+results from an earlier page, selection, case or whole-word setting. Generated
+worker replies held across control changes verify both rejection of stale results
+and acceptance of current results, without timing-dependent assertions.

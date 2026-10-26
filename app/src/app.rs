@@ -1433,6 +1433,7 @@ impl EditorApp {
                     .as_ref()
                     .is_some_and(|d| d.generation == generation)
                     && self.find.query == query
+                    && self.current_search_options() == Default::default()
                 {
                     self.find.matches = matches;
                     if self.find.refresh_only {
@@ -1744,8 +1745,8 @@ impl EditorApp {
                     match characters { Ok(chars)=>{self.qol.characters.insert(page,chars);},Err(error)=>self.banner(BannerKind::Warning,error) }
                 }
             }
-            Reply::SearchResults {generation,query,hits,boxes} => {
-                if self.doc.as_ref().is_some_and(|d|d.generation==generation) && self.find.query==query {
+            Reply::SearchResults {generation,query,options,hits,boxes} => {
+                if self.doc.as_ref().is_some_and(|d|d.generation==generation) && self.find.query==query && self.current_search_options()==options {
                     self.find.matches=boxes; self.qol.hits=hits;
                     if self.find.refresh_only {self.find.active=self.find.active.min(self.find.matches.len().saturating_sub(1)); self.find.refresh_only=false;}
                     else {self.find.active=0;self.go_match();}
