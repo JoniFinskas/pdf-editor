@@ -13,6 +13,8 @@ mod qol_gestures;
 mod tiles;
 #[path = "affine_edit.rs"]
 mod affine_edit;
+#[path = "drag_preview.rs"]
+mod drag_preview;
 use crate::icons::Icon;
 use crate::recovery::{self, AutoSave, Orphan, Session};
 use crate::theme::{self, Palette};
@@ -470,6 +472,7 @@ pub struct EditorApp {
     tools_category: String,
     tools_selected: usize,
     snap_enabled: bool,
+    drag_preview: drag_preview::Preview,
     page_jump: crate::navigation::PageJump,
     picker: crate::dialogs::Picker,
     insert_dialog: crate::dialogs::ToolDialog<Request>,
@@ -747,9 +750,11 @@ struct ItemDrag {
     items: Vec<pdf_editor_core::PageItem>,
     bounds: Rect,
     delta: Vec2,
+    anchor: Pos2,
     resize_handle: Option<usize>,
     preview: Option<Rect>,
     snap_state: crate::snapping::State,
+    snap_targets: Vec<Rect>,
 }
 
 /// Adjacent text objects that read as one line, edited together. Browser
@@ -874,6 +879,7 @@ impl EditorApp {
             tools_category: String::new(),
             tools_selected: 0,
             snap_enabled: true,
+            drag_preview: Default::default(),
             page_jump: crate::navigation::PageJump::default(),
             picker: crate::dialogs::Picker::default(),
             insert_dialog: Default::default(),
@@ -966,6 +972,7 @@ impl EditorApp {
     }
 
     fn engine_stopped(&mut self) {
+        self.drag_preview = Default::default();
         self.pending_action = None;
         self.pending_comparison=None;
         self.busy = 0;
@@ -1308,6 +1315,7 @@ impl EditorApp {
 
     fn handle(&mut self, ctx: &Context, reply: Reply) {
         match reply {
+            Reply::ObjectPreview {id,generation,result} => self.drag_preview.receive(ctx,id,generation,result),
             Reply::Tiles {generation,page,scale,images}=>{
                 if self.doc.as_ref().is_none_or(|doc|doc.generation!=generation) {return;}
                 if self.doc.as_ref().and_then(|doc|doc.pages.get(usize::from(page))).is_none_or(|view|!view.tiles.accepts(scale,generation)) {return;}
@@ -1488,6 +1496,7 @@ impl EditorApp {
                 can_redo,
             } => {
                 self.pending_action = None;
+                self.drag_preview = Default::default();
                 self.sanitize.close();
                 self.compare.reset_document();self.pending_comparison=None;
                 self.compare_origin=if protected {None}else{self.config_path.as_deref().and_then(|config|crate::comparison_origin::resolve(config,&path).ok().flatten())};
@@ -1648,6 +1657,7 @@ impl EditorApp {
                     });
                     view.error = None;
                 }
+                self.drag_preview.rendered(usize::from(page), generation);
             }
             Reply::Objects {
                 generation,
@@ -1719,6 +1729,7 @@ impl EditorApp {
                     }
                 }
                 if doc.generation != generation {
+                    self.drag_preview.changed(generation);
                     self.qol.document_changed();
                     self.scan_cleanup.invalidate();
                     doc.selected_item = None;
@@ -1891,6 +1902,7 @@ impl EditorApp {
                     self.banner(BannerKind::Error, message);
                     return;
                 }
+                self.drag_preview.cancel();
                 self.busy = self.busy.saturating_sub(1);
                 self.pending_comparison=None;self.compare.preparation_failed(&message);
                 if self.pending_action.take().is_some() {
@@ -3247,6 +3259,11 @@ impl EditorApp {
         let busy = self.busy > 0;
         self.tool_anchor = None;
         let Some(doc) = &mut self.doc else { return };
+        if doc.dragging_item.is_some() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE,Key::Escape)) {
+            doc.dragging_item = None;
+            doc.panning = false;
+            self.drag_preview.cancel();
+        }
         if pointer.is_some_and(|pos| canvas_rect.contains(pos))
             && ctx.input(|i| i.events.iter().any(|event| matches!(event, egui::Event::MouseWheel { .. })) || i.pointer.is_decidedly_dragging()) {
             doc.explicit_page = None;
@@ -3428,6 +3445,9 @@ impl EditorApp {
                 } else {page.tiles.clear();}
                 paint_page(&painter, ui, rect, page, p);
                 page.tiles.paint(&painter,rect,&page.info,doc.generation);
+                if self.drag_preview.committing() {
+                    self.drag_preview.paint(&painter,rect,scale,index,doc.generation,page.texture.as_ref(),p.accent);
+                }
                 if let Some(selected) = self.text_tool.selection.get(self.text_tool.selected)
                     && selected.page == page_no
                     && let Some(objects) = &page.objects
@@ -3669,6 +3689,16 @@ impl EditorApp {
                         doc.selected_item=self.qol.select(objects,Some(item),false);
                     }
                     let can_drag = doc.edit.is_none();
+                    if can_drag && ctx.input(|i| i.pointer.primary_pressed())
+                        && response.is_pointer_button_down_on()
+                        && let Some(objects) = &page.objects
+                        && let Some(item) = resize_handle.and(doc.selected_item.as_ref()).or(item_hit) {
+                        let items = self.qol.items(objects,item);
+                        let preview_scale = wanted.min((1_900_000. / (page.info.width * page.info.height)).sqrt());
+                        if let Some(id) = self.drag_preview.plan(doc.generation,index,&items,preview_scale) {
+                            requests.push(Request::ObjectPreview {id,items,scale:preview_scale});
+                        }
+                    }
                     if response.drag_started() && can_drag {
                         let items = if resize_handle.is_some() {
                             doc.selected_item.as_ref().zip(page.objects.as_ref())
@@ -3705,39 +3735,52 @@ impl EditorApp {
                             let bounds = items.iter().fold(Rect::NOTHING, |bounds, item| {
                                 bounds.union(bounds_rect(&objects.transform, item.bounds))
                             });
+                            let moving = items.iter().map(|item|item.index).collect::<std::collections::HashSet<_>>();
+                            let snap_targets = objects.items.iter().filter(|item|!moving.contains(&item.index))
+                                .map(|item|bounds_rect(&objects.transform,item.bounds)).collect();
+                            let preview_scale = wanted.min((1_900_000. / (page.info.width * page.info.height)).sqrt());
+                            if let Some(id) = self.drag_preview.plan(doc.generation,index,&items,preview_scale) {
+                                requests.push(Request::ObjectPreview {id,items:items.clone(),scale:preview_scale});
+                            }
                             doc.dragging_item = Some(ItemDrag {
                                 page: index,
                                 items,
                                 bounds,
                                 delta: Vec2::ZERO,
+                                anchor: ((ctx.input(|i| i.pointer.press_origin()).unwrap_or(rect.min)-rect.min)/scale).to_pos2(),
                                 resize_handle,
                                 preview: None,
                                 snap_state: Default::default(),
+                                snap_targets,
                             });
                         }
                     }
                     if let Some(drag) = &mut doc.dragging_item
                         && drag.page == index
                     {
-                        drag.delta += response.drag_delta() / scale;
+                        if let Some(pointer) = ctx.input(|i| i.pointer.interact_pos()) {
+                            drag.delta = ((pointer - rect.min) / scale).to_pos2() - drag.anchor;
+                        }
                         let mut preview_bounds = drag.resize_handle.map_or_else(
                             || drag.bounds.translate(drag.delta),
                             |handle| resized_rect(drag.bounds, handle, drag.delta),
                         );
+                        let mut guides = None;
                         if self.snap_enabled && !ctx.input(|i| i.modifiers.alt)
-                            && let Some(objects) = &page.objects
+                            && page.objects.is_some()
                         {
                             let page_bounds = Rect::from_min_size(Pos2::ZERO,vec2(page.info.width,page.info.height));
-                            let targets = objects.items.iter()
-                                .filter(|item| !drag.items.iter().any(|moving| moving.index == item.index))
-                                .map(|item| bounds_rect(&objects.transform,item.bounds));
+                            let targets = drag.snap_targets.iter().copied();
                             let snapped = crate::snapping::align(preview_bounds,drag.resize_handle,page_bounds,targets,6.0/scale,&mut drag.snap_state);
                             preview_bounds = snapped.bounds;
-                            crate::snapping::paint(&painter,&snapped,rect,scale,p.accent);
+                            guides = Some(snapped);
                         } else {
                             drag.snap_state = Default::default();
                         }
                         drag.preview = Some(preview_bounds);
+                        self.drag_preview.place(drag.bounds,preview_bounds);
+                        self.drag_preview.paint(&painter,rect,scale,index,doc.generation,page.texture.as_ref(),p.accent);
+                        if let Some(guides) = &guides { crate::snapping::paint(&painter,guides,rect,scale,p.accent); }
                         let preview = to_screen(preview_bounds, rect, scale);
                         painter.rect_stroke(
                             preview,
@@ -3765,10 +3808,13 @@ impl EditorApp {
                                     Some(pdf_editor_core::ObjectAction::Move { dx, dy })
                                 };
                                 if let Some(action) = action {
+                                    self.drag_preview.commit();
                                     requests.push(Request::EditItems(drag.items, action));
                                 } else {
                                     self.busy = self.busy.saturating_sub(1);
                                 }
+                            } else {
+                                self.drag_preview.cancel();
                             }
                         }
                     } else if response.dragged() && can_drag && doc.panning {
@@ -3793,8 +3839,9 @@ impl EditorApp {
                             .map(|drag| {
                                 drag.preview.unwrap_or_else(|| drag.bounds.translate(drag.delta))
                             })
+                            .or_else(|| self.drag_preview.committing().then(||self.drag_preview.placement()).flatten())
                             .unwrap_or_else(|| bounds_rect(&objects.transform, item.bounds));
-                        for picked in &self.qol.objects {
+                        for picked in self.qol.objects.iter().filter(|_| doc.dragging_item.is_none() && !self.drag_preview.committing()) {
                             if picked.page==page_no {painter.rect_stroke(to_screen(bounds_rect(&objects.transform,picked.bounds),rect,scale),1.0,Stroke::new(1.0,p.accent),StrokeKind::Outside);}
                         }
                         let selection = to_screen(preview_bounds, rect, scale);
@@ -5537,6 +5584,7 @@ mod tests {
     include!("tile_workflow_tests.rs");
     include!("rotated_workflow_tests.rs");
     include!("action_workflow_tests.rs");
+    include!("drag_workflow_tests.rs");
     #[cfg(windows)]
     mod native_acceptance_tests { include!("native_acceptance_tests.rs"); }
     use super::*;
@@ -5677,6 +5725,7 @@ mod tests {
             tools_category: String::new(),
             tools_selected: 0,
             snap_enabled: true,
+            drag_preview: Default::default(),
             page_jump: crate::navigation::PageJump::default(),
             picker: crate::dialogs::Picker::default(),
             insert_dialog: Default::default(),

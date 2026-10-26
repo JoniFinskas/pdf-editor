@@ -180,16 +180,16 @@ impl Engine {
         })
     }
 }
-struct NativeForm<'a> {
+pub(crate) struct NativeForm<'a> {
     bindings: &'a dyn PdfiumLibraryBindings,
     document: FPDF_DOCUMENT,
     form: FPDF_FORMHANDLE,
-    page: FPDF_PAGE,
+    pub(crate) page: FPDF_PAGE,
     _info: std::pin::Pin<Box<FPDF_FORMFILLINFO>>,
     _bytes: std::marker::PhantomData<&'a [u8]>,
 }
 impl<'a> NativeForm<'a> {
-    fn open(bindings: &'a dyn PdfiumLibraryBindings, bytes: &'a [u8], page: u16) -> Result<Self> {
+    pub(crate) fn open(bindings: &'a dyn PdfiumLibraryBindings, bytes: &'a [u8], page: u16) -> Result<Self> {
         // Zero initializes optional C callbacks and pointers. Version 2 disables all actions.
         let mut info = Box::pin(unsafe { std::mem::zeroed::<FPDF_FORMFILLINFO>() });
         info.version = 2;
@@ -220,7 +220,7 @@ impl<'a> NativeForm<'a> {
         }
         Ok(native)
     }
-    fn save(&mut self) -> Result<Vec<u8>> {
+    pub(crate) fn save(&mut self) -> Result<Vec<u8>> {
         #[repr(C)]
         struct Writer {
             interface: FPDF_FILEWRITE,

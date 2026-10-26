@@ -291,10 +291,13 @@ pub(crate) fn transform_text(engine: &Engine, state: &Document, page_index: u16,
     let selected_ops:std::collections::HashSet<_>=selected.iter().map(|ordinal|
         records.get(*ordinal).map(|r|r.op).ok_or_else(||err("Text selection is stale"))).collect::<Result<_>>()?;
     let mut ctm=[1.0,0.0,0.0,1.0,0.0,0.0];
+    let mut clipped=false;
+    let mut move_clip=false;
     let mut stack=vec![];
     let mut output=vec![];
     for (index,mut op) in content.operations.into_iter().enumerate() {
         if selected_ops.contains(&index) {
+            move_clip |= clipped;
             // Quote operators also change line position and spacing, which must
             // remain outside the temporary graphics transform.
             if op.operator=="\"" {
@@ -314,8 +317,9 @@ pub(crate) fn transform_text(engine: &Engine, state: &Document, page_index: u16,
             output.push(Operation::new("cm",inverse(local)?.into_iter().map(Object::Real).collect()));
         } else {
             match op.operator.as_str() {
-                "q"=>{if stack.len()>128{return Err(err("Excessive graphics nesting"));}stack.push(ctm);},
-                "Q"=>ctm=stack.pop().ok_or_else(||err("Unbalanced graphics state"))?,
+                "q"=>{if stack.len()>128{return Err(err("Excessive graphics nesting"));}stack.push((ctm,clipped));},
+                "Q"=>(ctm,clipped)=stack.pop().ok_or_else(||err("Unbalanced graphics state"))?,
+                "W"|"W*"=>clipped=true,
                 "cm"=>{
                     let values=op.operands.iter().map(Object::as_float).collect::<std::result::Result<Vec<_>,_>>()?;
                     let values:[f32;6]=values.try_into().map_err(|_|err("Invalid graphics transform"))?;
@@ -326,7 +330,12 @@ pub(crate) fn transform_text(engine: &Engine, state: &Document, page_index: u16,
             output.push(op);
         }
     }
-    pdf.change_page_content(page,Content {operations:output}.encode()?)?;
+    if move_clip {
+        let indices=selected.iter().map(|&ordinal|before[ordinal].index).collect::<Vec<_>>();
+        pdf=parse(&engine.transform_clipped_text(state,page_index,&indices,matrix)?)?;
+    } else {
+        pdf.change_page_content(page,Content {operations:output}.encode()?)?;
+    }
     let candidate=engine.candidate(state,pdf)?;
     let check=parse(&candidate.bytes)?;
     let check_page=check.get_pages()[&(u32::from(page_index)+1)];

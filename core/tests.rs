@@ -2344,6 +2344,257 @@ fn page_item_moves_preserve_text_and_neighbors_and_undo() {
     }
 }
 
+fn readable_drag_fixture(rotation: i64) -> lopdf::Document {
+    let mut pdf = parse(&generated("Move me", false, rotation, 0., false, false)).unwrap();
+    let page = pdf.get_pages()[&1];
+    let font =
+        pdf.add_object(dictionary! {"Type"=>"Font","Subtype"=>"Type1","BaseFont"=>"Helvetica"});
+    pdf.get_dictionary_mut(page)
+        .unwrap()
+        .set("Resources", dictionary! {"Font"=>dictionary! {"F1"=>font}});
+    let mut content =
+        Content::decode(&pdf.get_page_content_with_limit(page, MAX_STREAM).unwrap()).unwrap();
+    let mut first = true;
+    for op in &mut content.operations {
+        if op.operator == "Tj" {
+            op.operands = vec![Object::string_literal(if first {
+                "Move me"
+            } else {
+                "unchanged"
+            })];
+            first = false;
+        }
+    }
+    pdf.change_page_content(page, content.encode().unwrap())
+        .unwrap();
+    pdf
+}
+
+#[test]
+fn moved_clipped_text_keeps_its_visible_ink_and_neighbor_pixels() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    for rotation in [0, 90, 180, 270] {
+        for width in [35, 200] {
+            for readable in [false, true] {
+                let path = temp(&format!("clipped-move-{rotation}-{width}.pdf"));
+                let mut pdf = if readable {
+                    readable_drag_fixture(rotation)
+                } else {
+                    parse(&generated("Move me", false, rotation, 0., false, false)).unwrap()
+                };
+                let page = pdf.get_pages()[&1];
+                let mut content =
+                    Content::decode(&pdf.get_page_content_with_limit(page, MAX_STREAM).unwrap())
+                        .unwrap();
+                content.operations.splice(
+                    1..1,
+                    [
+                        Operation::new("re", vec![50.into(), 210.into(), width.into(), 35.into()]),
+                        Operation::new("W", vec![]),
+                        Operation::new("n", vec![]),
+                    ],
+                );
+                pdf.change_page_content(page, content.encode().unwrap())
+                    .unwrap();
+                let mut bytes = vec![];
+                pdf.save_to(&mut bytes).unwrap();
+                fs::write(&path, &bytes).unwrap();
+                let original = e.open(&path).unwrap();
+                let mut doc = e.open(&path).unwrap();
+                let selected = e.text_objects(&doc, 0).unwrap()[0].clone();
+                let item = e
+                    .page_items(&doc, 0)
+                    .unwrap()
+                    .into_iter()
+                    .find(|i| i.index == selected.index)
+                    .unwrap();
+                e.edit_page_items(
+                    &mut doc,
+                    &[item],
+                    ObjectAction::Move {
+                        dx: 200.,
+                        dy: -120.,
+                    },
+                )
+                .unwrap();
+                let moved = e.text_objects(&doc, 0).unwrap()[0].clone();
+                let before = e.render(&original, 0, 2.).unwrap();
+                let after = e.render(&doc, 0, 2.).unwrap();
+                let (x, y) = e.page_to_pixel(&original, 0, 2., 50., 220.).unwrap();
+                let (mx, my) = e.page_to_pixel(&doc, 0, 2., 250., 100.).unwrap();
+                let offset = (mx - x, my - y);
+                let a = e
+                    .page_to_pixel(
+                        &original,
+                        0,
+                        2.,
+                        selected.bounds.left,
+                        selected.bounds.bottom,
+                    )
+                    .unwrap();
+                let b = e
+                    .page_to_pixel(&original, 0, 2., selected.bounds.right, selected.bounds.top)
+                    .unwrap();
+                let mut ink = 0;
+                for row in a.1.min(b.1).max(0)..a.1.max(b.1).min(before.height as i32) {
+                    for col in a.0.min(b.0).max(0)..a.0.max(b.0).min(before.width as i32) {
+                        let i = (row as usize * before.width as usize + col as usize) * 4;
+                        if before.rgba[i..i + 3].iter().all(|v| *v > 245) {
+                            continue;
+                        }
+                        let (cx, cy) = (col + offset.0, row + offset.1);
+                        assert!(
+                            cx >= 0
+                                && cy >= 0
+                                && cx < after.width as i32
+                                && cy < after.height as i32
+                        );
+                        let j = (cy as usize * after.width as usize + cx as usize) * 4;
+                        assert_eq!(
+                            &before.rgba[i..i + 4],
+                            &after.rgba[j..j + 4],
+                            "Moved text became invisible: rotation {rotation}, clip {width}"
+                        );
+                        ink += 1;
+                    }
+                }
+                assert!(ink > 30);
+                assert_outside_equal(&e, &original, &doc, &selected, &moved);
+                assert!(doc.undo());
+                assert_eq!(doc.bytes, bytes);
+                assert!(doc.redo());
+                let saved = temp(&format!(
+                    "clipped-move-saved-{rotation}-{width}-{readable}.pdf"
+                ));
+                if saved.exists() {
+                    fs::remove_file(&saved).unwrap();
+                }
+                doc.save_as(&saved).unwrap();
+                assert_eq!(
+                    e.render(&e.open(&saved).unwrap(), 0, 2.).unwrap().rgba,
+                    after.rgba
+                );
+                assert_eq!(fs::read(&path).unwrap(), bytes);
+            }
+        }
+    }
+}
+
+#[test]
+fn object_drag_preview_separates_real_ink_from_colored_background_without_mutation() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    for rotation in [0, 90, 180, 270] {
+        let path = temp(&format!("object-preview-{rotation}.pdf"));
+        let mut pdf = readable_drag_fixture(rotation);
+        let page = pdf.get_pages()[&1];
+        let mut content =
+            Content::decode(&pdf.get_page_content_with_limit(page, MAX_STREAM).unwrap()).unwrap();
+        content.operations.splice(
+            0..0,
+            [
+                Operation::new("q", vec![]),
+                Operation::new("rg", vec![1.into(), 0.8.into(), 0.4.into()]),
+                Operation::new("re", vec![0.into(), 0.into(), 500.into(), 300.into()]),
+                Operation::new("f", vec![]),
+                Operation::new("Q", vec![]),
+            ],
+        );
+        pdf.change_page_content(page, content.encode().unwrap())
+            .unwrap();
+        let mut bytes = vec![];
+        pdf.save_to(&mut bytes).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        let doc = e.open(&path).unwrap();
+        let text = e.text_objects(&doc, 0).unwrap()[0].clone();
+        let item = e
+            .page_items(&doc, 0)
+            .unwrap()
+            .into_iter()
+            .find(|item| item.index == text.index)
+            .unwrap();
+        let preview = e
+            .object_preview(&doc, std::slice::from_ref(&item), 2.)
+            .unwrap();
+        let original = e.render(&doc, 0, 2.).unwrap();
+        assert_eq!(doc.bytes, bytes);
+        assert!(!doc.can_undo());
+        assert_eq!(preview.background.rgba.len(), original.rgba.len());
+        let [x, y, width, height] = preview.rect;
+        if rotation == 0 {
+            let target = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join("target");
+            image::save_buffer(
+                target.join("drag-preview-generated-foreground.png"),
+                &preview.foreground.rgba,
+                width,
+                height,
+                image::ColorType::Rgba8,
+            )
+            .unwrap();
+            image::save_buffer(
+                target.join("drag-preview-generated-page.png"),
+                &original.rgba,
+                original.width,
+                original.height,
+                image::ColorType::Rgba8,
+            )
+            .unwrap();
+        }
+        let mut ink = 0;
+        let mut transparent = 0;
+        let mut composite = vec![255; preview.foreground.rgba.len()];
+        for row in 0..height {
+            for col in 0..width {
+                let f = (row as usize * width as usize + col as usize) * 4;
+                let b = ((row + y) as usize * original.width as usize + (col + x) as usize) * 4;
+                let alpha = u32::from(preview.foreground.rgba[f + 3]);
+                ink += usize::from(alpha > 0);
+                transparent += usize::from(alpha == 0);
+                for channel in 0..3 {
+                    let blended = (u32::from(preview.foreground.rgba[f + channel]) * alpha
+                        + u32::from(preview.background.rgba[b + channel]) * (255 - alpha)
+                        + 127)
+                        / 255;
+                    composite[f + channel] = blended as u8;
+                    assert!(
+                        (blended as i32 - i32::from(original.rgba[b + channel])).abs() <= 2,
+                        "rotation={rotation}, pixel=({col},{row}), foreground={:?}, background={:?}, original={:?}, blended={blended}",
+                        &preview.foreground.rgba[f..f + 4],
+                        &preview.background.rgba[b..b + 4],
+                        &original.rgba[b..b + 4]
+                    );
+                }
+            }
+        }
+        assert!(ink > 30 && transparent > 30);
+        if rotation == 0 {
+            image::save_buffer(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("target/drag-preview-visible-generated.png"), &composite, width, height, image::ColorType::Rgba8).unwrap();
+        }
+        assert!(
+            preview
+                .background
+                .rgba
+                .iter()
+                .zip(&original.rgba)
+                .any(|(a, b)| a != b)
+        );
+        assert!(e.object_preview(&doc, &[], 2.).is_err());
+        assert!(
+            e.object_preview(&doc, &[item.clone(), item.clone()], 2.)
+                .is_err()
+        );
+        assert!(
+            e.object_preview(&doc, std::slice::from_ref(&item), f32::NAN)
+                .is_err()
+        );
+        assert!(e.object_preview(&doc, &[item], 20.).is_err());
+    }
+}
+
 #[test]
 fn page_item_duplicate_delete_and_invalid_move_are_atomic() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());

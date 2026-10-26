@@ -39,7 +39,7 @@ fn axis_snap(
     r: Rect,
     handle: Option<usize>,
     page: Rect,
-    targets: &[Rect],
+    targets: impl Iterator<Item = Rect>,
     tolerance: f32,
     axis: usize,
     previous: Option<Guide>,
@@ -98,8 +98,8 @@ fn axis_snap(
     }
     let mut before: Option<f32> = None;
     let mut after: Option<f32> = None;
-    for target in targets {
-        for (target_anchor, position) in values(*target, axis).into_iter().enumerate() {
+    for target in targets.filter(|r| r.is_finite() && r.is_positive()) {
+        for (target_anchor, position) in values(target, axis).into_iter().enumerate() {
             for anchor in 0..3 {
                 if handle.is_none() && (anchor == 1) != (target_anchor == 1) {
                     continue;
@@ -143,7 +143,7 @@ pub fn align(
     proposed: Rect,
     handle: Option<usize>,
     page: Rect,
-    targets: impl Iterator<Item = Rect>,
+    targets: impl Iterator<Item = Rect> + Clone,
     tolerance: f32,
     state: &mut State,
 ) -> Snapped {
@@ -159,11 +159,8 @@ pub fn align(
             y: None,
         };
     }
-    let targets: Vec<_> = targets
-        .filter(|r| r.is_finite() && r.is_positive())
-        .collect();
-    let x = axis_snap(proposed, handle, page, &targets, tolerance, 0, state.x);
-    let y = axis_snap(proposed, handle, page, &targets, tolerance, 1, state.y);
+    let x = axis_snap(proposed, handle, page, targets.clone(), tolerance, 0, state.x);
+    let y = axis_snap(proposed, handle, page, targets, tolerance, 1, state.y);
     let offset = Vec2::new(
         x.map_or(0.0, |g| g.position - values(proposed, 0)[g.anchor]),
         y.map_or(0.0, |g| g.position - values(proposed, 1)[g.anchor]),
@@ -192,7 +189,7 @@ pub fn paint(
     scale: f32,
     color: eframe::egui::Color32,
 ) {
-    use eframe::egui::{Align2, FontId, Stroke, pos2};
+    use eframe::egui::Stroke;
     let painter = painter.with_clip_rect(painter.clip_rect().intersect(page));
     for (axis, guide) in [snapped.x, snapped.y].into_iter().enumerate() {
         let Some(g) = guide else {
@@ -206,8 +203,6 @@ pub fn paint(
             p
         };
         let stroke = Stroke::new(1.2, color);
-        let label;
-        let origin;
         if g.kind == Kind::Gap {
             let mid = snapped.bounds.center()[other];
             for (a, b) in [
@@ -222,8 +217,6 @@ pub fn paint(
                     painter.line_segment([p - d, p + d], stroke);
                 }
             }
-            origin = point(g.position, mid);
-            label = "Equal gaps";
         } else {
             let from = g.from.min(snapped.bounds.min[other]);
             let to = g.to.max(snapped.bounds.max[other]);
@@ -231,33 +224,10 @@ pub fn paint(
             for v in [from, to] {
                 painter.circle_filled(point(g.position, v), 2.5, color);
             }
-            origin = point(g.position, from);
-            label = match g.kind {
-                Kind::PageCenter => "Page center",
-                Kind::Center => "Centers",
-                _ => "Edges",
-            };
             if g.kind == Kind::PageCenter {
                 painter.circle_stroke(page.center(), 5.0, stroke);
             }
         }
-        let clip = painter.clip_rect().shrink(4.0);
-        if !clip.is_positive() || !clip.is_finite() {
-            continue;
-        }
-        let at = pos2(
-            (origin.x + 7.0).clamp(clip.left(), (clip.right() - 80.0).max(clip.left())),
-            (origin.y + 7.0).clamp(clip.top(), (clip.bottom() - 18.0).max(clip.top())),
-        );
-        let text_rect = Rect::from_min_size(at - Vec2::splat(3.0), Vec2::new(80.0, 19.0));
-        painter.rect_filled(text_rect, 3.0, eframe::egui::Color32::from_black_alpha(220));
-        painter.text(
-            at,
-            Align2::LEFT_TOP,
-            label,
-            FontId::proportional(11.0),
-            color,
-        );
     }
 }
 #[cfg(test)]

@@ -21,6 +21,7 @@ const SAMPLE_SCALE: f32 = 4.0;
 const SAMPLE_SPAN: f32 = 1000.0;
 
 pub enum Request {
+    ObjectPreview { id: u64, items: Vec<pdf_editor_core::PageItem>, scale: f32 },
     RenderTiles {page:u16,scale:f32,regions:Vec<[u32;4]>},
     ComparisonSnapshot(u64),
     Characters(u16),
@@ -160,6 +161,7 @@ impl PageTransform {
 }
 
 pub enum Reply {
+    ObjectPreview { id: u64, generation: u64, result: pdf_editor_core::Result<pdf_editor_core::ObjectPreview> },
     Tiles {generation:u64,page:u16,scale:f32,images:Result<Vec<([u32;4],pdf_editor_core::Image)>,String>},
     SanitizedExported(PathBuf),
     ComparisonSnapshot {id:u64,generation:u64,original:Arc<Document>,current:Arc<Document>},
@@ -475,10 +477,11 @@ fn run(
 fn coalesce(batch: Vec<Request>) -> Vec<Request> {
     fn key(request: &Request) -> Option<(u8,u16)> {
         match request {
-            Request::Objects { page } => Some((0,*page)),
-            Request::Render { page,.. } => Some((1,*page)),
-            Request::Thumbnail(page) => Some((2,*page)),
-            Request::RenderTiles {page,..} => Some((3,*page)),
+            Request::ObjectPreview {items,..} => items.first().map(|item|(0,item.page)),
+            Request::Objects { page } => Some((1,*page)),
+            Request::Render { page,.. } => Some((2,*page)),
+            Request::Thumbnail(page) => Some((3,*page)),
+            Request::RenderTiles {page,..} => Some((4,*page)),
             _ => None,
         }
     }
@@ -524,7 +527,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
         });
     };
     let page = page_of(&request);
-    let blocking = page.is_none() && !matches!(request, Request::Find(_) | Request::FindOptions(..) | Request::Characters(_) | Request::Fonts);
+    let blocking = page.is_none() && !matches!(request, Request::Find(_) | Request::FindOptions(..) | Request::Characters(_) | Request::Fonts | Request::ObjectPreview {..});
     let failed = |e: pdf_editor_core::Error| {
         Some(Reply::Failed {
             message: e.to_string(),
@@ -534,6 +537,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
+        Request::ObjectPreview {id,items,scale} => Some(Reply::ObjectPreview {id,generation:state.generation,result:engine.object_preview(state.doc.as_ref()?,&items,scale)}),
         Request::RenderTiles {page,scale,regions}=>{
             let doc=state.doc.as_ref()?;
             let images=engine.render_tiles(doc,page,scale,&regions).map(|images|regions.into_iter().zip(images).collect()).map_err(|e|e.to_string());

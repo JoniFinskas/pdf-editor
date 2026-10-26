@@ -1037,3 +1037,23 @@ field indices and revision numbers, so the previous panel must not remain usable
 for a new source. Generated forms with different values verify replacement,
 closed-panel lazy loading and switching to a document without forms. Preserve the
 existing explicit refresh behavior for edits within the same document.
+
+## Visible object dragging
+
+Move clipping paths with selected clipped text through the existing native page
+transaction. Keep the content-stream path for ordinary text and verify encoded
+text and native matrices before accepting a candidate. Generated cropped and full
+text, native and embedded fonts, all page rotations and saved reopening verify
+visible ink and unchanged neighbors.
+
+Prepare one bounded native background/transparent foreground pair for the current
+selection in the worker. Cache at most two million pixels per layer; release
+native page/bitmap resources before preparing the foreground. Pointer frames move
+cached textures directly, with an immediate existing-page crop while preparing.
+Use absolute press-to-pointer displacement, preserve release coordinates and keep
+the preview until the matching updated page render arrives. Ignore stale replies,
+support Escape cancellation and commit a drag as one undoable mutation. Alignment
+lines and gap marks remain; omit overlapping text badges.
+Cache stationary snap targets once per gesture using selected-index lookup;
+reuse cloned rectangle iterators for both axes instead of allocating and checking
+every selected index again on each pointer frame.

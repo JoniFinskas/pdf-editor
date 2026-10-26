@@ -32,6 +32,8 @@ mod export;
 pub use drawing::{Drawing, DrawingKind};
 mod features;
 mod objects;
+mod object_preview;
+pub use object_preview::ObjectPreview;
 mod object_layout;
 pub use object_layout::ObjectLayout;
 mod ungroup;

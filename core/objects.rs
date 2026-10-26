@@ -36,6 +36,26 @@ pub struct ObjectClipboard {
 }
 
 impl Engine {
+    pub(crate) fn transform_clipped_text(&self, doc: &Document, page: u16,
+        indices: &[usize], matrix: [f32; 6]) -> Result<Vec<u8>> {
+        let mut native = forms::NativeForm::open(self.raw, &doc.bytes, page)?;
+        let [a, b, c, d, e, f] = matrix.map(f64::from);
+        for &index in indices {
+            let index = i32::try_from(index).map_err(|_| err("Invalid page object index"))?;
+            // The page and its objects stay owned by NativeForm through generation/save.
+            unsafe {
+                let object = self.raw.FPDFPage_GetObject(native.page, index);
+                if object.is_null() { return Err(err("Object no longer exists")); }
+                self.raw.FPDFPageObj_Transform(object, a, b, c, d, e, f);
+                self.raw.FPDFPageObj_TransformClipPath(object, a, b, c, d, e, f);
+            }
+        }
+        if unsafe { self.raw.FPDFPage_GenerateContent(native.page) } == 0 {
+            return Err(err("Clipped text could not be transformed"));
+        }
+        native.save()
+    }
+
     pub fn copy_page_items(&self, doc: &Document, items: &[PageItem]) -> Result<ObjectClipboard> {
         let first = items.first().ok_or_else(|| err("Select an object first"))?;
         let current = self.page_items(doc, first.page)?;

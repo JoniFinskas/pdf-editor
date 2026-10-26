@@ -212,7 +212,9 @@ fn canvas_snapping_matches_the_committed_move_and_can_be_bypassed() {
                 .preview
                 .unwrap();
             assert!((preview.left() - 20.0 - expected_dx).abs() < 0.01);
-            assert!(inbox.try_recv().is_err(), "Preview must not mutate");
+            let previews: Vec<_> = inbox.try_iter().collect();
+            assert_eq!(previews.len(), 1, "Prepare one cached drag preview");
+            assert!(previews.iter().all(|request| matches!(request, Request::ObjectPreview {..})), "Preview must not mutate");
             frame(&mut app, vec![button(end, false)]);
             let Request::EditItems(_, pdf_editor_core::ObjectAction::Move { dx, dy }) =
                 inbox.try_recv().unwrap()
