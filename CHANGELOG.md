@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Shorten the project overview, document the technology stack, and move detailed controls and setup notes to a separate guide.
+
 - Match installed named font faces and intermediate weights correctly, ignore subset codes when inferring style, and allow formatting weighted families such as Segoe UI Semibold without false substitution warnings.
 
 - Show selected text's PDF font in the status bar, text toolbar and formatting window; distinguish mixed or unknown fonts and retain full subset names on hover.
