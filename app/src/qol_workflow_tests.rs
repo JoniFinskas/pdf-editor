@@ -1,5 +1,82 @@
 // Generated-document integration for selection, batch operations and working copies.
 #[test]
+fn qol_scoped_search_refresh_uses_the_remaining_page_selection() {
+    for scope in [1, 2] {
+        let ctx = Context::default();
+        let (mut app, inbox, _outbox) = mock_app();
+        opened(&mut app, &ctx);
+        app.doc.as_mut().unwrap().current_page = 1;
+        app.qol.scope = scope;
+        app.qol.pages.extend([0, 1]);
+        app.find.query = "AB".into();
+        app.handle(&ctx, Reply::Changed {
+            pages: vec![PageInfo { width: 300., height: 400. }],
+            generation: 2,
+            kind: ChangeKind::Edit,
+            can_undo: true,
+            can_redo: false,
+            warning: None,
+            objects_changed: 1,
+        });
+        assert_eq!(app.doc.as_ref().unwrap().current_page, 0);
+        assert!(app.qol.pages.is_empty());
+        let Request::FindOptions(query, options) = inbox.try_recv().unwrap() else {
+            panic!("Scoped search was not refreshed");
+        };
+        assert_eq!(query, "AB");
+        assert_eq!(options.pages, Some(vec![0]), "scope {scope}");
+        assert_eq!(options, app.current_search_options());
+    }
+}
+
+#[test]
+fn qol_current_page_search_survives_deleting_the_last_page_and_history() {
+    fn settle_search(app: &mut EditorApp, ctx: &Context, page: u16) {
+        workflow_settle(app, ctx);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while app.find.refresh_only {
+            app.poll(ctx);
+            assert!(!app.banners.iter().any(|b| b.kind == BannerKind::Error), "{}",
+                app.banners.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("; "));
+            assert!(std::time::Instant::now() < deadline, "Search did not settle");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(!app.qol.hits.is_empty());
+        assert!(app.qol.hits.iter().all(|hit| hit.page == page));
+        assert!(!app.find.matches.is_empty());
+        assert!(app.find.matches.iter().all(|(p, _)| *p == page));
+    }
+    let (mut app, ctx, source) = qol_worker();
+    let original = std::fs::read(&source).unwrap();
+    let query = app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().lines[0].text.clone();
+    app.document_action(Request::PageBatch(pdf_editor_core::PageBatch::Duplicate {
+        pages: vec![0], before: 1,
+    }));
+    workflow_settle(&mut app, &ctx);
+    app.qol.scope = 1;
+    app.find.query = query;
+    app.go_to_page(1);
+    app.find.refresh_only = true;
+    app.send(Request::FindOptions(app.find.query.clone(), app.current_search_options()));
+    settle_search(&mut app, &ctx, 1);
+    assert_eq!(app.doc.as_ref().unwrap().current_page, 1);
+    app.document_action(Request::PageBatch(pdf_editor_core::PageBatch::Delete(vec![1])));
+    settle_search(&mut app, &ctx, 0);
+    for _ in 0..4 {
+        app.undo();
+        settle_search(&mut app, &ctx, 0);
+        assert_eq!(app.doc.as_ref().unwrap().pages.len(), 2);
+        app.go_to_page(1);
+        workflow_settle(&mut app, &ctx);
+        assert_eq!(app.doc.as_ref().unwrap().current_page, 1);
+        app.redo();
+        settle_search(&mut app, &ctx, 0);
+        assert_eq!(app.doc.as_ref().unwrap().pages.len(), 1);
+    }
+    assert_eq!(std::fs::read(source).unwrap(), original);
+}
+
+#[test]
 fn qol_find_controls_fit_the_minimum_window() {
     let ctx=Context::default();theme::install(&ctx);
     let (mut app,_,_)=mock_app();opened(&mut app,&ctx);app.find.open=true;

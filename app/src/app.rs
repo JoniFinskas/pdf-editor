@@ -1656,7 +1656,6 @@ impl EditorApp {
                 warning,
                 objects_changed,
             } => {
-                let search_options=self.qol.advanced().then(||self.current_search_options());
                 self.busy = self.busy.saturating_sub(1);
                 let Some(doc) = &mut self.doc else { return };
                 let comparison_changed=doc.generation!=generation;
@@ -1688,10 +1687,6 @@ impl EditorApp {
                     self.find.matches.clear();
                     self.privacy.preview = None;
                     self.replace.count = None;
-                    if !self.find.query.is_empty() {
-                        self.find.refresh_only = true;
-                        self.worker.send(search_options.map_or_else(||Request::Find(self.find.query.clone()),|options|Request::FindOptions(self.find.query.clone(),options)));
-                    }
                     doc.edit = None;
                     if !pages.is_empty() {
                         doc.pages = pages
@@ -1722,6 +1717,10 @@ impl EditorApp {
                         page.objects = None;
                         page.error = None;
                     }
+                }
+                if comparison_changed && !self.find.query.is_empty() {
+                    self.find.refresh_only = true;
+                    self.send(Request::Find(self.find.query.clone()));
                 }
                 if comparison_changed && self.compare.is_current() {self.pending_comparison=Some(self.compare.prepare_current());}
                 if self.bookmarks.open {

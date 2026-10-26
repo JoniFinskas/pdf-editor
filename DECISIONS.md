@@ -1002,3 +1002,11 @@ Restore the pending draft with focus and suppress unchanged automatic retries,
 preserving close/open warnings without claiming the PDF mutation succeeded.
 Keep the original generation and savepoint; advise copying the draft before
 restart. Generated-document tests cover send failure and missing acknowledgement.
+
+## Search refresh after document changes
+
+Refresh search through the existing scoped request dispatcher after page counts,
+current page and invalidated selections have been updated. Capturing the scope
+before these updates could search a deleted page or keep results for a selection
+no longer shown. Generated-document deletion and repeated undo/redo tests verify
+that result pages remain valid and the source stays unchanged.
