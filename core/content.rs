@@ -332,7 +332,7 @@ pub(crate) fn transform_text(engine: &Engine, state: &Document, page_index: u16,
     }
     if move_clip {
         let indices=selected.iter().map(|&ordinal|before[ordinal].index).collect::<Vec<_>>();
-        pdf=parse(&engine.transform_clipped_text(state,page_index,&indices,matrix)?)?;
+        pdf=parse(&engine.transform_page_objects(state,page_index,&indices,matrix)?)?;
     } else {
         pdf.change_page_content(page,Content {operations:output}.encode()?)?;
     }

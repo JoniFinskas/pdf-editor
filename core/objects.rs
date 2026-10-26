@@ -36,7 +36,7 @@ pub struct ObjectClipboard {
 }
 
 impl Engine {
-    pub(crate) fn transform_clipped_text(&self, doc: &Document, page: u16,
+    pub(crate) fn transform_page_objects(&self, doc: &Document, page: u16,
         indices: &[usize], matrix: [f32; 6]) -> Result<Vec<u8>> {
         let mut native = forms::NativeForm::open(self.raw, &doc.bytes, page)?;
         let [a, b, c, d, e, f] = matrix.map(f64::from);
@@ -51,7 +51,7 @@ impl Engine {
             }
         }
         if unsafe { self.raw.FPDFPage_GenerateContent(native.page) } == 0 {
-            return Err(err("Clipped text could not be transformed"));
+            return Err(err("Page objects could not be transformed"));
         }
         native.save()
     }
@@ -279,86 +279,77 @@ impl Engine {
                 expected_text.extend(text_before.iter().filter(|text|items.iter().any(|item|item.index==text.index))
                     .map(|text|text.text.clone()));
             }
-            let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
-            let source = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
-            let source_page = source.pages().get(i32::from(first.page))?;
-            let mut page = pdf.pages().get(i32::from(first.page))?;
-            // Regenerate once after the batch, not once per glyph in a paragraph.
-            page.set_content_regeneration_strategy(PdfPageContentRegenerationStrategy::Manual);
-            let mut indices: Vec<_> = items.iter().map(|i| i.index).collect();
-            indices.sort_unstable();
-            indices.dedup();
-            if indices.len() != items.len() {
-                return Err(err("Duplicate object selection"));
-            }
-            if matches!(action, ObjectAction::Delete) {
-                indices.reverse();
-            }
-            let mut copies = if matches!(action, ObjectAction::Duplicate { .. }) {
-                indices
-                    .iter()
-                    .map(|index| source_page.objects().get(*index))
-                    .collect::<std::result::Result<Vec<_>, _>>()?
-            } else {
-                Vec::new()
-            }
-            .into_iter();
             let mut wrappers = Vec::new();
-            if matches!(action, ObjectAction::BringToFront | ObjectAction::SendToBack) {
-                let count = page.objects().len();
-                if count > 20000 || indices.iter().any(|i| *i >= count) {
-                    return Err(err("Invalid object order selection"));
+            let bytes = if matches!(action, ObjectAction::Move { .. } | ObjectAction::Resize { .. }) {
+                let matrix = resize.map_or([1., 0., 0., 1., dx, dy],
+                    |(sx, sy, tx, ty)| [sx, 0., 0., sy, tx, ty]);
+                self.transform_page_objects(doc, first.page, &indices, matrix)?
+            } else {
+                let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
+                let source = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
+                let source_page = source.pages().get(i32::from(first.page))?;
+                let mut page = pdf.pages().get(i32::from(first.page))?;
+                // Regenerate once after the batch, not once per glyph in a paragraph.
+                page.set_content_regeneration_strategy(PdfPageContentRegenerationStrategy::Manual);
+                if matches!(action, ObjectAction::Delete) {
+                    indices.reverse();
                 }
-                let selected: std::collections::HashSet<_> = indices.iter().copied().collect();
-                let mut order: Vec<_> = (0..count).collect();
-                order.sort_by_key(|i| selected.contains(i) == matches!(action, ObjectAction::BringToFront));
-                if order.iter().copied().eq(0..count) { return Ok(()); }
-                let mut objects = Vec::with_capacity(count);
-                for index in (0..count).rev() {
-                    objects.push(Some(page.objects_mut().remove_object_at_index(index)?));
+                let mut copies = if matches!(action, ObjectAction::Duplicate { .. }) {
+                    indices
+                        .iter()
+                        .map(|index| source_page.objects().get(*index))
+                        .collect::<std::result::Result<Vec<_>, _>>()?
+                } else {
+                    Vec::new()
                 }
-                objects.reverse();
-                for index in order {
-                    page.objects_mut().add_object(objects[index].take().ok_or_else(|| err("Invalid object order"))?)?;
+                .into_iter();
+                if matches!(action, ObjectAction::BringToFront | ObjectAction::SendToBack) {
+                    let count = page.objects().len();
+                    if count > 20000 || indices.iter().any(|i| *i >= count) {
+                        return Err(err("Invalid object order selection"));
+                    }
+                    let selected: std::collections::HashSet<_> = indices.iter().copied().collect();
+                    let mut order: Vec<_> = (0..count).collect();
+                    order.sort_by_key(|i| selected.contains(i) == matches!(action, ObjectAction::BringToFront));
+                    if order.iter().copied().eq(0..count) { return Ok(()); }
+                    let mut objects = Vec::with_capacity(count);
+                    for index in (0..count).rev() {
+                        objects.push(Some(page.objects_mut().remove_object_at_index(index)?));
+                    }
+                    objects.reverse();
+                    for index in order {
+                        page.objects_mut().add_object(objects[index].take().ok_or_else(|| err("Invalid object order"))?)?;
+                    }
+                    indices.clear();
                 }
-                indices.clear();
-            }
-            for index in indices {
-                match action {
-                    ObjectAction::BringToFront | ObjectAction::SendToBack => unreachable!(),
-                    ObjectAction::Resize { .. } => {
-                        let (sx, sy, tx, ty) = resize.unwrap();
-                        page.objects()
-                            .get(index)?
-                            .transform(sx, 0.0, 0.0, sy, tx, ty)?;
-                    }
-                    ObjectAction::Delete => {
-                        page.objects_mut().remove_object_at_index(index)?;
-                    }
-                    ObjectAction::Move { .. } => {
-                        page.objects()
-                            .get(index)?
-                            .translate(PdfPoints::new(dx), PdfPoints::new(dy))?;
-                    }
-                    ObjectAction::Duplicate { .. } => {
-                        let mut object = copies
-                            .next()
-                            .ok_or_else(|| err("Object copy selection is incomplete"))?;
-                        if object.object_type() != PdfPageObjectType::XObjectForm {
-                            wrappers.push(page.objects().len());
+                for index in indices {
+                    match action {
+                        ObjectAction::BringToFront | ObjectAction::SendToBack => unreachable!(),
+                        ObjectAction::Resize { .. } | ObjectAction::Move { .. } => unreachable!(),
+                        ObjectAction::Delete => {
+                            page.objects_mut().remove_object_at_index(index)?;
                         }
-                        copy_native_object(&mut object, &source_page, &mut page)?
-                            .translate(PdfPoints::new(dx), PdfPoints::new(dy))?;
+                        ObjectAction::Duplicate { .. } => {
+                            let mut object = copies
+                                .next()
+                                .ok_or_else(|| err("Object copy selection is incomplete"))?;
+                            if object.object_type() != PdfPageObjectType::XObjectForm {
+                                wrappers.push(page.objects().len());
+                            }
+                            copy_native_object(&mut object, &source_page, &mut page)?
+                                .translate(PdfPoints::new(dx), PdfPoints::new(dy))?;
+                        }
                     }
                 }
-            }
-            drop(copies);
-            page.regenerate_content()?;
-            drop(page);
-            let bytes = pdf.save_to_bytes()?;
-            drop(source_page);
-            drop(source);
-            drop(pdf);
+                drop(copies);
+                page.regenerate_content()?;
+                drop(page);
+                let bytes = pdf.save_to_bytes()?;
+                drop(source_page);
+                drop(source);
+                drop(pdf);
+                bytes
+            };
             if bytes.len() > MAX_FILE {
                 return Err(err("Edited PDF exceeds size limit"));
             }

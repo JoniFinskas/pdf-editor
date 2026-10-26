@@ -1057,3 +1057,7 @@ lines and gap marks remain; omit overlapping text badges.
 Cache stationary snap targets once per gesture using selected-index lookup;
 reuse cloned rectangle iterators for both axes instead of allocating and checking
 every selected index again on each pointer frame.
+
+## Object gesture clipping and unchanged bounds
+
+Reuse the native object-and-clip transformation transaction for mixed selections as well as clipped text. Keep text-only stream preservation and validate candidate text before accepting mixed edits. Compare effective preview bounds before dispatching drag edits so motion along an inactive resize axis does not create an undo or dirty-state entry. Generated raster oracles cover text with clipped paths and images at all page rotations; pointer workflows cover multiple selections, zoom, release position and save/history round trips.

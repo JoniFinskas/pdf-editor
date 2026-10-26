@@ -119,3 +119,379 @@ fn escape_cancels_drag_without_mutating_generated_document() {
     workflow_settle(&mut app, &ctx);
     assert!(!app.doc.as_ref().unwrap().dirty());
 }
+
+fn gesture_button(pos: Pos2, pressed: bool) -> egui::Event {
+    egui::Event::PointerButton {
+        pos,
+        pressed,
+        button: egui::PointerButton::Primary,
+        modifiers: Default::default(),
+    }
+}
+
+#[test]
+fn perpendicular_edge_drag_does_not_create_a_phantom_edit() {
+    let (mut app, ctx, source) = qol_worker();
+    let bytes = std::fs::read(&source).unwrap();
+    app.snap_enabled = false;
+    app.set_object_mode(true);
+    workflow_frame(&mut app, &ctx, vec![]);
+    let at = workflow_line(&app, &ctx, 0);
+    workflow_click(&mut app, &ctx, at);
+    let doc = app.doc.as_ref().unwrap();
+    let generation = doc.generation;
+    let page = ctx
+        .read_response(Id::new(("pdf-page", 0usize)))
+        .unwrap()
+        .rect;
+    let bounds = bounds_rect(
+        &doc.pages[0].objects.as_ref().unwrap().transform,
+        doc.selected_item.as_ref().unwrap().bounds,
+    );
+    let start = page.min + resize_handles(bounds)[3].to_vec2() * doc.scale();
+    workflow_frame(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(start),
+            gesture_button(start, true),
+        ],
+    );
+    let end = start + vec2(0., 24.);
+    workflow_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
+    assert_eq!(
+        app.doc
+            .as_ref()
+            .unwrap()
+            .dragging_item
+            .as_ref()
+            .unwrap()
+            .preview,
+        Some(bounds)
+    );
+    workflow_frame(&mut app, &ctx, vec![gesture_button(end, false)]);
+    assert_eq!(app.busy, 0, "Unchanged bounds dispatched a mutation");
+    workflow_settle(&mut app, &ctx);
+    let doc = app.doc.as_ref().unwrap();
+    assert_eq!(doc.generation, generation);
+    assert!(!doc.dirty());
+    assert!(!doc.can_undo);
+    assert!(!app.drag_preview.committing());
+    assert_eq!(std::fs::read(source).unwrap(), bytes);
+}
+
+#[test]
+fn generated_multi_object_gestures_keep_geometry_across_rotation_zoom_and_history() {
+    let (mut app, ctx, source) = qol_worker();
+    let bytes = std::fs::read(&source).unwrap();
+    app.snap_enabled = false;
+    app.set_object_mode(true);
+    for rotation in 0..4 {
+        if rotation > 0 {
+            app.document_action(Request::Pages(pdf_editor_core::PageEdit::Rotate {
+                page: 0,
+            }));
+            workflow_settle(&mut app, &ctx);
+        }
+        for zoom in [0.75, 1.5] {
+            app.set_zoom(zoom, None);
+            workflow_settle(&mut app, &ctx);
+            for resize in [false, true] {
+                let doc = app.doc.as_ref().unwrap();
+                let objects = doc.pages[0].objects.as_ref().unwrap();
+                let before = objects
+                    .items
+                    .iter()
+                    .filter(|i| i.kind == "Text")
+                    .take(2)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                assert_eq!(before.len(), 2);
+                let transform = objects.transform;
+                let bounds = before.iter().fold(Rect::NOTHING, |b, i| {
+                    b.union(bounds_rect(&transform, i.bounds))
+                });
+                let scale = doc.scale();
+                let generation = doc.generation;
+                let page = ctx
+                    .read_response(Id::new(("pdf-page", 0usize)))
+                    .unwrap()
+                    .rect;
+                let at = if resize {
+                    resize_handles(bounds)[4]
+                } else {
+                    bounds_rect(&transform, before[0].bounds).center()
+                };
+                let start = page.min + at.to_vec2() * scale;
+                app.qol.objects = before.clone();
+                app.doc.as_mut().unwrap().selected_item = app.qol.primary();
+                workflow_frame(
+                    &mut app,
+                    &ctx,
+                    vec![
+                        egui::Event::PointerMoved(start),
+                        gesture_button(start, true),
+                    ],
+                );
+                let delta = vec2(45., 28.);
+                workflow_frame(
+                    &mut app,
+                    &ctx,
+                    vec![egui::Event::PointerMoved(start + delta)],
+                );
+                let drag = app.doc.as_ref().unwrap().dragging_item.as_ref().unwrap();
+                assert_eq!(drag.items.len(), 2);
+                assert_eq!(drag.resize_handle, resize.then_some(4));
+                assert_eq!(app.busy, 0);
+                assert_eq!(app.doc.as_ref().unwrap().generation, generation);
+                let delta = delta + vec2(8., 7.);
+                let expected = if resize {
+                    resized_rect(bounds, 4, delta / scale)
+                } else {
+                    bounds.translate(delta / scale)
+                };
+                workflow_frame(&mut app, &ctx, vec![gesture_button(start + delta, false)]);
+                assert_eq!(app.busy, 1);
+                workflow_settle(&mut app, &ctx);
+                let doc = app.doc.as_ref().unwrap();
+                assert_eq!(doc.generation, generation + 1);
+                let objects = doc.pages[0].objects.as_ref().unwrap();
+                let actual = before.iter().fold(Rect::NOTHING, |b, old| {
+                    let item = objects.items.iter().find(|i| i.index == old.index).unwrap();
+                    b.union(bounds_rect(&objects.transform, item.bounds))
+                });
+                assert!(
+                    (actual.min - expected.min).length() < 0.3,
+                    "rotation={rotation}, zoom={zoom}, resize={resize}: {actual:?} != {expected:?}"
+                );
+                assert!((actual.max - expected.max).length() < 0.3);
+                assert_eq!(app.qol.objects.len(), 2);
+                app.undo();
+                workflow_settle(&mut app, &ctx);
+                let objects = app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap();
+                for old in &before {
+                    let item = objects.items.iter().find(|i| i.index == old.index).unwrap();
+                    assert_eq!(item.bounds, old.bounds);
+                }
+                app.redo();
+                workflow_settle(&mut app, &ctx);
+                let folder = recovery_safety_folder("gesture-roundtrip");
+                let output = folder.join(format!("generated-{rotation}-{zoom}-{resize}.pdf"));
+                app.document_action(Request::SaveAs(output.clone()));
+                workflow_settle(&mut app, &ctx);
+                let engine = pdf_editor_core::Engine::new(
+                    &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .parent()
+                        .unwrap()
+                        .join("target/debug/pdfium.dll"),
+                )
+                .unwrap();
+                let saved = engine.open(&output).unwrap();
+                let saved_items = engine.page_items(&saved, 0).unwrap();
+                let objects = app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap();
+                for item in &objects.items {
+                    assert_eq!(
+                        item.bounds,
+                        saved_items
+                            .iter()
+                            .find(|i| i.index == item.index)
+                            .unwrap()
+                            .bounds
+                    );
+                }
+                app.undo();
+                workflow_settle(&mut app, &ctx);
+            }
+        }
+    }
+    assert_eq!(std::fs::read(source).unwrap(), bytes);
+}
+
+#[test]
+fn generated_busy_page_drag_keeps_pointer_frames_free_of_mutations() {
+    // A small native PDF generator keeps the stress input independent of saved files.
+    let folder = recovery_safety_folder("busy-gesture");
+    let source = folder.join("generated-busy.pdf");
+    let mut stream = String::from("BT /F1 16 Tf 1 0 0 1 50 750 Tm (Drag target) Tj ET\n");
+    for index in 0..2000 {
+        stream.push_str(&format!(
+            "{} {} 4 4 re f\n",
+            15 + (index % 40) * 14,
+            20 + (index / 40) * 13
+        ));
+    }
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".to_owned(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+        format!("<< /Length {} >>\nstream\n{stream}endstream", stream.len()),
+    ];
+    let mut bytes = b"%PDF-1.7\n".to_vec();
+    let mut offsets = vec![0];
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(bytes.len());
+        bytes.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
+    }
+    let xref = bytes.len();
+    bytes.extend_from_slice(b"xref\n0 6\n0000000000 65535 f \n");
+    for offset in &offsets[1..] {
+        bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    bytes.extend_from_slice(
+        format!("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+    );
+    std::fs::write(&source, &bytes).unwrap();
+    let (mut app, ctx, _) = qol_worker();
+    app.open_path(source.clone());
+    workflow_settle(&mut app, &ctx);
+    app.set_zoom(0.75, None);
+    app.set_object_mode(true);
+    workflow_settle(&mut app, &ctx);
+    assert_eq!(
+        app.doc.as_ref().unwrap().pages[0]
+            .objects
+            .as_ref()
+            .unwrap()
+            .items
+            .len(),
+        2001
+    );
+    let start = workflow_line(&app, &ctx, 0);
+    let generation = app.doc.as_ref().unwrap().generation;
+    workflow_frame(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(start),
+            gesture_button(start, true),
+        ],
+    );
+    workflow_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(start + vec2(10., 15.))],
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !app.drag_preview.ready() {
+        workflow_frame(&mut app, &ctx, vec![]);
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let mut timings = vec![];
+    for frame in 0..120 {
+        let pointer = start + vec2(10. + (frame % 60) as f32, 15. + (frame % 20) as f32);
+        let began = std::time::Instant::now();
+        workflow_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(pointer)]);
+        timings.push(began.elapsed().as_micros());
+        assert_eq!(app.busy, 0);
+        assert_eq!(app.doc.as_ref().unwrap().generation, generation);
+        let drag = app.doc.as_ref().unwrap().dragging_item.as_ref().unwrap();
+        assert_eq!(drag.snap_targets.len(), 2000);
+        let rect = ctx
+            .read_response(Id::new(("pdf-page", 0usize)))
+            .unwrap()
+            .rect;
+        let expected =
+            ((pointer - rect.min) / app.doc.as_ref().unwrap().scale()).to_pos2() - drag.anchor;
+        assert!((drag.delta - expected).length() < 0.001);
+    }
+    timings.sort_unstable();
+    println!(
+        "generated 2001-object drag frame us: median={}, p95={}, max={}",
+        timings[60], timings[114], timings[119]
+    );
+    workflow_frame(
+        &mut app,
+        &ctx,
+        vec![workflow_key(Key::Escape, Default::default())],
+    );
+    workflow_frame(&mut app, &ctx, vec![gesture_button(start, false)]);
+    workflow_settle(&mut app, &ctx);
+    assert!(!app.doc.as_ref().unwrap().dirty());
+    assert_eq!(std::fs::read(source).unwrap(), bytes);
+}
+
+#[test]
+fn zoom_during_generated_drag_keeps_the_page_anchor_and_release_position() {
+    let (mut app, ctx, _) = qol_worker();
+    app.snap_enabled = false;
+    app.set_object_mode(true);
+    workflow_frame(&mut app, &ctx, vec![]);
+    for resize in [false, true] {
+        app.set_zoom(0.75, None);
+        workflow_settle(&mut app, &ctx);
+        let at = workflow_line(&app, &ctx, 0);
+        workflow_click(&mut app, &ctx, at);
+        let doc = app.doc.as_ref().unwrap();
+        let objects = doc.pages[0].objects.as_ref().unwrap();
+        let transform = objects.transform;
+        let bounds = bounds_rect(&transform, doc.selected_item.as_ref().unwrap().bounds);
+        let page = ctx
+            .read_response(Id::new(("pdf-page", 0usize)))
+            .unwrap()
+            .rect;
+        let start = if resize {
+            page.min + resize_handles(bounds)[4].to_vec2() * doc.scale()
+        } else {
+            at
+        };
+        workflow_frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(start),
+                gesture_button(start, true),
+            ],
+        );
+        let pointer = start + vec2(50., 20.);
+        workflow_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(pointer)]);
+        let anchor = app
+            .doc
+            .as_ref()
+            .unwrap()
+            .dragging_item
+            .as_ref()
+            .unwrap()
+            .anchor;
+        app.set_zoom(1.5, Some(pointer));
+        workflow_settle(&mut app, &ctx);
+        let doc = app.doc.as_ref().unwrap();
+        let page = ctx
+            .read_response(Id::new(("pdf-page", 0usize)))
+            .unwrap()
+            .rect;
+        let end = pointer + vec2(18., 12.);
+        let delta = ((end - page.min) / doc.scale()).to_pos2() - anchor;
+        let expected = if resize {
+            resized_rect(bounds, 4, delta)
+        } else {
+            bounds.translate(delta)
+        };
+        assert_eq!(doc.dragging_item.as_ref().unwrap().anchor, anchor);
+        let indices = doc
+            .dragging_item
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .map(|i| i.index)
+            .collect::<Vec<_>>();
+        workflow_frame(&mut app, &ctx, vec![gesture_button(end, false)]);
+        assert_eq!(app.busy, 1);
+        workflow_settle(&mut app, &ctx);
+        let objects = app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap();
+        let actual = objects
+            .items
+            .iter()
+            .filter(|i| indices.contains(&i.index))
+            .fold(Rect::NOTHING, |b, i| {
+                b.union(bounds_rect(&objects.transform, i.bounds))
+            });
+        assert!((actual.min - expected.min).length() < 0.3);
+        assert!((actual.max - expected.max).length() < 0.3);
+        app.undo();
+        workflow_settle(&mut app, &ctx);
+        assert!(!app.doc.as_ref().unwrap().dirty());
+    }
+}

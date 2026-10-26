@@ -3796,7 +3796,8 @@ impl EditorApp {
                             let drag = doc.dragging_item.take().unwrap();
                             if let Some(objects) = &page.objects
                                 && let Some((dx, dy)) = raster_delta(&objects.transform, if drag.resize_handle.is_some() { drag.delta } else { preview_bounds.min-drag.bounds.min })
-                                && (dx.abs() > 0.01 || dy.abs() > 0.01)
+                                && ((preview_bounds.min-drag.bounds.min).abs().max_elem() > 0.01
+                                    || (preview_bounds.max-drag.bounds.max).abs().max_elem() > 0.01)
                             {
                                 self.busy += 1;
                                 let action = if drag.resize_handle.is_some() {

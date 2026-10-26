@@ -27,6 +27,8 @@ fn comparison_snapshots_keep_opening_bytes_and_never_copy_edit_history() {
 
 #[path = "stress_tests.rs"]
 mod stress_tests;
+#[path = "object_gesture_tests.rs"]
+mod object_gesture_tests;
 
 #[test]
 fn grouped_text_preparation_keeps_page_transparency_and_allows_editing() {
