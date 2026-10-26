@@ -1,6 +1,6 @@
 use super::*;
 use pdf_editor_core::{Bounds, ObjectLayout, PageBatch, PageItem, SearchOptions, TextCharacter};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 #[derive(Default)]
 pub(super) struct Qol {
@@ -492,24 +492,24 @@ impl EditorApp {
             .search_options(self.doc.as_ref().map_or(0, |d| d.current_page))
     }
     pub(super) fn formatting_targets(&self) -> Vec<TextObject> {
-        if !self.text_tool.selection.is_empty() {
-            return self.text_tool.selection.clone();
-        }
-        self.doc
+        self.formatting_objects().cloned().collect()
+    }
+    pub(super) fn formatting_objects(&self) -> impl Iterator<Item = &TextObject> {
+        let selected: HashSet<_> = if self.text_tool.selection.is_empty()
+            && self.doc.as_ref().is_some_and(|doc|doc.selected_item.is_some()) {
+            self.qol.objects.iter().map(|item|(item.page,item.index,item.revision)).collect()
+        } else {HashSet::new()};
+        let object_selection = !selected.is_empty();
+        self.text_tool.selection.iter().chain(self.doc
             .as_ref()
             .into_iter()
+            .filter(move |_| object_selection)
             .flat_map(|d| &d.pages)
             .filter_map(|p| p.objects.as_ref())
             .flat_map(|p| &p.lines)
             .flat_map(|l| &l.objects)
-            .filter(|o| {
-                self.qol
-                    .objects
-                    .iter()
-                    .any(|i| i.page == o.page && i.index == o.index)
-            })
-            .cloned()
-            .collect()
+            .filter(move |o| selected.contains(&(o.page,o.index,o.revision)))
+        )
     }
     fn format_window(&mut self, ctx: &Context, p: &Palette) {
         let mut open = self.qol.format_open;
@@ -518,8 +518,14 @@ impl EditorApp {
             self.qol.fonts_requested = true;
             self.send(Request::Fonts);
         }
+        let current = open.then(|| font_readout::Readout::new(self.qol.format_targets.iter()
+            .chain(self.formatting_objects().filter(|_|self.qol.format_targets.is_empty()))
+            .map(|object|object.font.as_str()))).flatten();
         crate::widgets::ToolWindow::new("Text formatting",Icon::Edit).width(410.0).show(ctx,p,&mut open,|ui| {
-            ui.label("Font family");
+            if let Some(font) = &current {
+                ui.add(egui::Label::new(format!("Current font: {}",font.name)).truncate()).on_hover_text(&font.detail);
+            } else {ui.label("Select text to check its font");}
+            ui.label("New font");
             ui.add(TextEdit::singleline(&mut self.qol.family).hint_text("For example Arial or Inter").desired_width(f32::INFINITY));
             egui::ComboBox::from_id_salt("format-font").selected_text("Installed fonts").show_ui(ui,|ui| {
                 for font in &self.text_tool.fonts {ui.selectable_value(&mut self.qol.family,font.clone(),font);}

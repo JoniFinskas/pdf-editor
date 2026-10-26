@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Show selected text's PDF font in the status bar, text toolbar and formatting window; distinguish mixed or unknown fonts and retain full subset names on hover.
+
 - Preserve clipping when moving or resizing mixed text and artwork selections; ignore edge-handle drags that leave object bounds unchanged.
 
 - Keep clipped text visible when moved, preserving original clipping, neighboring content, undo and saved output.

@@ -1061,3 +1061,7 @@ every selected index again on each pointer frame.
 ## Object gesture clipping and unchanged bounds
 
 Reuse the native object-and-clip transformation transaction for mixed selections as well as clipped text. Keep text-only stream preservation and validate candidate text before accepting mixed edits. Compare effective preview bounds before dispatching drag edits so motion along an inactive resize axis does not create an undo or dirty-state entry. Generated raster oracles cover text with clipped paths and images at all page rotations; pointer workflows cover multiple selections, zoom, release position and save/history round trips.
+
+## Selected text font readout
+
+Display the BaseFont names already read by PDFium for selected text objects. Remove six-uppercase-letter subset prefixes only from compact labels; retain exact PDF names on hover and report differing or missing faces as mixed or unknown. Keep the current PDF font separate from unapplied replacement choices, clear inactive selections and reuse the current selection iterator without cloning text objects for display. Hash selected object identities before lookup so large selections avoid repeated linear membership scans. Font inspection does not guess from page pixels or change document content.

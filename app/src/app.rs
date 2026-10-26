@@ -15,6 +15,8 @@ mod tiles;
 mod affine_edit;
 #[path = "drag_preview.rs"]
 mod drag_preview;
+#[path = "font_readout.rs"]
+mod font_readout;
 use crate::icons::Icon;
 use crate::recovery::{self, AutoSave, Orphan, Session};
 use crate::theme::{self, Palette};
@@ -2158,7 +2160,10 @@ impl EditorApp {
                 .as_ref()
                 .and_then(|d| d.edit.as_ref())
                 .is_some_and(|e| e.text != e.line.text);
-        if Btn::new("Font family and style…").id("text-font-format").enabled(ready).show(ui,p).clicked() {
+        let font = font_readout::Readout::new(self.text_tool.selection.get(self.text_tool.selected).into_iter().map(|o|o.font.as_str()));
+        let label = font.as_ref().map_or_else(||"Font…".to_owned(),|font|format!("Font: {}",shorten(&font.name,28)));
+        let tip = font.as_ref().map_or_else(||"Change font and style".to_owned(),|font|format!("{}\nChange font and style",font.detail));
+        if Btn::new(&label).id("text-font-format").tip(&tip).enabled(ready).show(ui,p).clicked() {
             self.qol.format_targets=self.formatting_targets();
             self.qol.format_open=true;
             if self.text_tool.fonts.is_empty() {self.send(Request::Fonts);}
@@ -2185,14 +2190,6 @@ impl EditorApp {
             {
                 self.text_tool.size = o.size;
                 self.text_tool.color = [o.color[0], o.color[1], o.color[2]];
-            }
-            if let Some(o) = self.text_tool.selection.get(self.text_tool.selected) {
-                ui.add_space(4.0);
-                ui.add(
-                    egui::Label::new(RichText::new(shorten(&o.font, 24)).color(p.muted))
-                        .selectable(false),
-                )
-                .on_hover_text(format!("Font: {}", o.font));
             }
             widgets::divider(ui, p, 22.0);
             ui.add(
@@ -3071,6 +3068,8 @@ impl EditorApp {
             "Click text to edit it in place"
         };
         let zoom = format!("{:.0}%", doc.zoom * 100.0);
+        let font = font_readout::Readout::new(self.formatting_objects().map(|object|object.font.as_str()));
+        let selection_info = font.as_ref().map_or_else(||hint.to_owned(),|font|format!("Font: {}",font.name));
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             ui.label(RichText::new("Page").color(p.muted));
@@ -3078,7 +3077,9 @@ impl EditorApp {
                 .tip("Go to page (Ctrl+G)").show(ui,p).clicked() { self.page_jump.open_at(current - 1); }
             ui.label(RichText::new(format!("of {total}")).color(p.muted));
             ui.add_space(16.0);
-            ui.add(egui::Label::new(RichText::new(hint).small().color(p.muted)).truncate());
+            let width = (ui.available_width()-240.).clamp(0.,300.);
+            let info = ui.add_sized(vec2(width,0.),egui::Label::new(RichText::new(selection_info).small().color(p.muted)).truncate());
+            if let Some(font) = font {info.on_hover_text(font.detail);}
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let presets = Btn::new(&zoom)
@@ -5586,6 +5587,7 @@ mod tests {
     include!("rotated_workflow_tests.rs");
     include!("action_workflow_tests.rs");
     include!("drag_workflow_tests.rs");
+    include!("font_readout_workflow_tests.rs");
     #[cfg(windows)]
     mod native_acceptance_tests { include!("native_acceptance_tests.rs"); }
     use super::*;
