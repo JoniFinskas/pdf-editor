@@ -1,4 +1,129 @@
-// Pending actions must never process an older document after a rejected draft.
+// Document actions and dependent tool state track acknowledged changes.
+#[test]
+fn tool_list_refreshes_are_limited_to_open_panels_and_changed_generations() {
+    for changed in [false, true] {
+        for flags in 0..4 {
+            let ctx = Context::default();
+            let (mut app, inbox, _outbox) = mock_app();
+            opened(&mut app, &ctx);
+            app.markup.open = flags & 1 != 0;
+            app.pictures.open = flags & 2 != 0;
+            app.handle(
+                &ctx,
+                Reply::Changed {
+                    pages: vec![],
+                    generation: 1 + u64::from(changed),
+                    kind: ChangeKind::Edit,
+                    can_undo: changed,
+                    can_redo: false,
+                    warning: None,
+                    objects_changed: usize::from(changed),
+                },
+            );
+            let requests: Vec<_> = inbox.try_iter().collect();
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|r| matches!(r, Request::Annotations))
+                    .count(),
+                usize::from(changed && app.markup.open)
+            );
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|r| matches!(r, Request::Pictures))
+                    .count(),
+                usize::from(changed && app.pictures.open)
+            );
+            assert_eq!(app.busy as usize, requests.len());
+        }
+    }
+}
+
+#[test]
+fn open_annotation_and_picture_lists_follow_edits_and_history() {
+    let (mut app, ctx, source) = qol_worker();
+    let original = std::fs::read(&source).unwrap();
+    app.open_tool(Tool::Markup);
+    app.open_tool(Tool::Pictures);
+    workflow_settle(&mut app, &ctx);
+    assert!(app.markup.items.is_empty());
+    assert!(app.pictures.items.is_empty());
+    let mut note = app.markup.draft.clone();
+    note.kind = pdf_editor_core::MarkupKind::Note;
+    note.text = "Generated note".into();
+    app.markup.draft.text = "Unapplied annotation draft".into();
+    app.document_action(Request::AddAnnotation(note));
+    workflow_settle(&mut app, &ctx);
+    assert_eq!(app.markup.items.len(), 1);
+    assert_eq!(app.markup.items[0].markup.text, "Generated note");
+    assert_eq!(app.markup.draft.text, "Unapplied annotation draft");
+    let picture = pdf_editor_core::Picture {
+        width: 2,
+        height: 2,
+        rgba: vec![128; 16],
+    };
+    let mut placement = pdf_editor_core::Placement {
+        page: 0,
+        left: 50.,
+        bottom: 100.,
+        width: 20.,
+        height: 20.,
+    };
+    app.document_action(Request::PlacePicture(picture, placement));
+    workflow_settle(&mut app, &ctx);
+    assert_eq!(app.pictures.items.len(), 1);
+    for step in 0..4 {
+        let annotation = app.markup.items[0].clone();
+        let mut update = annotation.markup.clone();
+        update.text = format!("Generated note {step}");
+        app.document_action(Request::UpdateAnnotation(annotation, update.clone()));
+        workflow_settle(&mut app, &ctx);
+        assert_eq!(app.markup.items[0].markup.text, update.text);
+        let picture = app.pictures.items[0].clone();
+        let before = placement.left;
+        placement.left += 5.;
+        app.markup.selected = Some(0);
+        app.document_action(Request::MovePicture(picture, placement));
+        workflow_settle(&mut app, &ctx);
+        assert_eq!(app.markup.selected, Some(0));
+        assert_eq!(app.pictures.items[0].placement.left, placement.left);
+        app.undo();
+        workflow_settle(&mut app, &ctx);
+        assert_eq!(app.pictures.items[0].placement.left, before);
+        app.redo();
+        workflow_settle(&mut app, &ctx);
+        assert_eq!(app.pictures.items[0].placement.left, placement.left);
+        assert_eq!(app.markup.items[0].markup.text, update.text);
+    }
+    app.markup.selected = Some(0);
+    app.pictures.selected = Some(0);
+    app.document_action(Request::DeleteAnnotation(app.markup.items[0].clone()));
+    workflow_settle(&mut app, &ctx);
+    assert!(app.markup.items.is_empty());
+    assert!(app.markup.selected.is_none());
+    assert_eq!(app.pictures.selected, Some(0));
+    app.undo();
+    workflow_settle(&mut app, &ctx);
+    assert_eq!(app.markup.items.len(), 1);
+    app.redo();
+    workflow_settle(&mut app, &ctx);
+    assert!(app.markup.items.is_empty());
+    assert_eq!(app.markup.draft.text, "Unapplied annotation draft");
+    app.undo();
+    workflow_settle(&mut app, &ctx);
+    assert_eq!(app.markup.items.len(), 1);
+    app.markup.selected = Some(0);
+    app.open_path(source.clone());
+    assert_eq!(app.markup.items.len(), 1);
+    workflow_settle(&mut app, &ctx);
+    assert!(app.markup.items.is_empty());
+    assert!(app.pictures.items.is_empty());
+    assert!(app.markup.selected.is_none());
+    assert!(app.pictures.selected.is_none());
+    assert_eq!(std::fs::read(source).unwrap(), original);
+}
+
 #[test]
 fn print_waits_for_pending_edit_and_cancels_on_failure() {
     let ctx = Context::default();

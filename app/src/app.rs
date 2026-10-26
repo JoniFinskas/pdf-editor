@@ -1133,6 +1133,18 @@ impl EditorApp {
             || recovery::root().is_some_and(|root|recovery::contains_output(&root,path))
     }
 
+    fn refresh_tool_lists(&mut self) {
+        for (open, request) in [
+            (self.markup.open, Request::Annotations),
+            (self.pictures.open, Request::Pictures),
+        ] {
+            if open {
+                self.busy += 1;
+                self.send(request);
+            }
+        }
+    }
+
     fn undo(&mut self) {
         // With uncommitted typing, Undo discards the typing only.
         if self
@@ -1347,13 +1359,30 @@ impl EditorApp {
             }
             Reply::Pictures(items) => {
                 self.busy = self.busy.saturating_sub(1);
+                self.pictures.selected = self.pictures.selected
+                    .and_then(|i| self.pictures.items.get(i))
+                    .and_then(|old| items.iter().position(|new| {
+                        new.name == old.name && new.page == old.page
+                            && new.placement.left == old.placement.left
+                            && new.placement.bottom == old.placement.bottom
+                            && new.placement.width == old.placement.width
+                            && new.placement.height == old.placement.height
+                    }));
                 self.pictures.items = items;
-                self.pictures.selected = None;
             }
             Reply::Annotations(items) => {
                 self.busy = self.busy.saturating_sub(1);
+                self.markup.selected = self.markup.selected
+                    .and_then(|i| self.markup.items.get(i))
+                    .and_then(|old| items.iter().position(|new| {
+                        new.index == old.index && new.markup.page == old.markup.page
+                            && new.markup.kind == old.markup.kind
+                            && new.markup.bounds == old.markup.bounds
+                            && new.markup.color == old.markup.color
+                            && new.markup.opacity == old.markup.opacity
+                            && new.markup.text == old.markup.text
+                    }));
                 self.markup.items = items;
-                self.markup.selected = None;
             }
             Reply::Exported(message) => {
                 self.busy = self.busy.saturating_sub(1);
@@ -1562,6 +1591,11 @@ impl EditorApp {
                     explicit_page: None,
                 });
                 self.sessions_apply_view();
+                self.markup.items.clear();
+                self.markup.selected = None;
+                self.pictures.items.clear();
+                self.pictures.selected = None;
+                self.refresh_tool_lists();
             }
             Reply::Rendered {
                 generation,
@@ -1727,6 +1761,9 @@ impl EditorApp {
                 if self.bookmarks.open {
                     self.busy += 1;
                     self.worker.send(Request::Bookmarks);
+                }
+                if comparison_changed {
+                    self.refresh_tool_lists();
                 }
                 if let Some(warning) = warning {
                     self.banner(BannerKind::Warning, warning);

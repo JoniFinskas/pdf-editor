@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Refresh open annotation and image lists after edits, undo/redo and document replacement; retain unchanged selections and annotation drafts while clearing stale handles.
+
 - Ignore delayed search results after scope, selection or matching options change, preventing stale highlights and unexpected page jumps.
 
 - Refresh scoped search after page and selection updates, keeping results valid when deleting the last page or using undo/redo.

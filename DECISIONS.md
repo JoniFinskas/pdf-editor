@@ -1019,3 +1019,12 @@ are valid only for default options. Generation and query alone cannot distinguis
 results from an earlier page, selection, case or whole-word setting. Generated
 worker replies held across control changes verify both rejection of stale results
 and acceptance of current results, without timing-dependent assertions.
+
+## Annotation and image list freshness
+
+Refresh open annotation and placed-image panels after acknowledged document
+changes and replacement. Keep closed panels idle and avoid refreshes for unchanged
+generations. Preserve a selection only when its identity and displayed source
+content still match; keep unapplied draft controls intact. Clear old document
+handles before refreshing a replacement. Generated workflows verify repeated
+updates, image moves, deletion, undo/redo and reopening an unchanged source.
