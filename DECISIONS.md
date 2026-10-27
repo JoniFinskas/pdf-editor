@@ -1,5 +1,14 @@
 # Engine decisions
 
+## Paragraph encoding reuse
+
+Prepare the template font's decoder once for paragraph measurement and output.
+Reuse the same checked encoder for distinct character advances, justified words
+and emitted lines, retaining round-trip validation for every string. The parsed
+source font remains immutable while the output document is rebuilt separately.
+A generated many-character paragraph bounds decoder construction independently
+of timing and verifies saved rendering and undo/redo.
+
 ## Paragraph font preparation
 
 Require embedded metrics when preparing a paragraph's template run. Keep the

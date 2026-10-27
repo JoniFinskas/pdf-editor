@@ -9,7 +9,7 @@ use lopdf::{
 /// Text decoding for a font. A ToUnicode CMap takes precedence over /Encoding,
 /// matching PDFium's text extraction; lopdf otherwise ignores ToUnicode when
 /// /Encoding is present (common for Type3 fonts with custom glyph names).
-fn decoding<'a>(doc: &'a lopdf::Document, font: &'a Dictionary) -> Result<Encoding<'a>> {
+pub(crate) fn decoding<'a>(doc: &'a lopdf::Document, font: &'a Dictionary) -> Result<Encoding<'a>> {
     #[cfg(test)]
     ENCODING_BUILDS.with(|count| count.set(count.get() + 1));
     if font.has(b"Encoding")
@@ -141,7 +141,7 @@ pub(crate) fn encode(doc: &lopdf::Document, font: &Dictionary, text: &str) -> Re
     let encoding = decoding(doc, font)?;
     encode_with(&encoding, text)
 }
-fn encode_with(encoding: &Encoding<'_>, text: &str) -> Result<Vec<u8>> {
+pub(crate) fn encode_with(encoding: &Encoding<'_>, text: &str) -> Result<Vec<u8>> {
     let bytes = encoding.string_to_bytes(text);
     if encoding.bytes_to_string(&bytes)? != text {
         return Err(err("Font encoding does not contain the replacement text"));

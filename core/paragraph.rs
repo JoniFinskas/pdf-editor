@@ -398,12 +398,13 @@ impl Engine {
             if spacing.iter().any(|v| !v.is_finite()) || spacing[2] <= 0.0 || spacing[3] != 0.0 {
                 return Err(err("Unsupported text state; use line editing"));
             }
+            let encoding = content::decoding(&pdf, &run.font)?;
             let mut advances = std::collections::BTreeMap::new();
             for c in plain.chars() {
                 if advances.contains_key(&c) {
                     continue;
                 }
-                let encoded = content::encode(&pdf, &run.font, &c.to_string())?;
+                let encoded = content::encode_with(&encoding, &c.to_string())?;
                 let fallback = face
                     .charmap()
                     .map(c)
@@ -437,7 +438,6 @@ impl Engine {
             }
             let lines = wrap(text, width, measure)?;
             let key = run.key.clone();
-            let font_dict = run.font.clone();
             // Deletion repairs subsequent text cursors, retaining every other object.
             self.edit(&mut candidate, &template, "")?;
             let mut output = parse(&candidate.bytes)?;
@@ -521,7 +521,7 @@ impl Engine {
                             word.to_string()
                         };
                         items.push(Object::String(
-                            content::encode(&pdf, &font_dict, &t)?,
+                            content::encode_with(&encoding, &t)?,
                             lopdf::StringFormat::Hexadecimal,
                         ));
                         if n + 1 < words.len() {
@@ -535,7 +535,7 @@ impl Engine {
                     added.push(Operation::new(
                         "Tj",
                         vec![Object::String(
-                            content::encode(&pdf, &font_dict, l)?,
+                            content::encode_with(&encoding, l)?,
                             lopdf::StringFormat::Hexadecimal,
                         )],
                     ));
@@ -706,6 +706,58 @@ mod tests {
     }
     fn engine() -> Engine {
         Engine::new(&root().join("target/debug/pdfium.dll")).unwrap()
+    }
+    #[test]
+    fn paragraph_reflow_reuses_encoding_for_distinct_characters_and_lines() {
+        let e = engine();
+        let original = e.open(&root().join("tests/fixtures/generated/paragraph-Left.pdf")).unwrap();
+        let before = e.text_objects(&original, 0).unwrap();
+        let alphabet: String = (33u8..=126).map(char::from).collect();
+        let text = alphabet.as_bytes().chunks(8).map(|word| std::str::from_utf8(word).unwrap()).collect::<Vec<_>>().join(" ");
+        let mut pdf = parse(&original.bytes).unwrap();
+        let page = pdf.get_pages()[&1];
+        let font = fonts::Font {
+            bytes: fs::read(root().join("tests/fonts/Inter-Regular.ttf")).unwrap(),
+            name: "Inter-Regular".into(), exact: true,
+        };
+        let font = fonts::embed(&mut pdf, &font, &format!("{alphabet} {}", before.iter().map(|o| o.text.as_str()).collect::<Vec<_>>().join(" "))).unwrap();
+        let mut ops = Content::decode(&pdf.get_page_content(page)).unwrap();
+        let mut index = 0;
+        for op in &mut ops.operations {
+            if op.operator == "Tj" {
+                op.operands = vec![Object::String(font.encode(&before[index].text).unwrap(), lopdf::StringFormat::Hexadecimal)];
+                index += 1;
+            }
+        }
+        pdf.get_dictionary_mut(page).unwrap().set("Resources", dictionary! {"Font"=>dictionary! {"F"=>font.id}});
+        pdf.change_page_content(page, ops.encode().unwrap()).unwrap();
+        pdf.prune_objects();
+        let mut doc = e.candidate(&original, pdf).unwrap();
+        let source = doc.bytes.clone();
+        let paragraph = paragraphs(&e.text_objects(&doc, 0).unwrap()).remove(0);
+        content::ENCODING_BUILDS.with(|count| count.set(0));
+        let started = std::time::Instant::now();
+        e.edit_paragraph(&mut doc, &paragraph, &text).unwrap();
+        let builds = content::ENCODING_BUILDS.with(|count| count.get());
+        eprintln!("paragraph_encoder_builds={builds} elapsed_us={}", started.elapsed().as_micros());
+        assert!(builds <= 24, "Repeated paragraph font decoding: {builds}");
+        let after = e.text_objects(&doc, 0).unwrap();
+        assert_eq!(after.iter().filter(|o| o.text != "untouched").map(|o| o.text.as_str()).collect::<Vec<_>>().join(" "), text);
+        let old = before.iter().find(|o| o.text == "untouched").unwrap();
+        let new = after.iter().find(|o| o.text == "untouched").unwrap();
+        assert_eq!(old.font, new.font);
+        assert_eq!(old.matrix, new.matrix);
+        let saved = root().join("target/paragraph-encoding-saved.pdf");
+        if saved.exists() { fs::remove_file(&saved).unwrap(); }
+        doc.save_as(&saved).unwrap();
+        assert_eq!(e.render(&e.open(&saved).unwrap(), 0, 1.).unwrap().rgba, e.render(&doc, 0, 1.).unwrap().rgba);
+        let changed = doc.bytes.clone();
+        assert!(doc.undo());
+        assert!(doc.bytes == source);
+        assert!(doc.redo());
+        assert!(doc.bytes == changed);
+        fs::remove_file(saved).unwrap();
+        assert_eq!(fs::read(root().join("tests/fixtures/generated/paragraph-Left.pdf")).unwrap(), original.bytes);
     }
     #[test]
     fn standard_font_paragraphs_reflow_without_reformatting_neighbors() {

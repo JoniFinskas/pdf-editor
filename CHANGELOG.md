@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Reuse the paragraph font's encoding map for measuring and writing reflowed text.
+
 - Prepare usable font metrics for paragraph editing in standard-font PDFs, including manual line breaks, while preserving neighboring content.
 
 - Reuse each page font's encoding map during bulk text edits, keeping distinct character maps separate.
