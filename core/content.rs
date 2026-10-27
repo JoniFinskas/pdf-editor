@@ -191,6 +191,22 @@ fn type3_covers(doc: &lopdf::Document, font: &Dictionary, text: &str) -> bool {
     };
     check().unwrap_or(false)
 }
+
+/// The standard Latin Type1 fonts provide their predefined glyph sets without
+/// embedding. Custom descriptors or character maps require the normal checks.
+fn standard_font_covers(doc: &lopdf::Document, font: &Dictionary, text: &str) -> bool {
+    matches!(font.get(b"Subtype").and_then(Object::as_name), Ok(b"Type1"))
+        && matches!(font.get(b"BaseFont").and_then(Object::as_name),
+            Ok(b"Helvetica" | b"Helvetica-Bold" | b"Helvetica-Oblique" | b"Helvetica-BoldOblique"
+                | b"Times-Roman" | b"Times-Bold" | b"Times-Italic" | b"Times-BoldItalic"
+                | b"Courier" | b"Courier-Bold" | b"Courier-Oblique" | b"Courier-BoldOblique"))
+        && !font.has(b"FontDescriptor")
+        && !font.has(b"ToUnicode")
+        && (!font.has(b"Encoding") || matches!(
+            font.get_deref(b"Encoding", doc).and_then(Object::as_name),
+            Ok(b"StandardEncoding" | b"WinAnsiEncoding" | b"MacRomanEncoding")))
+        && encode(doc, font, text).is_ok()
+}
 pub(crate) fn resources(doc: &lopdf::Document, page: ObjectId) -> Result<Dictionary> {
     let (local, parents) = doc.get_page_resources(page)?;
     if let Some(local) = local {
@@ -427,7 +443,8 @@ fn edit_with_font(
     let reuse = style.is_some()
         || text.is_empty()
         || (embedded_original.is_some() && encode(&pdf, &run.font, text).is_ok())
-        || type3_covers(&pdf, &run.font, text);
+        || type3_covers(&pdf, &run.font, text)
+        || standard_font_covers(&pdf, &run.font, text);
     let chosen = if let Some(font) = forced_font {
         Some(font.clone())
     } else if reuse {
@@ -887,6 +904,29 @@ mod tests {
         ] {
             let ops = Content::decode(data.as_bytes()).unwrap();
             assert_eq!(can_anchor_cursors(&ops, std::slice::from_ref(&record)), expected, "{data}");
+        }
+    }
+
+    #[test]
+    fn standard_font_reuse_rejects_custom_fonts_maps_and_missing_glyphs() {
+        let pdf = lopdf::Document::with_version("1.7");
+        let mut base = Dictionary::new();
+        base.set("Type", "Font");
+        base.set("Subtype", "Type1");
+        base.set("BaseFont", "Helvetica");
+        assert!(standard_font_covers(&pdf, &base, "Added 123"));
+        assert!(!standard_font_covers(&pdf, &base, "Ж"));
+        for (key, value) in [
+            ("BaseFont", Object::Name(b"ABCDEF+Helvetica".to_vec())),
+            ("BaseFont", Object::Name(b"Symbol".to_vec())),
+            ("Subtype", Object::Name(b"Type3".to_vec())),
+            ("FontDescriptor", Object::Dictionary(Dictionary::new())),
+            ("Encoding", Object::Dictionary(Dictionary::new())),
+            ("ToUnicode", Object::Null),
+        ] {
+            let mut custom = base.clone();
+            custom.set(key, value);
+            assert!(!standard_font_covers(&pdf, &custom, "Added 123"), "{key}");
         }
     }
 }

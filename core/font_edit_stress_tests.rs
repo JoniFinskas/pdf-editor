@@ -2,6 +2,81 @@ use super::*;
 use skrifa::{FontRef, MetadataProvider};
 
 #[test]
+fn standard_pdf_fonts_keep_identity_spacing_and_saved_edits() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    for name in [
+        "Helvetica", "Helvetica-Bold", "Helvetica-Oblique", "Helvetica-BoldOblique",
+        "Times-Roman", "Times-Bold", "Times-Italic", "Times-BoldItalic",
+        "Courier", "Courier-Bold", "Courier-Oblique", "Courier-BoldOblique",
+    ] {
+        for (rotation, encoding) in [
+            (0, None), (90, Some("StandardEncoding")),
+            (180, Some("WinAnsiEncoding")), (270, Some("MacRomanEncoding")),
+        ] {
+            let mut pdf = parse(&generated("AB", false, rotation, 0.7, false, false)).unwrap();
+            let page = pdf.get_pages()[&1];
+            let mut font = dictionary! {"Type"=>"Font", "Subtype"=>"Type1", "BaseFont"=>name};
+            if let Some(encoding) = encoding { font.set("Encoding", encoding); }
+            let font = pdf.add_object(font);
+            pdf.get_dictionary_mut(page).unwrap().set("Resources", dictionary! {"Font"=>dictionary! {"F1"=>font}});
+            let mut ops = Content::decode(&pdf.get_page_content(page)).unwrap();
+            let mut first = true;
+            for op in &mut ops.operations {
+                if op.operator == "Tj" {
+                    op.operands = vec![Object::string_literal(if first { "AB" } else { "unchanged" })];
+                    first = false;
+                }
+            }
+            pdf.change_page_content(page, ops.encode().unwrap()).unwrap();
+            pdf.prune_objects();
+            let mut bytes = Vec::new();
+            pdf.save_to(&mut bytes).unwrap();
+            let source = temp(&format!("standard-font-{name}-{rotation}.pdf"));
+            fs::write(&source, &bytes).unwrap();
+            let mut doc = e.open(&source).unwrap();
+            let before = e.text_objects(&doc, 0).unwrap();
+            let original = doc.comparison_snapshot();
+            let started = std::time::Instant::now();
+            let result = e.edit(&mut doc, &before[0], "Added 123").unwrap();
+            eprintln!("standard_font={name} rotation={rotation} edit_us={}", started.elapsed().as_micros());
+            assert!(result.warning.is_none(), "Standard font should be reused: {name}: {:?}", result.warning);
+            assert_eq!(result.objects_changed, 1);
+            let after = e.text_objects(&doc, 0).unwrap();
+            assert_eq!(after[0].text, "Added 123");
+            assert_eq!(after[0].font, before[0].font);
+            assert_eq!(after[0].size, before[0].size);
+            assert_eq!(after[0].color, before[0].color);
+            assert!(after[0].matrix.iter().zip(before[0].matrix).all(|(a,b)| (a-b).abs() < 0.001));
+            for (old, new) in before[1..].iter().zip(&after[1..]) {
+                assert_eq!(old.text, new.text);
+                assert_eq!(old.font, new.font);
+                for (a, b) in [old.bounds.left, old.bounds.right, old.bounds.bottom, old.bounds.top]
+                    .into_iter().zip([new.bounds.left, new.bounds.right, new.bounds.bottom, new.bounds.top])
+                {
+                    assert!((a - b).abs() < 0.001);
+                }
+            }
+            assert_outside_equal(&e, &original, &doc, &before[0], &after[0]);
+            assert!(doc.bytes.len() < bytes.len() + 4096, "Editing should not embed an unrelated system font");
+            let saved = temp("standard-font-saved.pdf");
+            if saved.exists() { fs::remove_file(&saved).unwrap(); }
+            doc.save_as(&saved).unwrap();
+            let reopened = e.open(&saved).unwrap();
+            assert_eq!(e.render(&reopened, 0, 1.5).unwrap().rgba, e.render(&doc, 0, 1.5).unwrap().rgba);
+            let edited = doc.bytes.clone();
+            assert!(doc.undo());
+            assert_eq!(doc.bytes, bytes);
+            assert!(doc.redo());
+            assert_eq!(doc.bytes, edited);
+            assert_eq!(fs::read(&source).unwrap(), bytes);
+            fs::remove_file(source).unwrap();
+            fs::remove_file(saved).unwrap();
+        }
+    }
+}
+
+#[test]
 fn installed_named_faces_match_their_actual_weight_and_slant_exactly() {
     for (name, weight, italic) in [
         ("ArialMT", 400., false),

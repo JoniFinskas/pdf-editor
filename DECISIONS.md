@@ -1,5 +1,14 @@
 # Engine decisions
 
+## Standard PDF font reuse
+
+Reuse the twelve standard Latin Type1 faces when they have no custom descriptor
+or ToUnicode map and use a supported predefined encoding. Encoding must round-trip
+the replacement before reuse. Symbolic fonts, subsets, custom encodings and missing
+glyphs retain the existing fallback checks. Generated cases cover all twelve faces,
+four page rotations and default, Standard, WinAnsi and MacRoman encodings, including
+neighbor pixels, source preservation, saved rendering and undo/redo.
+
 ## Cursor anchors inside saved graphics state
 
 Allow absolute text cursor repairs across balanced outer `q`/`Q` pairs when
