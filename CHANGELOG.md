@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Reuse each page font's encoding map during bulk text edits, keeping distinct character maps separate.
+
 - Skip identical Find/Replace matches without clearing redo or marking the PDF as edited; keep occurrence numbering stable.
 
 - Delete blank glyph objects in browser-style PDFs even when they extract as empty text.

@@ -1,6 +1,76 @@
 use super::*;
 
 #[test]
+fn bulk_replacement_reuses_font_decoding_without_mixing_character_maps() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let seed = generated("AB", false, 0, 0., false, false);
+    for mixed in [false, true] {
+        let mut bytes = dense_fixture::dense_page(&seed, 1000);
+        if mixed {
+            let mut pdf = parse(&bytes).unwrap();
+            let page = pdf.get_pages()[&1];
+            let font = fonts::Font {
+                bytes: fs::read(root().join("tests/fonts/Inter-Regular.ttf")).unwrap(),
+                name: "Inter-Regular".into(), exact: true,
+            };
+            // Same face, different CID ordering: a name-keyed cache would corrupt text.
+            let second = fonts::embed(&mut pdf, &font, "BA").unwrap();
+            let mut resources = content::resources(&pdf, page).unwrap();
+            let mut font_map = resources.get_deref(b"Font", &pdf).unwrap().as_dict().unwrap().clone();
+            font_map.set("F2", second.id);
+            resources.set("Font", font_map);
+            pdf.get_dictionary_mut(page).unwrap().set("Resources", resources);
+            let mut ops = Content::decode(&pdf.get_page_content(page)).unwrap();
+            let mut index = 0;
+            let mut alternate = false;
+            for op in &mut ops.operations {
+                if op.operator == "Tf" {
+                    alternate = index % 2 == 1;
+                    index += 1;
+                    if alternate { op.operands[0] = Object::Name(b"F2".to_vec()); }
+                } else if op.operator == "Tj" && alternate {
+                    op.operands[0] = Object::String(second.encode("AB").unwrap(), lopdf::StringFormat::Hexadecimal);
+                }
+            }
+            pdf.change_page_content(page, ops.encode().unwrap()).unwrap();
+            bytes.clear();
+            pdf.save_to(&mut bytes).unwrap();
+        }
+        let source = temp(&format!("bulk-encoding-{mixed}.pdf"));
+        fs::write(&source, &bytes).unwrap();
+        let mut doc = e.open(&source).unwrap();
+        let before = e.text_objects(&doc, 0).unwrap();
+        assert_eq!(before.len(), 1000);
+        content::ENCODING_BUILDS.with(|count| count.set(0));
+        let started = std::time::Instant::now();
+        assert_eq!(e.replace_text(&mut doc, "AB", "BA", None).unwrap(), 1000);
+        let builds = content::ENCODING_BUILDS.with(|count| count.get());
+        eprintln!("mixed={mixed} encoder_builds={builds} elapsed_us={}", started.elapsed().as_micros());
+        assert!(builds <= 16, "Repeated font map construction: {builds}");
+        let after = e.text_objects(&doc, 0).unwrap();
+        assert_eq!(after.len(), before.len());
+        for (old, new) in before.iter().zip(&after) {
+            assert_eq!(new.text, "BA");
+            assert_eq!(new.font, old.font);
+            assert!(old.matrix.iter().zip(new.matrix).all(|(a,b)| (a-b).abs() < 0.001));
+        }
+        let changed = doc.bytes.clone();
+        let saved = temp(&format!("bulk-encoding-saved-{mixed}.pdf"));
+        if saved.exists() { fs::remove_file(&saved).unwrap(); }
+        doc.save_as(&saved).unwrap();
+        assert_eq!(e.render(&e.open(&saved).unwrap(), 0, 0.5).unwrap().rgba, e.render(&doc, 0, 0.5).unwrap().rgba);
+        assert!(doc.undo());
+        assert!(doc.bytes == bytes);
+        assert!(doc.redo());
+        assert!(doc.bytes == changed);
+        assert_eq!(fs::read(&source).unwrap(), bytes);
+        fs::remove_file(source).unwrap();
+        fs::remove_file(saved).unwrap();
+    }
+}
+
+#[test]
 fn unchanged_find_replace_preserves_structure_history_and_redo() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();

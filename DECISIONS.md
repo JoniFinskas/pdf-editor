@@ -1,5 +1,14 @@
 # Engine decisions
 
+## Bulk text encoding
+
+Reuse decoded original font maps within each edited page, keyed by the PDF font
+resource rather than its display name. Keep the same encode/decode round-trip
+check for every replacement and release borrowed maps before modifying the PDF.
+A generated 1,000-object regression reduces decoder construction from 1,002 to
+three builds and checks a second case with two same-named faces whose CID maps
+differ. Independent native extraction, saved rendering and undo/redo remain checked.
+
 ## Identical find/replace matches
 
 Record exact equality with the replacement while planning native text matches,

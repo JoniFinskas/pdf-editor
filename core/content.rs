@@ -10,6 +10,8 @@ use lopdf::{
 /// matching PDFium's text extraction; lopdf otherwise ignores ToUnicode when
 /// /Encoding is present (common for Type3 fonts with custom glyph names).
 fn decoding<'a>(doc: &'a lopdf::Document, font: &'a Dictionary) -> Result<Encoding<'a>> {
+    #[cfg(test)]
+    ENCODING_BUILDS.with(|count| count.set(count.get() + 1));
     if font.has(b"Encoding")
         && font
             .get_deref(b"ToUnicode", doc)
@@ -137,6 +139,9 @@ pub(crate) fn runs(
 }
 pub(crate) fn encode(doc: &lopdf::Document, font: &Dictionary, text: &str) -> Result<Vec<u8>> {
     let encoding = decoding(doc, font)?;
+    encode_with(&encoding, text)
+}
+fn encode_with(encoding: &Encoding<'_>, text: &str) -> Result<Vec<u8>> {
     let bytes = encoding.string_to_bytes(text);
     if encoding.bytes_to_string(&bytes)? != text {
         return Err(err("Font encoding does not contain the replacement text"));
@@ -222,9 +227,12 @@ pub(crate) fn resources(doc: &lopdf::Document, page: ObjectId) -> Result<Diction
     }
     Ok(Dictionary::new())
 }
-// Test-only work counter: guards against reparsing once per corrected run.
+// Test-only work counters for cursor repairs and font-map construction.
 #[cfg(test)]
-thread_local! { pub(crate) static REPAIR_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+thread_local! {
+    pub(crate) static REPAIR_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static ENCODING_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 enum CursorRepair {
     Shift(f32),
@@ -530,6 +538,7 @@ fn edit_with_font(
                 .set("Resources", res);
             new_key = Some(key);
         }
+        let mut encodings = std::collections::HashMap::new();
         for (i, replacement) in changes.iter().rev() {
             let r = &records[*i];
             let bytes = if style.is_some() && forced_font.is_none() {
@@ -537,7 +546,10 @@ fn edit_with_font(
             } else if let Some(f) = &embedded {
                 f.encode(replacement)?
             } else {
-                encode(&pdf, &r.font, replacement)?
+                if !encodings.contains_key(&r.key) {
+                    encodings.insert(r.key.clone(), decoding(&pdf, &r.font)?);
+                }
+                encode_with(&encodings[&r.key], replacement)?
             };
             let original = &operations.operations[r.op];
             let mut revised = vec![];
@@ -619,6 +631,7 @@ fn edit_with_font(
             operations.operations.splice(r.op..=r.op, revised);
             count += 1;
         }
+        drop(encodings);
         let stream = pdf.add_object(Stream::new(Dictionary::new(), operations.encode()?));
         pdf.get_object_mut(*page_id)?
             .as_dict_mut()?
