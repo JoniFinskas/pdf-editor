@@ -4,6 +4,9 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Run local OCR across selected pages as one undo step, with cancellation and explicit skips for existing text or unrecognized pages.
+- Release PDF rendering locks during OCR recognition and reuse page coordinate mapping for every recognized word.
+
 - Reject text edit, style and paragraph selections whose current content or geometry no longer matches, including handles from other documents.
 
 - Keep the full tool list in the searchable All tools panel; simplify the document menu to Save As and recent files.

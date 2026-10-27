@@ -257,7 +257,7 @@ impl Engine {
     }
     /// Replace one photo page atomically; optional OCR is included in the undo step.
     pub fn cleanup_scan(&self, doc: &mut Document, page: u16, options: &ScanOptions) -> Result<()> {
-        guarded(|| {
+        let mut candidate = guarded(|| {
             let preview = self.scan_preview(doc, page)?;
             let original_size = self
                 .pages(doc)?
@@ -309,14 +309,14 @@ impl Engine {
             }
             target.set("Rotate", 0);
             target.set("CropBox", replacement.get(b"MediaBox")?.clone());
-            let mut candidate = self.candidate(doc, pdf)?;
-            if options.ocr {
-                self.ocr_page(&mut candidate, page)?;
-            }
-            operation::checkpoint("Applying scan cleanup", 1, 1)?;
-            doc.accept(candidate.bytes);
-            Ok(())
-        })
+            self.candidate(doc, pdf)
+        })?;
+        if options.ocr {
+            self.ocr_page(&mut candidate, page)?;
+        }
+        operation::checkpoint("Applying scan cleanup", 1, 1)?;
+        doc.accept(candidate.bytes);
+        Ok(())
     }
 }
 

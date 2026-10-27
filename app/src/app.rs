@@ -114,7 +114,7 @@ impl Tool {
                 (Tool::Drawing, "Draw and shapes…", Icon::Pen),
                 (Tool::Redact, "Redact…", Icon::Redact),
                 (Tool::Privacy, "Search and redact…", Icon::Redact),
-                (Tool::Ocr, "OCR current page", Icon::Scan),
+                (Tool::Ocr, "OCR selected pages", Icon::Scan),
             ],
         ),
         (
@@ -147,7 +147,7 @@ impl Tool {
             Self::Drawing => "Freehand ink, rectangles, ellipses, lines and arrows.",
             Self::Privacy => "Find emails, phone numbers, IBANs, identity codes or card patterns; preview and redact.",
             Self::Redact => "Permanently remove text, images and vector content from a selected rectangle.",
-            Self::Ocr => "Recognize scanned text using installed Windows OCR languages.",
+            Self::Ocr => "Recognize up to 100 selected pages locally. Pages with text are skipped.",
             Self::Bookmarks => "Navigate, add, rename, delete and reorder document bookmarks.",
             Self::Organize => "Merge PDFs, split by page ranges or extract selected pages to a new file.",
             Self::Crop => "Change the visible page area using crop bounds.",
@@ -2647,7 +2647,7 @@ impl EditorApp {
             }
             Tool::Ocr => {
                 let page = self.doc.as_ref().map_or(0, |d| d.current_page as u16);
-                self.document_action(Request::Ocr(page));
+                self.document_action(Request::OcrPages(self.qol.page_indices(usize::from(page))));
             }
             Tool::Pictures => {
                 self.pictures.open = true;
@@ -5588,6 +5588,7 @@ mod tests {
     include!("tile_workflow_tests.rs");
     include!("rotated_workflow_tests.rs");
     include!("action_workflow_tests.rs");
+    include!("ocr_workflow_tests.rs");
     include!("drag_workflow_tests.rs");
     include!("font_readout_workflow_tests.rs");
     #[cfg(windows)]

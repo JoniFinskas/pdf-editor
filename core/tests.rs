@@ -10,6 +10,8 @@ mod render_tile_tests;
 static PDFIUM: Mutex<()> = Mutex::new(());
 #[path = "sanitize_workflow_tests.rs"]
 mod sanitize_workflow_tests;
+#[path = "ocr_batch_tests.rs"]
+mod ocr_batch_tests;
 
 #[test]
 fn comparison_snapshots_keep_opening_bytes_and_never_copy_edit_history() {

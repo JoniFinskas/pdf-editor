@@ -65,7 +65,7 @@ pub enum Request {
     PrivacyPreview(pdf_editor_core::PrivacyQuery),
     PrivacyApply(pdf_editor_core::RedactionPreview),
     Redact(u16, pdf_editor_core::Bounds),
-    Ocr(u16),
+    OcrPages(Vec<u16>),
     Pictures,
     MovePicture(pdf_editor_core::PlacedPicture, pdf_editor_core::Placement),
     Annotations,
@@ -455,7 +455,7 @@ fn run(
                 batch = coalesce(queued).into_iter();
             }
             let Some(request) = batch.next() else { break };
-            let cancellable=matches!(&request,Request::Sanitize(..)|Request::ExportSanitized(..)|Request::CleanupScan(..)|Request::ImagesToPdf(..)|Request::Merge(..)|Request::Extract(..)|Request::Split(..)|Request::SplitBookmarks(..)|Request::ExportWord(..)|Request::ExportImages(..)|Request::Compress(..)|Request::Ocr(..)|Request::PageBatch(..)|Request::LayoutItems(..)|Request::HighlightText(..)|Request::FormatText(..)|Request::Replace {..}|Request::ReplaceOptions {..}|Request::EditParagraph(..)|Request::Print);
+            let cancellable=matches!(&request,Request::Sanitize(..)|Request::ExportSanitized(..)|Request::CleanupScan(..)|Request::ImagesToPdf(..)|Request::Merge(..)|Request::Extract(..)|Request::Split(..)|Request::SplitBookmarks(..)|Request::ExportWord(..)|Request::ExportImages(..)|Request::Compress(..)|Request::OcrPages(..)|Request::PageBatch(..)|Request::LayoutItems(..)|Request::HighlightText(..)|Request::FormatText(..)|Request::Replace {..}|Request::ReplaceOptions {..}|Request::EditParagraph(..)|Request::Print);
             let control = if cancellable {active.start()} else {Default::default()};
             let reply = catch_unwind(AssertUnwindSafe(|| {
                 pdf_editor_core::operation::with_control(&control, || {
@@ -708,15 +708,12 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 Err(e) => failed(e),
             }
         }
-        Request::Ocr(page) => match engine.ocr_page(state.doc.as_mut()?, page) {
-            Ok(words) => {
-                state.generation += 1;
-                Some(changed(
-                    state,
-                    ChangeKind::Edit,
-                    Some(format!("Added {words} searchable words using Windows OCR.")),
-                    words,
-                ))
+        Request::OcrPages(pages) => match engine.ocr_pages(state.doc.as_mut()?, &pages) {
+            Ok(report) => {
+                if report.pages_recognized > 0 { state.generation += 1; }
+                let message = format!("OCR: {} pages, {} words. Skipped: {} with text, {} without recognized text.",
+                    report.pages_recognized, report.words_added, report.skipped_text, report.skipped_empty);
+                Some(changed(state, ChangeKind::Edit, Some(message), report.pages_recognized))
             }
             Err(e) => failed(e),
         },

@@ -407,3 +407,8 @@ Editable sanitization distinguishes legitimate shared page Contents from aliases
 through unrelated objects, including indirect arrays and repeated page references.
 Unknown image-only graph entries, fake cross-reference streams, JPEG EXIF/XMP/comment
 segments and trailing image payloads fail verification.
+
+## Selected-page OCR
+
+- `OcrReport { pages_recognized, words_added, skipped_text, skipped_empty }`: successful page/word counts and explicit skips.
+- `Engine::ocr_pages(document, pages) -> Result<OcrReport>`: recognize 1–100 unique valid pages in document order using installed Windows OCR languages; skip pages with text and pages with no recognized words, process one image at a time, and commit as one cancellable undo step. Errors leave bytes and history unchanged. Limits: 10,000 words/page, 100,000 words/batch and existing document size limits. All-skipped batches leave the document unchanged.

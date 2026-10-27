@@ -56,6 +56,7 @@ pub use scan_cleanup::{ScanColor, ScanOptions, clean_scan, detect_scan_corners};
 mod pictures;
 pub use pictures::PlacedPicture;
 mod ocr;
+pub use ocr::OcrReport;
 mod organize;
 mod pages;
 mod page_batch;

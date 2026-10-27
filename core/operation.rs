@@ -53,6 +53,14 @@ pub fn with_control<T>(control: &OperationControl, f: impl FnOnce() -> T) -> T {
     f()
 }
 
+pub(crate) fn check_cancelled() -> Result<()> {
+    CURRENT.with(|slot| {
+        if slot.borrow().as_ref().is_some_and(OperationControl::is_cancelled) {
+            Err(err("Operation cancelled"))
+        } else { Ok(()) }
+    })
+}
+
 /// Checks cancellation before the next safe unit of work or transaction commit.
 pub fn checkpoint(label: &str, completed: usize, total: usize) -> Result<()> {
     CURRENT.with(|slot| {
