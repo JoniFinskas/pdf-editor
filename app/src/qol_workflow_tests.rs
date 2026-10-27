@@ -1,5 +1,44 @@
 // Generated-document integration for selection, batch operations and working copies.
 #[test]
+fn generated_unchanged_style_preserves_clean_state_previews_and_redo() {
+    let (mut app, ctx, source) = qol_worker();
+    let original = std::fs::read(&source).unwrap();
+    for with_redo in [false, true] {
+        let object = app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().lines[0].objects[0].clone();
+        if with_redo {
+            app.document_action(Request::StyleText { object: object.clone(), size: object.size + 2., color: [30, 60, 90] });
+            workflow_settle(&mut app, &ctx);
+            assert!(app.doc.as_ref().unwrap().dirty());
+            app.document_action(Request::Undo);
+            workflow_settle(&mut app, &ctx);
+        }
+        let object = app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().lines[0].objects[0].clone();
+        let generation = app.doc.as_ref().unwrap().generation;
+        for _ in 0..3 {
+            app.document_action(Request::StyleText {
+                object: object.clone(), size: object.size, color: object.color[..3].try_into().unwrap(),
+            });
+            workflow_settle(&mut app, &ctx);
+            let doc = app.doc.as_ref().unwrap();
+            assert_eq!(doc.generation, generation, "Unchanged style invalidated previews");
+            assert!(!doc.dirty());
+            assert!(!doc.can_undo);
+            assert_eq!(doc.can_redo, with_redo);
+            assert!(doc.pages[0].objects.is_some());
+        }
+    }
+    app.document_action(Request::Redo);
+    workflow_settle(&mut app, &ctx);
+    let doc = app.doc.as_ref().unwrap();
+    assert!(doc.dirty());
+    assert!(doc.can_undo);
+    assert!(!doc.can_redo);
+    let object = &doc.pages[0].objects.as_ref().unwrap().lines[0].objects[0];
+    assert_eq!(object.color[..3], [30, 60, 90]);
+    assert_eq!(std::fs::read(source).unwrap(), original);
+}
+
+#[test]
 fn generated_zoom_anchor_stays_on_a_later_page() {
     let (mut app, ctx, source) = qol_worker();
     let original = std::fs::read(&source).unwrap();

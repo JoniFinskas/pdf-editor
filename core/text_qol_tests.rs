@@ -1,6 +1,69 @@
 use super::*;
 
 #[test]
+fn unchanged_style_checks_visible_stroke_color_before_skipping() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let original = e.open(&fixture("unicode-cid.pdf")).unwrap();
+    for mode in [1, 2] {
+        let mut pdf = parse(&generated("AB", false, 0, 0., false, false)).unwrap();
+        let page = pdf.get_pages()[&1];
+        let mut ops = Content::decode(&pdf.get_page_content(page)).unwrap();
+        let show = ops.operations.iter().position(|op| op.operator == "Tj").unwrap();
+        ops.operations.splice(show..show, [
+            Operation::new("RG", vec![0.8.into(), 0.1.into(), 0.1.into()]),
+            Operation::new("Tr", vec![mode.into()]),
+        ]);
+        pdf.change_page_content(page, ops.encode().unwrap()).unwrap();
+        let mut doc = e.candidate(&original, pdf).unwrap();
+        let selected = e.text_objects(&doc, 0).unwrap().remove(0);
+        let image = e.render(&doc, 0, 2.).unwrap();
+        let before = doc.bytes.clone();
+        e.style_text(&mut doc, &selected, selected.size, selected.color[..3].try_into().unwrap()).unwrap();
+        assert!(e.render(&doc, 0, 2.).unwrap().rgba != image.rgba, "Visible stroke color was mistaken for an unchanged style");
+        let selected = e.text_objects(&doc, 0).unwrap().remove(0);
+        let after = doc.bytes.clone();
+        let revision = doc.revision();
+        e.style_text(&mut doc, &selected, selected.size, selected.color[..3].try_into().unwrap()).unwrap();
+        assert!(doc.bytes == after);
+        assert_eq!(doc.revision(), revision);
+        assert!(doc.undo());
+        assert!(doc.bytes == before);
+    }
+}
+
+#[test]
+fn unchanged_style_preserves_bytes_revision_and_redo_branch() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    for name in ["spacing.pdf", "kerning.pdf", "rotated.pdf"] {
+        let source = fixture(name);
+        let original = fs::read(&source).unwrap();
+        let mut doc = e.open(&source).unwrap();
+        for with_redo in [false, true] {
+            let selected = e.text_objects(&doc, 0).unwrap().remove(0);
+            if with_redo {
+                e.style_text(&mut doc, &selected, selected.size + 2., [30, 60, 90]).unwrap();
+                assert!(doc.undo());
+                assert!(e.style_text(&mut doc, &selected, selected.size, selected.color[..3].try_into().unwrap()).is_err());
+            }
+            let selected = e.text_objects(&doc, 0).unwrap().remove(0);
+            let history = doc.recovery_bytes().unwrap();
+            let revision = doc.revision();
+            for _ in 0..3 {
+                e.style_text(&mut doc, &selected, selected.size, selected.color[..3].try_into().unwrap()).unwrap();
+                assert!(doc.bytes == original, "Unchanged style rewrote {name}");
+                assert_eq!(doc.revision(), revision);
+                assert!(doc.recovery_bytes().unwrap() == history, "Unchanged style altered history");
+                assert_eq!(doc.can_redo(), with_redo);
+                assert!(!doc.can_undo());
+            }
+        }
+        assert_eq!(fs::read(source).unwrap(), original);
+    }
+}
+
+#[test]
 fn text_characters_copy_unicode_and_generated_line_breaks() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();

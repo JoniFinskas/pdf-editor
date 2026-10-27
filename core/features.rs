@@ -48,6 +48,22 @@ impl Engine {
                 .position(|o| o.index == selected.index)
                 .ok_or_else(|| err("Text object no longer exists"))?;
             let actual = &objects[ordinal];
+            if actual.size == size && actual.color[..3] == color {
+                let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
+                let page = pdf.pages().get(i32::from(selected.page))?;
+                let object = page.objects().get(actual.index)?;
+                let text = object.as_text_object().ok_or_else(|| err("Text object no longer exists"))?;
+                let unchanged = match text.render_mode() {
+                    PdfPageTextRenderMode::FilledUnstroked
+                    | PdfPageTextRenderMode::FilledUnstrokedClipping
+                    | PdfPageTextRenderMode::Invisible
+                    | PdfPageTextRenderMode::InvisibleClipping => true,
+                    PdfPageTextRenderMode::Unknown => false,
+                    _ => text.stroke_color().is_ok_and(|stroke|
+                        [stroke.red(), stroke.green(), stroke.blue()] == color),
+                };
+                if unchanged { return Ok(()); }
+            }
             let (bytes, _) = content::edit_styled(
                 self,
                 doc,

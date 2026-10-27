@@ -1,5 +1,14 @@
 # Engine decisions
 
+## Unchanged text styles
+
+Compare requested size and color with the current text object after validating
+the selection, checking visible stroke color for outlined text. Skip identical
+styles before rebuilding the PDF. Worker replies
+derive their change count from the document revision, so an unchanged style
+does not invalidate previews or mark the document dirty. Generated core and UI
+workflows verify original bytes, saved state and redo branches remain intact.
+
 ## Standard PDF font reuse
 
 Reuse the twelve standard Latin Type1 faces when they have no custom descriptor

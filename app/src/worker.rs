@@ -955,10 +955,12 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
             color,
         } => {
             let doc = state.doc.as_mut()?;
+            let before = doc.revision();
             match engine.style_text(doc, &object, size, color) {
                 Ok(()) => {
-                    state.generation += 1;
-                    Some(content_changed(state, ChangeKind::Edit, None, 1))
+                    let change = usize::from(doc.revision() != before);
+                    state.generation += change as u64;
+                    Some(content_changed(state, ChangeKind::Edit, None, change))
                 }
                 Err(e) => failed(e),
             }
