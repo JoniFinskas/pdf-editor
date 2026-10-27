@@ -364,7 +364,7 @@ impl Engine {
             let mut candidate = self.candidate(doc, parse(&doc.bytes)?)?;
             candidate.substitution = Substitution::Line;
             // Prepare one encoded run through the same fallback tiers as line edits.
-            let mut result = self.edit_group(&mut candidate, &p.objects, &plain)?;
+            let mut result = self.edit_group_for_reflow(&mut candidate, &p.objects, &plain)?;
             if plain.is_empty() {
                 operation::checkpoint("Applying paragraph", 1, 1)?;
                 doc.accept(candidate.bytes);
@@ -706,6 +706,73 @@ mod tests {
     }
     fn engine() -> Engine {
         Engine::new(&root().join("target/debug/pdfium.dll")).unwrap()
+    }
+    #[test]
+    fn standard_font_paragraphs_reflow_without_reformatting_neighbors() {
+        let e = engine();
+        let original = e.open(&root().join("tests/fixtures/generated/paragraph-Left.pdf")).unwrap();
+        let source_text = e.text_objects(&original, 0).unwrap();
+        for name in ["Helvetica", "Helvetica-Bold", "Times-Roman", "Times-Italic", "Courier", "Courier-Oblique"] {
+          for single in [false, true] {
+            let mut pdf = parse(&original.bytes).unwrap();
+            let page = pdf.get_pages()[&1];
+            let font = dictionary! {"Type"=>"Font", "Subtype"=>"Type1", "BaseFont"=>name, "Encoding"=>"WinAnsiEncoding"};
+            let mut ops = Content::decode(&pdf.get_page_content(page)).unwrap();
+            let mut index = 0;
+            for op in &mut ops.operations {
+                if op.operator == "Tj" {
+                    let text = if single && (1..=2).contains(&index) { "" } else { &source_text[index].text };
+                    op.operands = vec![Object::String(content::encode(&pdf, &font, text).unwrap(), lopdf::StringFormat::Hexadecimal)];
+                    index += 1;
+                }
+            }
+            let font_id = pdf.add_object(font);
+            pdf.get_dictionary_mut(page).unwrap().set("Resources", dictionary! {"Font"=>dictionary! {"F"=>font_id}});
+            pdf.change_page_content(page, ops.encode().unwrap()).unwrap();
+            pdf.prune_objects();
+            let mut doc = e.candidate(&original, pdf).unwrap();
+            doc.substitution = Substitution::Document;
+            let source = doc.bytes.clone();
+            let before = e.text_objects(&doc, 0).unwrap();
+            let paragraph = paragraphs(&before).remove(0);
+            assert_eq!(paragraph.line_count, if single { 1 } else { 3 });
+            assert!(paragraph.fallback.is_none());
+            let before_image = e.render(&doc, 0, 1.).unwrap();
+            let text = if single { paragraph.text.replacen(' ', "\n", 1) } else { "Muutos ä ö å €".into() };
+            let result = e.edit_paragraph(&mut doc, &paragraph, &text).unwrap_or_else(|error| panic!("{name} single={single}: {error}"));
+            assert!(result.objects_changed > 0);
+            let after = e.text_objects(&doc, 0).unwrap();
+            assert_eq!(after.iter().filter(|o| o.text != "untouched").map(|o| o.text.as_str()).collect::<Vec<_>>().join(" "), text.replace('\n', " "));
+            if single { assert!(after.len() > 2); }
+            let old = before.iter().find(|o| o.text == "untouched").unwrap();
+            let new = after.iter().find(|o| o.text == "untouched").unwrap();
+            assert_eq!(old.font, new.font);
+            assert_eq!(old.matrix, new.matrix);
+            assert_eq!(old.color, new.color);
+            let region = after.iter().filter(|o| o.text != "untouched").fold(paragraph.bounds, |b,o| union(b,o.bounds));
+            let image = e.render(&doc, 0, 1.).unwrap();
+            for y in 0..image.height {
+                for x in 0..image.width {
+                    let (px,py) = (x as f32,image.height as f32-y as f32);
+                    if px < region.left-4. || px > region.right+4. || py < region.bottom-4. || py > region.top+4. {
+                        let i=((y*image.width+x)*4) as usize;
+                        assert_eq!(&before_image.rgba[i..i+4], &image.rgba[i..i+4]);
+                    }
+                }
+            }
+            let saved = root().join(format!("target/standard-paragraph-{name}-{single}.pdf"));
+            if saved.exists() { fs::remove_file(&saved).unwrap(); }
+            doc.save_as(&saved).unwrap();
+            assert_eq!(e.render(&e.open(&saved).unwrap(), 0, 1.).unwrap().rgba, e.render(&doc, 0, 1.).unwrap().rgba);
+            let changed = doc.bytes.clone();
+            assert!(doc.undo());
+            assert!(doc.bytes == source);
+            assert!(doc.redo());
+            assert!(doc.bytes == changed);
+            fs::remove_file(saved).unwrap();
+          }
+        }
+        assert_eq!(fs::read(root().join("tests/fixtures/generated/paragraph-Left.pdf")).unwrap(), original.bytes);
     }
     #[test]
     #[ignore = "Regenerates committed paragraph fixtures"]

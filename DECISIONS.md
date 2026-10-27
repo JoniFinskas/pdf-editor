@@ -1,5 +1,14 @@
 # Engine decisions
 
+## Paragraph font preparation
+
+Require embedded metrics when preparing a paragraph's template run. Keep the
+normal line-edit reuse path for standard fonts and Type3 glyphs. Paragraphs use
+the existing licensed font fallback when metrics are unavailable, with the same
+substitution warning and paragraph-only scope. Shared selection, input and native
+round-trip checks remain in place, including preparation for hard line breaks
+whose flattened text matches the original run.
+
 ## Bulk text encoding
 
 Reuse decoded original font maps within each edited page, keyed by the PDF font

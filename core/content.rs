@@ -410,20 +410,27 @@ pub(crate) fn edit_styled(
     targets: &[(usize, String)],
     style: Option<(f32, [u8; 3])>,
 ) -> Result<(Vec<u8>, EditResult)> {
-    edit_with_font(engine, state, selected, targets, style, None)
+    edit_with_font(engine, state, selected, targets, style, None, false)
+}
+
+pub(crate) fn edit_for_reflow(
+    engine: &Engine, state: &Document, selected: &TextObject, targets: &[(usize, String)],
+) -> Result<(Vec<u8>, EditResult)> {
+    edit_with_font(engine, state, selected, targets, None, None, true)
 }
 
 pub(crate) fn edit_formatted(
     engine: &Engine, state: &Document, selected: &TextObject,
     targets: &[(usize, String)], font: &fonts::Font, size: f32, color: [u8; 3],
 ) -> Result<(Vec<u8>, EditResult)> {
-    edit_with_font(engine, state, selected, targets, Some((size, color)), Some(font))
+    edit_with_font(engine, state, selected, targets, Some((size, color)), Some(font), false)
 }
 
 fn edit_with_font(
     engine: &Engine, state: &Document, selected: &TextObject,
     targets: &[(usize, String)], style: Option<(f32, [u8; 3])>,
     forced_font: Option<&fonts::Font>,
+    require_metrics: bool,
 ) -> Result<(Vec<u8>, EditResult)> {
     #[cfg(test)]
     REPAIR_PASSES.with(|count| count.set(0));
@@ -454,8 +461,8 @@ fn edit_with_font(
     let reuse = style.is_some()
         || text.is_empty()
         || (embedded_original.is_some() && encode(&pdf, &run.font, text).is_ok())
-        || type3_covers(&pdf, &run.font, text)
-        || standard_font_covers(&pdf, &run.font, text);
+        || (!require_metrics && (type3_covers(&pdf, &run.font, text)
+            || standard_font_covers(&pdf, &run.font, text)));
     let chosen = if let Some(font) = forced_font {
         Some(font.clone())
     } else if reuse {

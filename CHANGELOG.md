@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Prepare usable font metrics for paragraph editing in standard-font PDFs, including manual line breaks, while preserving neighboring content.
+
 - Reuse each page font's encoding map during bulk text edits, keeping distinct character maps separate.
 
 - Skip identical Find/Replace matches without clearing redo or marking the PDF as edited; keep occurrence numbering stable.

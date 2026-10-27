@@ -408,6 +408,17 @@ impl Engine {
         selected: &[TextObject],
         replacement: &str,
     ) -> Result<EditResult> {
+        self.edit_group_inner(doc, selected, replacement, false)
+    }
+    pub(crate) fn edit_group_for_reflow(
+        &self, doc: &mut Document, selected: &[TextObject], replacement: &str,
+    ) -> Result<EditResult> {
+        self.edit_group_inner(doc, selected, replacement, true)
+    }
+    fn edit_group_inner(
+        &self, doc: &mut Document, selected: &[TextObject], replacement: &str,
+        for_reflow: bool,
+    ) -> Result<EditResult> {
         guarded(|| {
             let first = selected.first().ok_or_else(|| err("Nothing selected"))?;
             if selected.len() > 4096 || selected.iter().any(|o| o.page != first.page) {
@@ -438,7 +449,7 @@ impl Engine {
             }
             let ordinal = ordinals[0];
             let actual = &objects[ordinal];
-            if ordinals.len() == 1 && !replacement.is_empty() && actual.text == replacement {
+            if !for_reflow && ordinals.len() == 1 && !replacement.is_empty() && actual.text == replacement {
                 return Ok(EditResult {
                     warning: None,
                     objects_changed: 0,
@@ -458,7 +469,11 @@ impl Engine {
                     )
                 })
                 .collect();
-            let (bytes, result) = content::edit(self, doc, actual, &targets)?;
+            let (bytes, result) = if for_reflow {
+                content::edit_for_reflow(self, doc, actual, &targets)?
+            } else {
+                content::edit(self, doc, actual, &targets)?
+            };
             if bytes.len() > MAX_FILE {
                 return Err(err("Edited PDF exceeds 64 MiB"));
             }
