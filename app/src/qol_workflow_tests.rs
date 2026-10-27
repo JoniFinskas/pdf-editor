@@ -1,5 +1,152 @@
 // Generated-document integration for selection, batch operations and working copies.
 #[test]
+fn generated_zoom_anchor_stays_on_a_later_page() {
+    let (mut app, ctx, source) = qol_worker();
+    let original = std::fs::read(&source).unwrap();
+    for before in 1..=3 {
+        app.document_action(Request::PageBatch(pdf_editor_core::PageBatch::Duplicate {
+            pages: vec![0],
+            before,
+        }));
+        workflow_settle(&mut app, &ctx);
+    }
+    app.go_to_page(1);
+    workflow_settle(&mut app, &ctx);
+    let doc = app.doc.as_ref().unwrap();
+    let zoom = doc.zoom;
+    let generation = doc.generation;
+    let page = ctx.read_response(Id::new(("pdf-page", 1usize))).unwrap().rect;
+    let anchor = pos2(doc.viewport.center().x, doc.viewport.top() + 140.0);
+    assert!(page.contains(anchor));
+    let local = (anchor - page.min) / doc.scale();
+    for next in [zoom * 1.5, zoom] {
+        app.set_zoom(next, Some(anchor));
+        workflow_settle(&mut app, &ctx);
+        let doc = app.doc.as_ref().unwrap();
+        let page = ctx.read_response(Id::new(("pdf-page", 1usize))).unwrap().rect;
+        let actual = page.min + local * doc.scale();
+        assert!((actual.y - anchor.y).abs() < 1.1, "Zoom moved the anchored page point: {actual:?} versus {anchor:?}");
+        assert_eq!(doc.generation, generation);
+    }
+    assert_eq!(std::fs::read(source).unwrap(), original);
+}
+
+#[test]
+fn generated_zoom_anchor_stays_fixed_when_centered_page_overflows() {
+    let (mut app, ctx, _) = qol_worker();
+    let doc = app.doc.as_ref().unwrap();
+    let zoom = 0.9 * (doc.viewport.width() - 2.0 * CANVAS_PAD)
+        / (doc.pages[0].info.width * PT_TO_UI);
+    app.set_zoom(zoom, None);
+    workflow_settle(&mut app, &ctx);
+    let doc = app.doc.as_ref().unwrap();
+    let page = ctx.read_response(Id::new(("pdf-page", 0usize))).unwrap().rect;
+    let anchor = doc.viewport.center();
+    let local = (anchor - page.min) / doc.scale();
+    let generation = doc.generation;
+    assert!(page.width() < doc.viewport.width());
+    for next in [zoom * 2.0, zoom] {
+        app.set_zoom(next, None);
+        workflow_settle(&mut app, &ctx);
+        let doc = app.doc.as_ref().unwrap();
+        let page = ctx.read_response(Id::new(("pdf-page", 0usize))).unwrap().rect;
+        let actual = page.min + local * doc.scale();
+        assert!((actual.x - anchor.x).abs() < 1.1, "Zoom moved the anchored page point: {actual:?} versus {anchor:?}");
+        assert_eq!(doc.generation, generation);
+    }
+}
+
+#[test]
+fn generated_zoom_anchor_uses_the_width_of_the_pointed_page() {
+    let (mut app, ctx, _) = qol_worker();
+    app.document_action(Request::PageBatch(pdf_editor_core::PageBatch::Blank {
+        before: 1,
+        width: 720.0,
+        height: 500.0,
+    }));
+    workflow_settle(&mut app, &ctx);
+    for before in 2..=3 {
+        app.document_action(Request::PageBatch(pdf_editor_core::PageBatch::Duplicate {
+            pages: vec![0],
+            before,
+        }));
+        workflow_settle(&mut app, &ctx);
+    }
+    app.set_zoom(1.0, None);
+    app.go_to_page(2);
+    workflow_settle(&mut app, &ctx);
+    // The navigation target is clamped at the document end after layout.
+    for _ in 0..2 {
+        workflow_frame(&mut app, &ctx, vec![]);
+    }
+    let doc = app.doc.as_ref().unwrap();
+    let page = ctx.read_response(Id::new(("pdf-page", 2usize))).unwrap().rect;
+    let anchor = pos2(doc.viewport.center().x, doc.viewport.top() + 140.0);
+    assert!(page.contains(anchor));
+    let local = (anchor - page.min) / doc.scale();
+    let generation = doc.generation;
+    app.set_zoom(1.5, Some(anchor));
+    workflow_settle(&mut app, &ctx);
+    let doc = app.doc.as_ref().unwrap();
+    let page = ctx.read_response(Id::new(("pdf-page", 2usize))).unwrap().rect;
+    let actual = page.min + local * doc.scale();
+    assert!((actual - anchor).length() < 1.5, "Mixed page sizes moved the anchor: {actual:?} versus {anchor:?}");
+    assert_eq!(doc.generation, generation);
+}
+
+#[test]
+fn generated_zoom_anchor_keeps_page_gap_spacing_fixed() {
+    let (mut app, ctx, _) = qol_worker();
+    for before in 1..=3 {
+        app.document_action(Request::PageBatch(pdf_editor_core::PageBatch::Duplicate {
+            pages: vec![0],
+            before,
+        }));
+        workflow_settle(&mut app, &ctx);
+    }
+    app.go_to_page(1);
+    workflow_settle(&mut app, &ctx);
+    let doc = app.doc.as_mut().unwrap();
+    doc.scroll_to = Some(doc.offset - vec2(0.0, 120.0));
+    workflow_settle(&mut app, &ctx);
+    let first = ctx.read_response(Id::new(("pdf-page", 0usize))).unwrap().rect;
+    let second = ctx.read_response(Id::new(("pdf-page", 1usize))).unwrap().rect;
+    let doc = app.doc.as_ref().unwrap();
+    let anchor = pos2(doc.viewport.center().x, (first.bottom() + second.top()) / 2.0);
+    assert!(doc.viewport.contains(anchor));
+    let gap_offset = anchor.y - first.bottom();
+    let next = doc.zoom * 1.5;
+    app.set_zoom(next, Some(anchor));
+    workflow_settle(&mut app, &ctx);
+    let first = ctx.read_response(Id::new(("pdf-page", 0usize))).unwrap().rect;
+    assert!((anchor.y - first.bottom() - gap_offset).abs() < 1.1);
+}
+
+#[test]
+fn generated_zoom_anchor_accumulates_requests_before_the_next_frame() {
+    let (mut app, ctx, _) = qol_worker();
+    app.set_zoom(2.0, None);
+    workflow_settle(&mut app, &ctx);
+    let doc = app.doc.as_mut().unwrap();
+    doc.scroll_to = Some(vec2(200.0, 0.0));
+    workflow_settle(&mut app, &ctx);
+    for _ in 0..2 {
+        workflow_frame(&mut app, &ctx, vec![]);
+    }
+    let doc = app.doc.as_ref().unwrap();
+    let page = ctx.read_response(Id::new(("pdf-page", 0usize))).unwrap().rect;
+    let anchor = doc.viewport.center();
+    let local = (anchor - page.min) / doc.scale();
+    app.set_zoom(2.5, Some(anchor));
+    app.set_zoom(3.0, Some(anchor));
+    workflow_settle(&mut app, &ctx);
+    let doc = app.doc.as_ref().unwrap();
+    let page = ctx.read_response(Id::new(("pdf-page", 0usize))).unwrap().rect;
+    let actual = page.min + local * doc.scale();
+    assert!((actual.x - anchor.x).abs() < 1.1, "Queued zooms moved the anchor: {actual:?} versus {anchor:?}");
+}
+
+#[test]
 fn qol_generated_search_replies_cannot_restore_an_old_scope() {
     fn next_search(app: &mut EditorApp, ctx: &Context) -> Reply {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

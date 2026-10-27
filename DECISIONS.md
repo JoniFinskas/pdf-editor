@@ -1,5 +1,14 @@
 # Engine decisions
 
+## Zoom anchor coordinates
+
+Zoom page coordinates while keeping canvas padding and page gaps in UI points.
+Account for page centering and the width of the page under the pointer, including
+documents with mixed page sizes. Compose successive zoom requests with the pending
+scroll offset so input received before the next layout does not move the anchor.
+Generated-document tests check screen positions, fixed gaps and unchanged document
+history across zoom-in and zoom-out transitions.
+
 - Keep Part A headless; no UI or file-dialog dependency is present.
 - Pin pdfium-render to 0.9.4 (released 2026-09-06) and disable image adapters;
   page rendering can return pixels without another image dependency.

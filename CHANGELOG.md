@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Keep zoom anchored to the same page point across centered layouts, mixed page sizes and fixed gaps; combine zoom requests received before the next frame.
+
 - Shorten the project overview, document the technology stack, and move detailed controls and setup notes to a separate guide.
 
 - Match installed named font faces and intermediate weights correctly, ignore subset codes when inferring style, and allow formatting weighted families such as Segoe UI Semibold without false substitution warnings.

@@ -1242,9 +1242,40 @@ impl EditorApp {
         // Keep the content point under the anchor fixed on screen.
         let anchor = anchor.unwrap_or(doc.viewport.center());
         let in_view = anchor - doc.viewport.min;
-        let content = doc.offset + in_view;
+        let content = doc.scroll_to.unwrap_or(doc.offset) + in_view;
         let ratio = zoom / doc.zoom;
-        doc.scroll_to = Some((content * ratio - in_view).max(Vec2::ZERO));
+        let scale = doc.scale();
+        let widest = doc.pages.iter().map(|page| page.info.width).fold(0.0, f32::max);
+        let old_width = (widest * scale + 2.0 * CANVAS_PAD).max(doc.viewport.width());
+        let new_width = (widest * scale * ratio + 2.0 * CANVAS_PAD).max(doc.viewport.width());
+        // Padding and page gaps stay in UI points; only page content scales.
+        let mut fixed_y = content.y.min(CANVAS_PAD);
+        let mut top = CANVAS_PAD;
+        let mut page_width = 0.0;
+        for (index, page) in doc.pages.iter().enumerate() {
+            page_width = page.info.width * scale;
+            let bottom = top + page.info.height * scale;
+            if content.y <= bottom {
+                break;
+            }
+            let last = index + 1 == doc.pages.len();
+            fixed_y += if last {
+                content.y - bottom
+            } else {
+                (content.y - bottom).min(PAGE_GAP)
+            };
+            if last || content.y <= bottom + PAGE_GAP {
+                break;
+            }
+            top = bottom + PAGE_GAP;
+        }
+        let old_left = (old_width - page_width) / 2.0;
+        let new_left = (new_width - page_width * ratio) / 2.0;
+        let scaled = vec2(
+            new_left + (content.x - old_left) * ratio,
+            fixed_y + (content.y - fixed_y) * ratio,
+        );
+        doc.scroll_to = Some((scaled - in_view).max(Vec2::ZERO));
         doc.zoom = zoom;
     }
 
