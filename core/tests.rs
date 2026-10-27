@@ -4175,6 +4175,7 @@ fn batched_cursor_repairs_preserve_layout_pixels_and_history() {
         "lines",
         "chain",
         "long-chain",
+        "saved-state-chain",
         "quote",
         "double-quote",
         "scaled",
@@ -4185,7 +4186,7 @@ fn batched_cursor_repairs_preserve_layout_pixels_and_history() {
     ] {
         for replacement in ["AB", ""] {
             let seed = fs::read(fixture("unicode-cid.pdf")).unwrap();
-            let pair_count = if layout == "long-chain" { 150 } else { 12 };
+            let pair_count = if matches!(layout, "long-chain" | "saved-state-chain") { 150 } else { 12 };
             let bytes = cursor_fixture::cursor_page(
                 &seed,
                 pair_count,
@@ -4200,6 +4201,14 @@ fn batched_cursor_repairs_preserve_layout_pixels_and_history() {
             let mut revised = Vec::new();
             let mut run = 0;
             for mut op in ops.operations {
+                if layout == "saved-state-chain" && op.operator == "BT" {
+                    revised.push(Operation::new("q", vec![]));
+                }
+                if layout == "saved-state-chain" && op.operator == "ET" {
+                    revised.push(op);
+                    revised.push(Operation::new("Q", vec![]));
+                    continue;
+                }
                 if layout == "graphics" && op.operator == "BT" {
                     revised.push(Operation::new("q", vec![]));
                     revised.push(Operation::new(
@@ -4269,6 +4278,7 @@ fn batched_cursor_repairs_preserve_layout_pixels_and_history() {
             let before = e.text_objects(&doc, 0).unwrap();
             assert_eq!(before.len(), pair_count * 2);
             let image_before = e.render(&doc, 0, 1.0).unwrap();
+            let started = std::time::Instant::now();
             assert_eq!(
                 e.replace_text(&mut doc, &before[0].text, replacement, None)
                     .unwrap_or_else(|err| panic!(
@@ -4279,8 +4289,8 @@ fn batched_cursor_repairs_preserve_layout_pixels_and_history() {
             );
             let passes = content::REPAIR_PASSES.with(|count| count.get());
             eprintln!(
-                "layout={layout} deleted={} repair_passes={passes}",
-                replacement.is_empty()
+                "layout={layout} deleted={} repair_passes={passes} elapsed_us={}",
+                replacement.is_empty(), started.elapsed().as_micros()
             );
             if layout != "graphics" {
                 assert!(passes <= 4, "{layout}: {passes} reparses");

@@ -1,5 +1,14 @@
 # Engine decisions
 
+## Cursor anchors inside saved graphics state
+
+Allow absolute text cursor repairs across balanced outer `q`/`Q` pairs when
+the existing eligibility checks rule out matrix transforms and line-position
+dependencies. Keep the sequential fallback for graphics saves within text
+objects, unbalanced nesting and transformed layouts. A generated 150-pair chain
+requires two verification passes instead of 59, with neighboring pixels, saved
+output and undo/redo checked independently.
+
 ## CLI engine startup errors
 
 Report PDF engine initialization failures at the CLI startup boundary, naming

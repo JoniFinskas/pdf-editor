@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Speed up long text edits inside balanced saved graphics states without moving neighboring text.
+
 - Explain missing or incompatible PDF engine libraries in the CLI without disclosing local paths.
 
 - Skip superseded previews that arrive while a render batch is running, keeping edits and other document actions in order.

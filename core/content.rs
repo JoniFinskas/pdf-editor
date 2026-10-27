@@ -216,13 +216,22 @@ enum CursorRepair {
 // equivalent only when no operation later consumes the text line matrix, the
 // graphics transform is untouched, and horizontal scale/rise are neutral.
 fn can_anchor_cursors(ops: &Content<Vec<Operation>>, records: &[Run]) -> bool {
+    let mut depth = 0i32;
+    let mut text = false;
     records.iter().all(|r| {
         matches!(
             r.font.get(b"Subtype").and_then(Object::as_name),
             Ok(b"Type0" | b"TrueType")
         )
     }) && ops.operations.iter().all(|op| match op.operator.as_str() {
-        "BT" | "ET" | "Tf" | "Tm" | "Tj" | "Tc" | "Tw" | "Tr" | "TL" | "g" | "G" | "rg" | "RG"
+        "BT" => { text = true; true }
+        "ET" => { text = false; true }
+        "q" | "Q" => {
+            // Saving state outside a text object leaves its cursor unchanged.
+            depth += if op.operator == "q" { 1 } else { -1 };
+            !text && (0..=128).contains(&depth)
+        }
+        "Tf" | "Tm" | "Tj" | "Tc" | "Tw" | "Tr" | "TL" | "g" | "G" | "rg" | "RG"
         | "k" | "K" => true,
         "TJ" => {
             op.operands
@@ -245,7 +254,7 @@ fn can_anchor_cursors(ops: &Content<Vec<Operation>>, records: &[Run]) -> bool {
         "Tz" => op.operands.first().and_then(|v| v.as_float().ok()) == Some(100.0),
         "Ts" => op.operands.first().and_then(|v| v.as_float().ok()) == Some(0.0),
         _ => false,
-    })
+    }) && depth == 0
 }
 
 /// Propagation of planned TJ translations. Glyph advances need not be modeled:
@@ -862,6 +871,23 @@ mod tests {
         assert!(verify_mapping(&runs, &objects).is_ok());
         assert!(verify_mapping(&runs, &[object("B"), object(""), object("x")]).is_err());
         assert!(verify_mapping(&runs[..2], &objects[..1]).is_err());
+    }
+
+    #[test]
+    fn cursor_anchors_allow_only_balanced_outer_graphics_saves() {
+        let mut record = run("A");
+        record.font.set("Subtype", "TrueType");
+        for (data, expected) in [
+            ("q BT /F1 12 Tf (A) Tj ET Q", true),
+            ("q q BT /F1 12 Tf (A) Tj ET Q Q", true),
+            ("Q BT /F1 12 Tf (A) Tj ET", false),
+            ("q BT /F1 12 Tf (A) Tj ET", false),
+            ("BT q /F1 12 Tf (A) Tj Q ET", false),
+            ("q 1 0 0 1 2 3 cm BT /F1 12 Tf (A) Tj ET Q", false),
+        ] {
+            let ops = Content::decode(data.as_bytes()).unwrap();
+            assert_eq!(can_anchor_cursors(&ops, std::slice::from_ref(&record)), expected, "{data}");
+        }
     }
 }
 
