@@ -854,7 +854,7 @@ fn private_use(text: &str) -> bool {
             |c| matches!(u32::from(c), 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD),
         )
 }
-fn verify_mapping(runs: &[Run], objects: &[TextObject]) -> Result<()> {
+pub(crate) fn verify_mapping(runs: &[Run], objects: &[TextObject]) -> Result<()> {
     // PDFium reports space-only glyph runs as empty text, so whitespace is not
     // compared; every other character must match in order.
     // Icon fonts map a glyph to a private-use code point while PDFium may

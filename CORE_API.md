@@ -350,7 +350,7 @@ the destination or creating an output file.
 
 - `Engine::page_text_characters(document, page)` returns native reading-order `TextCharacter` entries, including generated spaces/newlines and nested text. Indices are page-local character positions, separate from editable object indices; at most one million characters per page.
 - `selected_text(characters, start, end)` copies inclusive endpoints in either direction and returns Unicode text plus non-whitespace bounds, normalizing CRLF. `Engine::highlight_text_selection(document, regions)` creates one atomic highlight undo step for page/bounds pairs.
-- `Engine::format_text(document, objects, &TextFormat)` applies an exact installed embeddable family/style, size and RGB color. It verifies wording, matrices and untouched neighbors before one atomic commit.
+- `Engine::format_text(document, objects, &TextFormat)` applies an exact installed embeddable family/style, size and RGB color. It verifies wording, matrices and untouched neighbors before one atomic commit. Identical complete font resources, size and visible colors return zero changes without altering history.
 - `Engine::layout_page_items(document, objects, ObjectLayout)` aligns same-page objects or distributes at least three objects with equal gaps. Core axes are PDF coordinates; a UI maps visible labels through its page transform.
 - `Engine::edit_page_batch(document, &PageBatch)` rotates, deletes, moves, duplicates or inserts blank pages atomically. `before` is an insertion slot in the original page order, from zero through page count; selected pages retain document order. Unsupported bookmark/form preservation fails without mutation.
 - `Document::revision()` identifies the current selection revision, including history changes.

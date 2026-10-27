@@ -1,5 +1,47 @@
 // Generated-document integration for selection, batch operations and working copies.
 #[test]
+fn generated_identical_font_format_preserves_saved_state_previews_and_redo() {
+    let (mut app, ctx, source) = qol_worker();
+    let original = std::fs::read(&source).unwrap();
+    let object = app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().lines[0].objects[0].clone();
+    let format = pdf_editor_core::TextFormat {
+        font: "Arial".into(), bold: false, italic: false, size: object.size,
+        color: object.color[..3].try_into().unwrap(),
+    };
+    app.document_action(Request::FormatText(vec![object], format.clone()));
+    workflow_settle(&mut app, &ctx);
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let copy = root.join(format!("target/font-noop-workflow-{}.pdf", std::process::id()));
+    if copy.exists() { std::fs::remove_file(&copy).unwrap(); }
+    app.document_action(Request::SaveAs(copy.clone()));
+    workflow_settle(&mut app, &ctx);
+    let saved = std::fs::read(&copy).unwrap();
+    assert!(!app.doc.as_ref().unwrap().dirty());
+    let object = app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().lines[0].objects[0].clone();
+    app.document_action(Request::StyleText { object: object.clone(), size: object.size + 2., color: [30, 60, 90] });
+    workflow_settle(&mut app, &ctx);
+    app.document_action(Request::Undo);
+    workflow_settle(&mut app, &ctx);
+    let object = app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().lines[0].objects[0].clone();
+    let generation = app.doc.as_ref().unwrap().generation;
+    for _ in 0..3 {
+        app.document_action(Request::FormatText(vec![object.clone()], format.clone()));
+        workflow_settle(&mut app, &ctx);
+        let doc = app.doc.as_ref().unwrap();
+        assert_eq!(doc.generation, generation);
+        assert!(!doc.dirty());
+        assert!(doc.can_redo);
+        assert!(doc.pages[0].objects.is_some());
+    }
+    app.document_action(Request::Redo);
+    workflow_settle(&mut app, &ctx);
+    assert!(app.doc.as_ref().unwrap().dirty());
+    assert_eq!(std::fs::read(&copy).unwrap(), saved);
+    assert_eq!(std::fs::read(source).unwrap(), original);
+    std::fs::remove_file(copy).unwrap();
+}
+
+#[test]
 fn generated_identical_find_replace_keeps_clean_state_previews_and_redo() {
     let (mut app, ctx, source) = qol_worker();
     let original = std::fs::read(&source).unwrap();

@@ -377,6 +377,24 @@ fn formatting_changes_family_style_as_one_verified_undo_step() {
         let stable = doc.bytes.clone();
         assert!(e.format_text(&mut doc, &selected, &format).is_err());
         assert_eq!(doc.bytes, stable);
+        e.style_text(&mut doc, &after[1], after[1].size + 1., [80, 40, 20]).unwrap();
+        let later = doc.bytes.clone();
+        assert!(doc.undo());
+        let fresh = e.text_objects(&doc, 0).unwrap();
+        let same = vec![fresh[0].clone(), fresh[2].clone()];
+        let history = doc.recovery_bytes().unwrap();
+        let revision = doc.revision();
+        for _ in 0..3 {
+            assert_eq!(e.format_text(&mut doc, &same, &format).unwrap().objects_changed, 0);
+            assert!(doc.bytes == stable);
+            assert_eq!(doc.revision(), revision);
+            assert!(doc.recovery_bytes().unwrap() == history);
+            assert!(doc.can_redo());
+        }
+        assert!(doc.redo());
+        assert!(doc.bytes == later);
+        assert!(doc.undo());
+        assert!(doc.bytes == stable);
         assert!(doc.undo());
         assert_eq!(doc.bytes, original);
         let invalid = TextFormat {
@@ -388,6 +406,68 @@ fn formatting_changes_family_style_as_one_verified_undo_step() {
         assert_eq!(doc.bytes, original);
         fs::remove_file(path).unwrap();
     }
+}
+
+#[test]
+fn identical_font_names_do_not_hide_program_width_or_stroke_changes() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let source = temp("format-identity.pdf");
+    let original = generated("AB", false, 0, 0., false, false);
+    fs::write(&source, &original).unwrap();
+    let mut baseline = e.open(&source).unwrap();
+    let format = TextFormat { font: "Arial".into(), bold: false, italic: false, size: 21., color: [10, 80, 160] };
+    let selected = e.text_objects(&baseline, 0).unwrap().remove(0);
+    e.format_text(&mut baseline, &[selected], &format).unwrap();
+    for case in ["width", "program", "stroke"] {
+        let mut pdf = parse(&baseline.bytes).unwrap();
+        let page = pdf.get_pages()[&1];
+        let mut ops = Content::decode(&pdf.get_page_content(page)).unwrap();
+        let runs = content::runs(&pdf, page, &ops).unwrap();
+        let cid = runs[0].font.get(b"DescendantFonts").unwrap().as_array().unwrap()[0].as_reference().unwrap();
+        match case {
+            "width" => {
+                pdf.get_dictionary_mut(cid).unwrap().get_mut(b"W").unwrap().as_array_mut().unwrap()[1]
+                    .as_array_mut().unwrap()[0] = Object::Real(2000.);
+            }
+            "program" => {
+                let descriptor = pdf.get_dictionary(cid).unwrap().get(b"FontDescriptor").unwrap().as_reference().unwrap();
+                let program = pdf.get_dictionary(descriptor).unwrap().get(b"FontFile2").unwrap().as_reference().unwrap();
+                let bytes = fs::read(root().join("tests/fonts/Inter-Regular.ttf")).unwrap();
+                *pdf.get_object_mut(program).unwrap() = Object::Stream(Stream::new(dictionary! {"Length1"=>bytes.len() as i64}, bytes));
+            }
+            _ => {
+                let show = ops.operations.iter().position(|op| op.operator == "Tj").unwrap();
+                ops.operations.splice(show..show, [
+                    Operation::new("RG", vec![0.8.into(), 0.1.into(), 0.1.into()]),
+                    Operation::new("Tr", vec![2.into()]),
+                ]);
+                pdf.change_page_content(page, ops.encode().unwrap()).unwrap();
+            }
+        }
+        let mut doc = e.candidate(&baseline, pdf).unwrap();
+        let before = doc.bytes.clone();
+        let image = e.render(&doc, 0, 2.).unwrap();
+        let selected = e.text_objects(&doc, 0).unwrap().remove(0);
+        assert_eq!(e.format_text(&mut doc, &[selected], &format).unwrap().objects_changed, 1, "{case}");
+        let after = e.render(&doc, 0, 2.).unwrap();
+        assert!(image.rgba != after.rgba, "Unchanged identity was assumed for {case}");
+        let selected = e.text_objects(&doc, 0).unwrap().remove(0);
+        let bytes = doc.bytes.clone();
+        assert_eq!(e.format_text(&mut doc, &[selected], &format).unwrap().objects_changed, 0, "{case}");
+        assert!(doc.bytes == bytes);
+        let saved = temp(&format!("format-identity-{case}.pdf"));
+        if saved.exists() { fs::remove_file(&saved).unwrap(); }
+        doc.save_as(&saved).unwrap();
+        assert_eq!(e.render(&e.open(&saved).unwrap(), 0, 2.).unwrap().rgba, after.rgba);
+        assert!(doc.undo());
+        assert!(doc.bytes == before);
+        assert!(doc.redo());
+        assert!(doc.bytes == bytes);
+        fs::remove_file(saved).unwrap();
+    }
+    assert_eq!(fs::read(&source).unwrap(), original);
+    fs::remove_file(source).unwrap();
 }
 
 #[test]

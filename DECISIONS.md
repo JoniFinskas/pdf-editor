@@ -1,5 +1,16 @@
 # Engine decisions
 
+## Identical font formatting
+
+Skip a formatting transaction only when every selected run already has the
+requested size, visible colors and complete canonical font resource. Compare
+decompressed font programs, widths and character maps through bounded indirect
+resource traversal; names alone cannot establish font identity. Ignore only
+stream compression and indirect numbering. Reuse the native stroke-color check
+from size/color styling. Unknown, custom or differing resources retain the normal
+verified formatting path. A skipped transaction preserves bytes, recovery state,
+redo and preview generations.
+
 ## Paragraph encoding reuse
 
 Prepare the template font's decoder once for paragraph measurement and output.

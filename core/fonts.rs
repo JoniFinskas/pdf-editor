@@ -13,6 +13,50 @@ pub(crate) struct Font {
     pub name: String,
     pub exact: bool,
 }
+/// Compares the complete font resource, including character maps and widths.
+/// Stream compression and indirect object numbers do not affect identity.
+pub(crate) fn same_resource(
+    left: &Document, a: &Object, right: &Document, b: &Object,
+) -> bool {
+    fn same(left: &Document, a: &Object, right: &Document, b: &Object, depth: u8) -> Result<bool> {
+        if depth > 12 { return Ok(false); }
+        let a = left.dereference(a)?.1;
+        let b = right.dereference(b)?.1;
+        let dicts = |a: &Dictionary, b: &Dictionary| -> Result<bool> {
+            if a.len() != b.len() { return Ok(false); }
+            for (key, value) in a {
+                let Ok(other) = b.get(key) else { return Ok(false); };
+                if !same(left, value, right, other, depth + 1)? { return Ok(false); }
+            }
+            Ok(true)
+        };
+        match (a, b) {
+            (Object::Dictionary(a), Object::Dictionary(b)) => dicts(a, b),
+            (Object::Array(a), Object::Array(b)) => {
+                if a.len() != b.len() { return Ok(false); }
+                for (a, b) in a.iter().zip(b) {
+                    if !same(left, a, right, b, depth + 1)? { return Ok(false); }
+                }
+                Ok(true)
+            }
+            (Object::Stream(a), Object::Stream(b)) => {
+                if a.get_plain_content_with_limit(MAX_STREAM)? != b.get_plain_content_with_limit(MAX_STREAM)? {
+                    return Ok(false);
+                }
+                let mut a = a.dict.clone();
+                let mut b = b.dict.clone();
+                for key in [b"Length".as_slice(), b"Filter", b"DecodeParms"] {
+                    a.remove(key); b.remove(key);
+                }
+                dicts(&a, &b)
+            }
+            (Object::Real(a), Object::Integer(b)) => Ok(f64::from(*a) == *b as f64),
+            (Object::Integer(a), Object::Real(b)) => Ok(*a as f64 == f64::from(*b)),
+            _ => Ok(a == b),
+        }
+    }
+    same(left, a, right, b, 0).unwrap_or(false)
+}
 pub(crate) fn base_name(name: &str) -> &str {
     if name.as_bytes().get(6) == Some(&b'+')
         && name.as_bytes()[..6].iter().all(u8::is_ascii_uppercase)

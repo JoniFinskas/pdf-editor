@@ -58,7 +58,45 @@ impl Engine {
                 }
             }
             let font = fonts::find_style(&format.font, format.bold, format.italic, &wording)?;
-            let mut candidate = self.candidate(doc, parse(&doc.bytes)?)?;
+            let pdf = parse(&doc.bytes)?;
+            let matching_style = groups.iter().all(|(page, ordinals)| ordinals.iter().all(|i| {
+                let object = &source[page][*i];
+                object.size == format.size && object.color[..3] == format.color
+                    && fonts::base_name(&object.font).eq_ignore_ascii_case(&font.name)
+            }));
+            if matching_style {
+                let native = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
+                let mut unchanged = true;
+                let pages = pdf.get_pages();
+                for (progress, (page, ordinals)) in groups.iter().enumerate() {
+                    operation::checkpoint("Checking text format", progress, groups.len())?;
+                    let id = *pages.get(&(u32::from(*page) + 1)).ok_or_else(|| err("Invalid page"))?;
+                    let operations = lopdf::content::Content::decode(&pdf.get_page_content_with_limit(id, MAX_STREAM)?)?;
+                    let runs = content::runs(&pdf, id, &operations)?;
+                    content::verify_mapping(&runs, &source[page])?;
+                    let wording: String = ordinals.iter().map(|i| source[page][*i].text.as_str()).collect();
+                    let mut reference = lopdf::Document::with_version("1.7");
+                    let expected = fonts::embed(&mut reference, &font, &wording)?;
+                    let native_page = native.pages().get(i32::from(*page))?;
+                    let mut checked = std::collections::HashMap::new();
+                    for i in ordinals {
+                        let run = &runs[*i];
+                        let same_font = *checked.entry(&run.key).or_insert_with(|| fonts::same_resource(
+                            &pdf, &lopdf::Object::Dictionary(run.font.clone()),
+                            &reference, &lopdf::Object::Reference(expected.id),
+                        ));
+                        let object = native_page.objects().get(source[page][*i].index)?;
+                        unchanged &= same_font && object.as_text_object().is_some_and(|text|
+                            features::stroke_matches(text, format.color));
+                    }
+                    if !unchanged { break; }
+                }
+                if unchanged {
+                    operation::checkpoint("Applying text format", groups.len(), groups.len())?;
+                    return Ok(EditResult { warning: None, objects_changed: 0 });
+                }
+            }
+            let mut candidate = self.candidate(doc, pdf)?;
             let mut count = 0;
             let page_total = groups.len();
             for (page_index, (page, ordinals)) in groups.into_iter().enumerate() {

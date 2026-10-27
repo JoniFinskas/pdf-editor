@@ -4,6 +4,18 @@ use lopdf::{
     content::{Content, Operation},
 };
 
+pub(crate) fn stroke_matches(text: &PdfPageTextObject<'_>, color: [u8; 3]) -> bool {
+    match text.render_mode() {
+        PdfPageTextRenderMode::FilledUnstroked
+        | PdfPageTextRenderMode::FilledUnstrokedClipping
+        | PdfPageTextRenderMode::Invisible
+        | PdfPageTextRenderMode::InvisibleClipping => true,
+        PdfPageTextRenderMode::Unknown => false,
+        _ => text.stroke_color().is_ok_and(|stroke|
+            [stroke.red(), stroke.green(), stroke.blue()] == color),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct NewText {
     pub page: u16,
@@ -53,16 +65,7 @@ impl Engine {
                 let page = pdf.pages().get(i32::from(selected.page))?;
                 let object = page.objects().get(actual.index)?;
                 let text = object.as_text_object().ok_or_else(|| err("Text object no longer exists"))?;
-                let unchanged = match text.render_mode() {
-                    PdfPageTextRenderMode::FilledUnstroked
-                    | PdfPageTextRenderMode::FilledUnstrokedClipping
-                    | PdfPageTextRenderMode::Invisible
-                    | PdfPageTextRenderMode::InvisibleClipping => true,
-                    PdfPageTextRenderMode::Unknown => false,
-                    _ => text.stroke_color().is_ok_and(|stroke|
-                        [stroke.red(), stroke.green(), stroke.blue()] == color),
-                };
-                if unchanged { return Ok(()); }
+                if stroke_matches(text, color) { return Ok(()); }
             }
             let (bytes, _) = content::edit_styled(
                 self,
