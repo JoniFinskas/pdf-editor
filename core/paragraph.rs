@@ -461,10 +461,18 @@ impl Engine {
             data.extend(b"\nQ\n");
             let mut added = vec![];
             let mut expected = vec![];
-            let info = self.pages(doc)?;
-            if width > info[first.page as usize].width
-                || p.bounds.left < 0.0
-                || p.bounds.right > info[first.page as usize].width
+            let visible = {
+                let native = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
+                let page = native.pages().get(i32::from(first.page))?;
+                let bounds = page.boundaries().bounding()?.bounds;
+                [bounds.left().value, bounds.bottom().value, bounds.right().value, bounds.top().value]
+            };
+            if visible.iter().any(|n| !n.is_finite()) || visible[0] >= visible[2] || visible[1] >= visible[3] {
+                return Err(err("Invalid visible page bounds"));
+            }
+            if width > visible[2] - visible[0]
+                || p.bounds.left < visible[0]
+                || p.bounds.right > visible[2]
             {
                 return Err(err("Paragraph bounds exceed the page"));
             }
@@ -480,8 +488,8 @@ impl Engine {
                     _ => p.bounds.left,
                 };
                 let y = first.matrix[5] - i as f32 * p.line_spacing;
-                if y + vertical.descent < 0.0
-                    || y + vertical.ascent > info[first.page as usize].height
+                if y + vertical.descent < visible[1]
+                    || y + vertical.ascent > visible[3]
                 {
                     return Err(err("Paragraph would extend beyond the page"));
                 }
@@ -706,6 +714,96 @@ mod tests {
     }
     fn engine() -> Engine {
         Engine::new(&root().join("target/debug/pdfium.dll")).unwrap()
+    }
+    #[test]
+    fn paragraph_edits_use_unrotated_visible_bounds_with_crop_and_origin_offsets() {
+        let e = engine();
+        let path = root().join("tests/fixtures/generated/paragraph-Left.pdf");
+        let original = e.open(&path).unwrap();
+        for [ox, oy] in [[0., 0.], [120., 180.]] {
+            for crop in [false, true] {
+                for rotation in [0, 90, 180, 270] {
+                    let mut pdf = parse(&original.bytes).unwrap();
+                    let page = pdf.get_pages()[&1];
+                    let parent = pdf.get_dictionary(page).unwrap().get(b"Parent").unwrap().as_reference().unwrap();
+                    pdf.get_dictionary_mut(page).unwrap().remove(b"MediaBox");
+                    pdf.get_dictionary_mut(page).unwrap().set("Rotate", rotation);
+                    pdf.get_dictionary_mut(parent).unwrap().set("MediaBox", vec![Object::Real(ox), oy.into(), (500. + ox).into(), (300. + oy).into()]);
+                    if crop {
+                        pdf.get_dictionary_mut(parent).unwrap().set("CropBox", vec![Object::Real(230. + ox), (30. + oy).into(), (490. + ox).into(), (285. + oy).into()]);
+                    }
+                    let mut ops = Content::decode(&pdf.get_page_content(page)).unwrap();
+                    let mut line = 0;
+                    for op in &mut ops.operations {
+                        if op.operator == "Tm" {
+                            op.operands[4] = Object::Real(op.operands[4].as_float().unwrap() + ox + if line < 3 { 220. } else { 0. });
+                            op.operands[5] = Object::Real(op.operands[5].as_float().unwrap() + oy);
+                            line += 1;
+                        }
+                    }
+                    pdf.change_page_content(page, ops.encode().unwrap()).unwrap();
+                    let mut doc = e.candidate(&original, pdf).unwrap();
+                    let before = doc.bytes.clone();
+                    let objects = e.text_objects(&doc, 0).unwrap();
+                    let paragraph = paragraphs(&objects).remove(0);
+                    let old = objects.iter().find(|o| o.text == "untouched").unwrap();
+                    assert_eq!(paragraph.line_count, 3);
+                    let history = doc.recovery_bytes().unwrap();
+                    let overflow = "Muutos ä ö å €\n".repeat(30);
+                    let error = e.edit_paragraph(&mut doc, &paragraph, &overflow).unwrap_err().to_string();
+                    assert!(error.contains("beyond the page"), "{error}");
+                    assert!(doc.bytes == before);
+                    assert!(doc.recovery_bytes().unwrap() == history);
+                    for edge in ["left", "top"] {
+                        let mut invalid = parse(&before).unwrap();
+                        let visible = if crop { [230. + ox, 30. + oy, 490. + ox, 285. + oy] } else { [ox, oy, 500. + ox, 300. + oy] };
+                        let mut bounds = visible;
+                        if edge == "left" { bounds[0] = paragraph.bounds.left + 4.; }
+                        else { bounds[3] = paragraph.objects[0].matrix[5] + 2.; }
+                        invalid.get_dictionary_mut(page).unwrap().set("CropBox", bounds.into_iter().map(Object::Real).collect::<Vec<_>>());
+                        let mut invalid = e.candidate(&doc, invalid).unwrap();
+                        let selected = paragraphs(&e.text_objects(&invalid, 0).unwrap()).remove(0);
+                        let bytes = invalid.bytes.clone();
+                        let history = invalid.recovery_bytes().unwrap();
+                        assert!(e.edit_paragraph(&mut invalid, &selected, "Muutos ä ö å €").is_err(), "{edge}");
+                        assert!(invalid.bytes == bytes);
+                        assert!(invalid.recovery_bytes().unwrap() == history);
+                    }
+                    let before_image = e.render(&doc, 0, 1.).unwrap();
+                    e.edit_paragraph(&mut doc, &paragraph, "Muutos ä ö å €").unwrap_or_else(|error|
+                        panic!("rotation={rotation}, crop={crop}, origin={ox},{oy}: {error}"));
+                    let after = e.text_objects(&doc, 0).unwrap();
+                    let new = after.iter().find(|o| o.text == "untouched").unwrap();
+                    assert_eq!(old.matrix, new.matrix);
+                    assert_eq!(old.font, new.font);
+                    let changed = after.iter().find(|o| o.text == "Muutos ä ö å €").unwrap();
+                    assert!((changed.matrix[5] - paragraph.objects[0].matrix[5]).abs() < 0.001);
+                    let image = e.render(&doc, 0, 1.).unwrap();
+                    let region = after.iter().filter(|o| o.text != "untouched").fold(paragraph.bounds, |b,o| union(b,o.bounds));
+                    let corners = [(region.left, region.bottom), (region.right, region.top)].map(|(x,y)| e.page_to_pixel(&doc, 0, 1., x, y).unwrap());
+                    for y in 0..image.height as i32 {
+                        for x in 0..image.width as i32 {
+                            if x < corners[0].0.min(corners[1].0) - 4 || x > corners[0].0.max(corners[1].0) + 4
+                                || y < corners[0].1.min(corners[1].1) - 4 || y > corners[0].1.max(corners[1].1) + 4 {
+                                let i = (y as usize * image.width as usize + x as usize) * 4;
+                                assert_eq!(&before_image.rgba[i..i+4], &image.rgba[i..i+4]);
+                            }
+                        }
+                    }
+                    let saved = root().join(format!("target/paragraph-bounds-{rotation}-{crop}-{ox}.pdf"));
+                    if saved.exists() { fs::remove_file(&saved).unwrap(); }
+                    doc.save_as(&saved).unwrap();
+                    assert_eq!(e.render(&e.open(&saved).unwrap(), 0, 1.).unwrap().rgba, image.rgba);
+                    let changed = doc.bytes.clone();
+                    assert!(doc.undo());
+                    assert!(doc.bytes == before);
+                    assert!(doc.redo());
+                    assert!(doc.bytes == changed);
+                    fs::remove_file(saved).unwrap();
+                }
+            }
+        }
+        assert_eq!(fs::read(path).unwrap(), original.bytes);
     }
     #[test]
     fn paragraph_reflow_reuses_encoding_for_distinct_characters_and_lines() {

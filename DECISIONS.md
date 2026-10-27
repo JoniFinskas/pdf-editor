@@ -1,5 +1,13 @@
 # Engine decisions
 
+## Paragraph page coordinates
+
+Validate paragraph placement against PDFium's MediaBox/CropBox intersection in
+PDF user space. Display width and height rotate and omit the page origin, so they
+cannot bound text matrices. Keep horizontal and font-ascent/descent overflow
+checks in the same unrotated coordinates as the paragraph. Invalid or clipped
+bounds fail before accepting the candidate, preserving history and document bytes.
+
 ## Identical font formatting
 
 Skip a formatting transaction only when every selected run already has the

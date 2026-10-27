@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Edit paragraphs on rotated and cropped pages with shifted origins, while rejecting true page overflow without changing the document.
+
 - Remove a repeated comparison source label and clarify difference navigation and counts.
 
 - Preserve redo, previews and saved state when applying identical font formatting; verify the full embedded font resource before skipping a change.
