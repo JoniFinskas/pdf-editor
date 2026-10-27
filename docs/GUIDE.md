@@ -132,12 +132,11 @@ state and a Cancel pending action control. Closing a tool discards its late
 selection; reopen it to start again. Export options are captured when selection
 starts. Image decoding also stays off the UI thread.
 
-The **All tools** panel opens on the home screen and closes when a document opens. Press **Ctrl+K** to search names and descriptions, including subfeatures such as flattening forms, Excel export and Bates numbering. Tools that need an open PDF are visible but disabled until a document is opened. Close the panel for more page space; **All tools** reopens it. The small arrow retains the compact document menu. Its **Edit** section holds
-Find and replace, Fill form, Signatures, Images, Markup and notes, Draw and shapes,
-Redact, and OCR current page. **Document** holds Bookmarks sidebar, Merge/split/
-extract, Crop page, Page numbers and watermark, Export pages as images, Compress
-images, and Print. Recent files appear below these sections; scroll the menu when
-needed.
+Use **All tools** or **Ctrl+K** to search tool names, descriptions and subfeatures
+such as flattening forms, Excel export and Bates numbering. Tools that need an
+open PDF stay disabled until one is opened. Close the panel for more page space;
+**All tools** reopens it. The small document arrow holds **Save As** and recent
+files.
 
 Tool windows have a labeled title row, can be moved beside the page, and close
 with their X button. Long content scrolls within the screen while the close button
@@ -409,7 +408,7 @@ Image-only rebuilding is selected by default. Protected inputs require an explic
 replaced. Cancelled or failed verification leaves no published copy.
 
 
-Document → Sanitize document removes PDF metadata, embedded files, executable actions
+All tools → Sanitize document removes PDF metadata, embedded files, executable actions
 and text using invisible rendering or zero opacity. Options also remove comments
 and link annotations. A report lists removed entries; Save As writes a fresh copy,
 and Undo restores the original. Recovery snapshots can still contain original data.

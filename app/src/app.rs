@@ -2732,10 +2732,9 @@ impl EditorApp {
                 .id("recent")
                 .min_width(24.0)
                 .height(34.0)
-                .tip("Document tools and recent files")
+                .tip("Save As and recent files")
                 .show(ui, p);
             let mut open = None;
-            let mut tool = None;
             Popup::menu(&recent).show(|ui| {
                 egui::ScrollArea::vertical()
                     .max_height((ui.ctx().content_rect().height() - 120.0).max(160.0))
@@ -2743,31 +2742,6 @@ impl EditorApp {
                         ui.set_width(MENU_WIDTH);
                         ui.spacing_mut().item_spacing.y = 0.0;
                         if Btn::new("Save As...").with_icon(Icon::Save).id("save-copy-as").align_left().min_width(MENU_WIDTH).enabled(idle).show(ui,p).clicked() {self.save_as();ui.close();}
-                        for (section, tools) in Tool::MENU {
-                            menu_caption(ui, p, section);
-                            for &(kind, label, icon) in tools {
-                                let enabled = if kind == Tool::Bookmarks {
-                                    self.doc.is_some() && self.busy == 0
-                                } else {
-                                    idle
-                                };
-                                if Btn::new(label)
-                                    .with_icon(icon)
-                                    .id(kind.key())
-                                    .align_left()
-                                    .min_width(MENU_WIDTH)
-                                    .height(32.0)
-                                    .enabled(enabled)
-                                    .show(ui, p)
-                                    .clicked()
-                                {
-                                    tool = Some(kind);
-                                    ui.close();
-                                }
-                            }
-                            ui.add_space(6.0);
-                            widgets::rule(ui, p);
-                        }
                         menu_caption(ui, p, "Recent files");
                         if self.recent_files.is_empty() {
                             ui.horizontal(|ui| {
@@ -2795,9 +2769,6 @@ impl EditorApp {
                         }
                     });
             });
-            if let Some(tool) = tool {
-                self.open_tool(tool);
-            }
             if let Some(path) = open {
                 self.request_open(Some(path));
             }
@@ -7034,7 +7005,7 @@ mod tests {
     }
 
     #[test]
-    fn document_tools_scroll_and_dispatch_print_at_small_height() {
+    fn document_menu_stays_compact_and_print_remains_in_all_tools() {
         let ctx = Context::default();
         theme::install(&ctx);
         let (mut app, inbox, _outbox) = mock_app();
@@ -7049,6 +7020,9 @@ mod tests {
                 |ui| {
                     let p = theme::palette(ui);
                     egui::Panel::top("toolbar").show(ui, |ui| app.toolbar(ui, &p));
+                    if app.tools_open {
+                        egui::Panel::right("all-tools").default_size(290.).show(ui, |ui| app.tool_catalog(ui, &p));
+                    }
                 },
             );
             output.textures_delta.clear();
@@ -7057,29 +7031,16 @@ mod tests {
         frame(&mut app, vec![]);
         frame(&mut app, click_at(tool_center(&ctx, "recent")));
         frame(&mut app, vec![]);
-        let mut print = tool_center(&ctx, "print-document");
-        for _ in 0..30 {
-            if print.y > 80.0 && print.y < 310.0 {
-                break;
-            }
-            frame(
-                &mut app,
-                vec![
-                    egui::Event::PointerMoved(pos2(print.x, 180.0)),
-                    egui::Event::MouseWheel {
-                        unit: egui::MouseWheelUnit::Point,
-                        phase: egui::TouchPhase::Move,
-                        delta: vec2(0.0, -80.0),
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ],
-            );
-            // Wheel scrolling animates; let it come to rest before measuring.
-            for _ in 0..20 {
-                frame(&mut app, vec![]);
-            }
-            print = tool_center(&ctx, "print-document");
-        }
+        let save = tool_center(&ctx, "save-copy-as");
+        assert!(save.y > 40. && save.y < 300.);
+        assert!(ctx.read_response(widgets::tool_id("print-document")).is_none());
+        frame(&mut app, click_at(tool_center(&ctx, "recent")));
+        app.tools_query = "print".into();
+        frame(&mut app, click_at(tool_center(&ctx, "all-tools")));
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        assert!(app.tools_open);
+        let print = tool_center(&ctx, "catalog-print-document");
         assert!(
             print.y > 60.0 && print.y < 380.0,
             "Print is outside the viewport: {print:?}"
