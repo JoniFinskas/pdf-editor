@@ -2,6 +2,7 @@ use crate::*;
 
 struct PlannedMatch {
     ranges: Vec<(usize, usize, usize)>,
+    unchanged: bool,
 }
 pub(crate) struct PageMatches {
     page: u16,
@@ -55,6 +56,7 @@ impl Engine {
         doc: &Document,
         query: &str,
         options: &SearchOptions,
+        replacement: Option<&str>,
     ) -> Result<Vec<PageMatches>> {
         if query.is_empty() || query.len() > 4096 || query.chars().any(char::is_control) {
             return Err(err(
@@ -134,7 +136,10 @@ impl Engine {
                 if count > 100_000 {
                     return Err(err("Too many replacement matches"));
                 }
-                matches.push(PlannedMatch { ranges });
+                matches.push(PlannedMatch {
+                    ranges,
+                    unchanged: replacement.is_some_and(|value| &text[start..end] == value),
+                });
             }
             if !matches.is_empty() {
                 pages.push(PageMatches {
@@ -157,7 +162,7 @@ impl Engine {
     ) -> Result<usize> {
         guarded(|| {
             Ok(self
-                .replacement_plan(doc, query, options)?
+                .replacement_plan(doc, query, options, None)?
                 .iter()
                 .map(|p| p.matches.len())
                 .sum())
@@ -193,12 +198,12 @@ impl Engine {
                     "Replacement must contain at most 16384 printable bytes",
                 ));
             }
-            let plan = self.replacement_plan(doc, query, options)?;
+            let plan = self.replacement_plan(doc, query, options, Some(replacement))?;
             let total: usize = plan.iter().map(|p| p.matches.len()).sum();
             if occurrence.is_some_and(|i| i >= total) {
                 return Err(err("Replacement occurrence is out of range"));
             }
-            if total == 0 {
+            if total == 0 || plan.iter().all(|page| page.matches.iter().all(|matched| matched.unchanged)) {
                 return Ok(0);
             }
             let mut candidate = self.candidate(doc, parse(&doc.bytes)?)?;
@@ -209,7 +214,7 @@ impl Engine {
                 operation::checkpoint("Replacing text", page_index, page_total)?;
                 let mut texts: Vec<_> = page.runs.iter().map(|r| r.text.clone()).collect();
                 for (index, matched) in page.matches.iter().enumerate().rev() {
-                    if occurrence.is_some_and(|i| i != offset + index) {
+                    if matched.unchanged || occurrence.is_some_and(|i| i != offset + index) {
                         continue;
                     }
                     for (range_index, (ordinal, start, end)) in
@@ -252,7 +257,7 @@ impl Engine {
                 }
             }
             operation::checkpoint("Applying replacements", page_total, page_total)?;
-            doc.accept(candidate.bytes);
+            if replaced > 0 { doc.accept(candidate.bytes); }
             Ok(replaced)
         })
     }

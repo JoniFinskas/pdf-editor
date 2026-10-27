@@ -4391,9 +4391,10 @@ fn replacement_round_trip_handles_generated_layouts() {
             let count=e.replacement_count(&doc,&query).unwrap();
             if count==0 {continue;}
             let original=doc.bytes.clone();
-            e.replace_text(&mut doc,&query,replacement,None)
+            let changed=e.replace_text(&mut doc,&query,replacement,None)
                 .unwrap_or_else(|error|panic!("{name} replacement={replacement:?}: {error}"));
-            assert!(doc.undo());
+            assert_eq!(doc.can_undo(),changed>0,"{name} replacement={replacement:?}");
+            assert_eq!(doc.undo(),changed>0);
             assert_eq!(doc.bytes,original);
         }
     }

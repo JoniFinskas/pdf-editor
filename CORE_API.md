@@ -110,7 +110,7 @@ uses the search APIs, and zoom uses `Engine::render`.
 ## Find and replace
 
 - `Engine::replacement_count(document, query) -> Result<usize>`: count case-insensitive literal occurrences in editable text, including adjacent runs.
-- `Engine::replace_text(document, query, replacement, occurrence) -> Result<usize>`: replace one zero-based occurrence or all (`None`), preserve fonts through the existing edit engine, and commit a single atomic undo step.
+- `Engine::replace_text(document, query, replacement, occurrence) -> Result<usize>`: replace one zero-based occurrence or all (`None`), return the number of changed matches, preserve fonts, and commit one atomic undo step only when content changes.
 
 ## Passwords
 

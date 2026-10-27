@@ -1,5 +1,13 @@
 # Engine decisions
 
+## Identical find/replace matches
+
+Record exact equality with the replacement while planning native text matches,
+without retaining duplicate strings. Keep identical matches in occurrence numbering
+but skip their mutation. Return the number of changed matches and accept one undo
+step only when content changes. This preserves redo and browser glyph-run structure
+for identical replacements, including phrases containing generated spaces.
+
 ## Empty extracted text versus deletion
 
 An empty replacement deletes a selected PDF text object, even when its extracted

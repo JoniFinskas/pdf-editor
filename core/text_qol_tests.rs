@@ -1,6 +1,61 @@
 use super::*;
 
 #[test]
+fn unchanged_find_replace_preserves_structure_history_and_redo() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    for name in ["unicode-cid.pdf", "glyph-runs.pdf"] {
+        let source = fixture(name);
+        let original = fs::read(&source).unwrap();
+        let mut doc = e.open(&source).unwrap();
+        let query = if name == "glyph-runs.pdf" { "Hello world".to_owned() }
+            else { e.text_objects(&doc, 0).unwrap()[0].text.clone() };
+        let count = e.replacement_count(&doc, &query).unwrap();
+        assert!(count > 0);
+        for with_redo in [false, true] {
+            if with_redo {
+                let object = e.text_objects(&doc, 0).unwrap().remove(0);
+                e.delete_text(&mut doc, &object).unwrap();
+                assert!(doc.undo());
+            }
+            let history = doc.recovery_bytes().unwrap();
+            for occurrence in [None, Some(0)] {
+                let replaced = e.replace_text(&mut doc, &query, &query, occurrence).unwrap();
+                assert!(doc.recovery_bytes().unwrap() == history, "Identical replacement altered PDF history: {name}");
+                assert_eq!(replaced, 0);
+                assert!(doc.bytes == original);
+                assert_eq!(doc.can_redo(), with_redo);
+            }
+            assert!(e.replace_text(&mut doc, &query, &query, Some(count)).is_err());
+            assert!(doc.recovery_bytes().unwrap() == history);
+        }
+        assert_eq!(fs::read(source).unwrap(), original);
+    }
+}
+
+#[test]
+fn find_replace_skips_identical_matches_without_renumbering_occurrences() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let source = temp("replace-case-identity.pdf");
+    let bytes = generated("Ää ää ÄÄ", false, 0, 0., false, false);
+    fs::write(&source, &bytes).unwrap();
+    for (occurrence, count, expected) in [
+        (Some(1), 0, "Ää ää ÄÄ"), (Some(2), 1, "Ää ää ää"), (None, 2, "ää ää ää"),
+    ] {
+        let mut doc = e.open(&source).unwrap();
+        assert_eq!(e.replacement_count(&doc, "ää").unwrap(), 3);
+        assert_eq!(e.replace_text(&mut doc, "ää", "ää", occurrence).unwrap(), count);
+        assert_eq!(e.text_objects(&doc, 0).unwrap()[0].text, expected);
+        assert_eq!(doc.can_undo(), count > 0);
+        if count > 0 { assert!(doc.undo()); }
+        assert!(doc.bytes == bytes);
+    }
+    assert_eq!(fs::read(&source).unwrap(), bytes);
+    fs::remove_file(source).unwrap();
+}
+
+#[test]
 fn deleting_empty_extracted_glyph_runs_removes_the_object_and_preserves_pixels() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();

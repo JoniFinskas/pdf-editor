@@ -1,5 +1,37 @@
 // Generated-document integration for selection, batch operations and working copies.
 #[test]
+fn generated_identical_find_replace_keeps_clean_state_previews_and_redo() {
+    let (mut app, ctx, source) = qol_worker();
+    let original = std::fs::read(&source).unwrap();
+    let object = app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().lines[0].objects[0].clone();
+    let query = object.text.clone();
+    app.document_action(Request::DeleteText(object));
+    workflow_settle(&mut app, &ctx);
+    app.document_action(Request::Undo);
+    workflow_settle(&mut app, &ctx);
+    let generation = app.doc.as_ref().unwrap().generation;
+    for advanced in [false, true] {
+        let request = if advanced {
+            Request::ReplaceOptions { query: query.clone(), text: query.clone(), occurrence: None, options: Default::default() }
+        } else {
+            Request::Replace { query: query.clone(), text: query.clone(), occurrence: None }
+        };
+        app.document_action(request);
+        workflow_settle(&mut app, &ctx);
+        let doc = app.doc.as_ref().unwrap();
+        assert!(!doc.dirty(), "Identical replacement marked the document dirty");
+        assert_eq!(doc.generation, generation);
+        assert!(doc.can_redo);
+        assert!(!doc.can_undo);
+        assert!(doc.pages[0].objects.is_some());
+    }
+    app.document_action(Request::Redo);
+    workflow_settle(&mut app, &ctx);
+    assert!(app.doc.as_ref().unwrap().dirty());
+    assert_eq!(std::fs::read(source).unwrap(), original);
+}
+
+#[test]
 fn generated_unchanged_style_preserves_clean_state_previews_and_redo() {
     let (mut app, ctx, source) = qol_worker();
     let original = std::fs::read(&source).unwrap();
