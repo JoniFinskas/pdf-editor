@@ -1,5 +1,13 @@
 # Engine decisions
 
+## CLI engine startup errors
+
+Report PDF engine initialization failures at the CLI startup boundary, naming
+the required library without exposing loader diagnostics or local paths.
+Help and version commands remain available without loading the engine.
+A generated-PDF test copies the CLI without its library and checks the failure,
+source preservation and absence of output files.
+
 ## Preview request freshness
 
 Recheck the input channel between worker jobs, including after a bounded reply

@@ -225,15 +225,14 @@ pub fn run(args: Vec<OsString>) -> i32 {
     };
     let result = (|| {
         let exe = std::env::current_exe().map_err(|_| "Cannot locate executable")?;
+        let library_name = if cfg!(windows) { "pdfium.dll" } else { "libpdfium.so" };
         let library = exe
             .parent()
             .ok_or("Cannot locate executable directory")?
-            .join(if cfg!(windows) {
-                "pdfium.dll"
-            } else {
-                "libpdfium.so"
-            });
-        let engine = Engine::new(&library).map_err(|e| e.to_string())?;
+            .join(library_name);
+        let engine = Engine::new(&library).map_err(|_| format!(
+            "Cannot start the PDF engine. Check that the bundled {library_name} is beside this executable."
+        ))?;
         execute(&engine, c)
     })();
     match result {

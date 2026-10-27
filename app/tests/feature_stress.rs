@@ -9,6 +9,10 @@ use std::{
 fn invoke(args: Vec<OsString>) -> Output {
     let executable = std::env::var_os("PDF_EDITOR_TEST_CLI")
         .unwrap_or_else(|| env!("CARGO_BIN_EXE_pdf-editor-cli").into());
+    invoke_at(Path::new(&executable), args)
+}
+
+fn invoke_at(executable: &Path, args: Vec<OsString>) -> Output {
     let mut command = Command::new(executable);
     command
         .args(args)
@@ -30,6 +34,36 @@ fn invoke(args: Vec<OsString>) -> Output {
         std::thread::sleep(Duration::from_millis(5));
     }
     child.wait_with_output().unwrap()
+}
+
+#[test]
+fn generated_cli_explains_missing_runtime_without_exposing_paths() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let folder = root.join(format!(
+        "target/missing-runtime-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+    ));
+    std::fs::create_dir(&folder).unwrap();
+    let executable = folder.join(if cfg!(windows) { "pdf-editor-cli.exe" } else { "pdf-editor-cli" });
+    std::fs::copy(env!("CARGO_BIN_EXE_pdf-editor-cli"), &executable).unwrap();
+    for flag in ["--help", "--version"] {
+        assert_eq!(invoke_at(&executable, vec![flag.into()]).status.code(), Some(0));
+    }
+    let source = root.join("tests/fixtures/generated/multi-page.pdf");
+    let original = std::fs::read(&source).unwrap();
+    let output = folder.join("new.pdf");
+    let result = invoke_at(&executable, vec![
+        "rotate".into(), source.clone().into(), "--output".into(), output.clone().into(),
+    ]);
+    assert_eq!(result.status.code(), Some(1));
+    let error = String::from_utf8(result.stderr).unwrap();
+    let library = if cfg!(windows) { "pdfium.dll" } else { "libpdfium.so" };
+    assert!(error.contains(library), "Missing runtime should identify the required library: {error}");
+    assert!(!error.contains(root.to_str().unwrap()));
+    assert!(!output.exists());
+    assert_eq!(std::fs::read(&source).unwrap(), original);
+    std::fs::remove_file(executable).unwrap();
+    std::fs::remove_dir(folder).unwrap();
 }
 
 fn success(args: Vec<OsString>) -> Output {

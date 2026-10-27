@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Explain missing or incompatible PDF engine libraries in the CLI without disclosing local paths.
+
 - Skip superseded previews that arrive while a render batch is running, keeping edits and other document actions in order.
 
 - Keep zoom anchored to the same page point across centered layouts, mixed page sizes and fixed gaps; combine zoom requests received before the next frame.
