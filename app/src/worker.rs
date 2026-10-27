@@ -68,6 +68,10 @@ pub enum Request {
     OcrPages(Vec<u16>),
     Pictures,
     MovePicture(pdf_editor_core::PlacedPicture, pdf_editor_core::Placement),
+    Links,
+    AddLink(pdf_editor_core::LinkSpec),
+    UpdateLink(pdf_editor_core::PdfLink, pdf_editor_core::LinkSpec),
+    DeleteLink(pdf_editor_core::PdfLink),
     Annotations,
     AddAnnotation(pdf_editor_core::Markup),
     UpdateAnnotation(pdf_editor_core::Annotation, pdf_editor_core::Markup),
@@ -184,6 +188,7 @@ pub enum Reply {
     Bookmarks(pdf_editor_core::BookmarkSet),
     Printed(bool),
     Pictures(Vec<pdf_editor_core::PlacedPicture>),
+    Links(Vec<pdf_editor_core::PdfLink>),
     Annotations(Vec<pdf_editor_core::Annotation>),
     Exported(String),
     PasswordRequired(PathBuf),
@@ -663,6 +668,30 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
         }
         Request::SplitBookmarks(folder) => match engine.split_pdf_at_bookmarks(state.doc.as_ref()?, &folder) {
             Ok(paths) => Some(Reply::Exported(format!("Created {} split PDFs.", paths.len()))),
+            Err(e) => failed(e),
+        },
+        Request::Links => match engine.links(state.doc.as_ref()?) {
+            Ok(items) => Some(Reply::Links(items)), Err(e) => failed(e),
+        },
+        Request::AddLink(spec) => {
+            match engine.add_link(state.doc.as_mut()?, &spec) {
+                Ok(()) => { state.generation += 1; Some(changed(state, ChangeKind::Edit, None, 1)) },
+                Err(e) => failed(e),
+            }
+        },
+        Request::UpdateLink(item, spec) => {
+            let previous = state.doc.as_ref()?.revision();
+            match engine.update_link(state.doc.as_mut()?, &item, &spec) {
+                Ok(()) => {
+                    let count = usize::from(state.doc.as_ref()?.revision() != previous);
+                    state.generation += count as u64;
+                    Some(changed(state, ChangeKind::Edit, None, count))
+                },
+                Err(e) => failed(e),
+            }
+        },
+        Request::DeleteLink(item) => match engine.delete_link(state.doc.as_mut()?, &item) {
+            Ok(()) => { state.generation += 1; Some(changed(state, ChangeKind::Edit, None, 1)) },
             Err(e) => failed(e),
         },
         Request::Annotations => match engine.annotations(state.doc.as_ref()?) {

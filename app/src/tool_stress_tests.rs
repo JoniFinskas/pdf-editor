@@ -47,7 +47,7 @@ fn every_tool_window_keeps_close_reachable_when_idle_or_busy() {
                     (Tool::Forms, "Forms"),
                     (Tool::Signatures, "Signatures"),
                     (Tool::Pictures, "Images"),
-                    (Tool::Markup, "Markup and notes"),
+                    (Tool::Markup, "Markup and links"),
                     (Tool::Drawing, "Draw and shapes"),
                     (Tool::Privacy, "Search and redact"),
                     (Tool::Redact, "Secure redaction"),

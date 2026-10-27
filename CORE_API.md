@@ -408,6 +408,17 @@ through unrelated objects, including indirect arrays and repeated page reference
 Unknown image-only graph entries, fake cross-reference streams, JPEG EXIF/XMP/comment
 segments and trailing image payloads fail verification.
 
+## PDF links
+
+- `LinkTarget::{Uri, Page, Unsupported}`: a web/email URI, zero-based document page, or existing action that cannot be authored.
+- `LinkTarget::uri(value) -> Result<LinkTarget>`: validate and normalize an http, https or mailto target without opening it.
+- `LinkSpec { page, bounds, target }`: source page, rectangle in PDF points and destination.
+- `PdfLink { index, revision, object_id, link }`: current annotation selection with source identity and geometry.
+- `Engine::links(document) -> Result<Vec<PdfLink>>`: list up to 10,000 links without executing actions; resolve named and direct local destinations.
+- `Engine::add_link(document, spec) -> Result<()>`: add a borderless web, email or document-page link as one undo step.
+- `Engine::update_link(document, selected, spec) -> Result<()>`: validate the current selection and update its area or destination; preserve unchanged local destination views and safe visual properties, remove secondary actions, and leave exact safe no-ops untouched.
+- `Engine::delete_link(document, selected) -> Result<()>`: validate and remove the selected annotation without changing other shared references.
+
 ## Selected-page OCR
 
 - `OcrReport { pages_recognized, words_added, skipped_text, skipped_empty }`: successful page/word counts and explicit skips.

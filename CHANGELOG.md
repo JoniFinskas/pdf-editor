@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Add, edit and remove web, email and document-page hyperlinks from Markup and links; select link areas directly on the page.
+- Keep annotation selection after updates and render only visible rows in long annotation lists.
 - Run local OCR across selected pages as one undo step, with cancellation and explicit skips for existing text or unrecognized pages.
 - Release PDF rendering locks during OCR recognition and reuse page coordinate mapping for every recognized word.
 

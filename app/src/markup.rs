@@ -8,6 +8,10 @@ use eframe::egui;
 use pdf_editor_core::{Annotation, Bounds, Markup, MarkupKind};
 pub struct MarkupTool {
     pub open: bool,
+    pub links_mode: bool,
+    pub links: crate::links::Links,
+    pending_update: Option<(Annotation, Markup)>,
+    pending_delete: bool,
     pub items: Vec<Annotation>,
     pub selected: Option<usize>,
     pub draft: Markup,
@@ -16,6 +20,10 @@ impl Default for MarkupTool {
     fn default() -> Self {
         Self {
             open: false,
+            links_mode: false,
+            links: Default::default(),
+            pending_update: None,
+            pending_delete: false,
             items: vec![],
             selected: None,
             draft: Markup {
@@ -35,6 +43,55 @@ impl Default for MarkupTool {
     }
 }
 impl MarkupTool {
+    pub fn prepare_request(&mut self, request: &Request) {
+        self.links.prepare_request(request);
+        match request {
+            Request::UpdateAnnotation(old, desired) => {
+                self.pending_update = Some((old.clone(), desired.clone()))
+            }
+            Request::DeleteAnnotation(_) => {
+                self.pending_delete = true;
+                self.pending_update = None;
+            }
+            _ => {}
+        }
+    }
+    pub fn failed(&mut self) {
+        self.pending_update = None;
+        self.pending_delete = false;
+        self.links.failed();
+    }
+    pub fn receive(&mut self, items: Vec<Annotation>) {
+        if std::mem::take(&mut self.pending_delete) {
+            self.selected = None;
+        }
+        let pending = self.pending_update.take();
+        let old = self.selected.and_then(|i| self.items.get(i));
+        let expected = pending.as_ref().filter(|(source, _)| {
+            old.is_some_and(|old| {
+                old.index == source.index
+                    && old.revision == source.revision
+                    && old.markup == source.markup
+            })
+        });
+        self.selected = old.and_then(|old| {
+            items.iter().position(|new| {
+                new.index == old.index
+                    && new.markup.page == old.markup.page
+                    && (new.markup == old.markup
+                        || expected.is_some_and(|(_, desired)| {
+                            new.markup == *desired && new.revision >= old.revision
+                        }))
+            })
+        });
+        if expected
+            .is_some_and(|(source, desired)| self.draft == source.markup || self.draft == *desired)
+            && let Some(item) = self.selected.and_then(|i| items.get(i))
+        {
+            self.draft = item.markup.clone();
+        }
+        self.items = items;
+    }
     pub fn show(
         &mut self,
         ctx: &egui::Context,
@@ -43,9 +100,34 @@ impl MarkupTool {
         pages: usize,
     ) -> Option<Request> {
         let mut request = None;
-        ToolWindow::new("Markup and notes", Icon::Highlighter)
+        let mut open = self.open;
+        ToolWindow::new("Markup and links", Icon::Highlighter)
             .width(450.0)
-            .show(ctx, p, &mut self.open, |ui| {
+            .show(ctx, p, &mut open, |ui| {
+                let previous = self.links_mode;
+                ui.add_enabled_ui(idle, |ui| {
+                    widgets::segmented(
+                        ui,
+                        p,
+                        "markup-mode",
+                        &mut self.links_mode,
+                        &[(false, "Markup"), (true, "Links")],
+                    )
+                });
+                if previous != self.links_mode {
+                    self.links.cancel_selection();
+                    request = Some(if self.links_mode {
+                        Request::Links
+                    } else {
+                        Request::Annotations
+                    });
+                }
+                if self.links_mode {
+                    if let Some(action) = self.links.show(ui, p, idle, pages) {
+                        request = Some(action);
+                    }
+                    return;
+                }
                 ui.horizontal(|ui| {
                     widgets::subheading(ui, p, "Annotations");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -72,12 +154,12 @@ impl MarkupTool {
                 egui::ScrollArea::vertical()
                     .max_height(160.0)
                     .auto_shrink([false, true])
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 2.0;
+                    .show_rows(ui, 32.0, self.items.len(), |ui, rows| {
                         if self.items.is_empty() {
                             widgets::hint(ui, p, "No annotations.");
                         }
-                        for (i, item) in self.items.iter().enumerate() {
+                        for i in rows {
+                            let item = &self.items[i];
                             let text: String = item.markup.text.chars().take(32).collect();
                             let title = if text.is_empty() {
                                 format!("{:?}", item.markup.kind)
@@ -149,30 +231,31 @@ impl MarkupTool {
                     "Opacity",
                     egui::Slider::new(&mut self.draft.opacity, 0.0..=1.0),
                 );
-                widgets::caption(ui, p, "PDF points · bottom-left origin");
-                widgets::numbers(
-                    ui,
-                    p,
-                    vec![
-                        ("Left", egui::DragValue::new(&mut self.draft.bounds.left)),
-                        ("Bottom", egui::DragValue::new(&mut self.draft.bounds.bottom)),
-                        ("Right", egui::DragValue::new(&mut self.draft.bounds.right)),
-                        ("Top", egui::DragValue::new(&mut self.draft.bounds.top)),
-                    ],
-                );
+                ui.collapsing("Position", |ui| {
+                    widgets::numbers(
+                        ui,
+                        p,
+                        vec![
+                            ("Left", egui::DragValue::new(&mut self.draft.bounds.left)),
+                            (
+                                "Bottom",
+                                egui::DragValue::new(&mut self.draft.bounds.bottom),
+                            ),
+                            ("Right", egui::DragValue::new(&mut self.draft.bounds.right)),
+                            ("Top", egui::DragValue::new(&mut self.draft.bounds.top)),
+                        ],
+                    )
+                });
                 let width = ui.available_width();
                 widgets::field(ui, p, "Note or comment", |ui| {
                     ui.add(
-                        egui::TextEdit::multiline(&mut self.draft.text).margin(egui::Margin::symmetric(10, 7))
+                        egui::TextEdit::multiline(&mut self.draft.text)
+                            .margin(egui::Margin::symmetric(10, 7))
                             .desired_width(width)
                             .desired_rows(3),
                     );
                 });
-                widgets::hint(
-                    ui,
-                    p,
-                    "Selected text supplies the bounds.",
-                );
+                widgets::hint(ui, p, "Selected text supplies the bounds.");
                 widgets::actions(ui, |ui| {
                     if Btn::new(if self.selected.is_some() {
                         "Update annotation"
@@ -203,6 +286,10 @@ impl MarkupTool {
                     }
                 });
             });
+        self.open = open;
+        if !self.open {
+            self.links.cancel_selection();
+        }
         request
     }
 }

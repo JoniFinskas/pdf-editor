@@ -17,7 +17,7 @@ impl MarkupKind {
         }
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Markup {
     pub page: u16,
     pub kind: MarkupKind,
@@ -32,7 +32,7 @@ pub struct Annotation {
     pub revision: u64,
     pub markup: Markup,
 }
-fn annots(pdf: &lopdf::Document, page: lopdf::ObjectId) -> Result<Vec<Object>> {
+pub(crate) fn annots(pdf: &lopdf::Document, page: lopdf::ObjectId) -> Result<Vec<Object>> {
     Ok(match pdf.get_dictionary(page)?.get(b"Annots") {
         Ok(value) => pdf.dereference(value)?.1.as_array()?.clone(),
         Err(_) => vec![],

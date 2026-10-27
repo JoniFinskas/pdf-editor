@@ -22,6 +22,7 @@ mod form_design;
 mod icons;
 mod instance;
 mod markup;
+mod links;
 mod organize;
 mod paragraph;
 mod passwords;

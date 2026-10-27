@@ -105,7 +105,7 @@ fn named_tree(
     }
     Ok(())
 }
-fn destinations(pdf: &lopdf::Document) -> Result<BTreeMap<Vec<u8>, Object>> {
+pub(crate) fn destinations(pdf: &lopdf::Document) -> Result<BTreeMap<Vec<u8>, Object>> {
     let mut names = BTreeMap::new();
     if let Ok(old) = pdf.catalog()?.get(b"Dests") {
         for (key, value) in pdf.dereference(old)?.1.as_dict()? {
@@ -119,7 +119,7 @@ fn destinations(pdf: &lopdf::Document) -> Result<BTreeMap<Vec<u8>, Object>> {
     }
     Ok(names)
 }
-fn destination(
+pub(crate) fn destination(
     pdf: &lopdf::Document,
     value: &Object,
     pages: &BTreeMap<ObjectId, u16>,

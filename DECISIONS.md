@@ -1217,6 +1217,11 @@ Strip subset prefixes before inferring weight or slant, and normalize face-name 
 
 Generated tests cover named regular/bold-italic/black/semibold faces, misleading subset codes, compound weight aliases, embedded and nonembedded edits across four page rotations and affine text transforms, Nordic/Euro replacements, deletion, unsupported-glyph rejection, neighbour pixels, exact undo/redo history and saved raster equality.
 
+
+## Hyperlink editing
+
+Keep link authoring inside the existing markup tool. Show source rectangles on the canvas and use the existing four-corner inverse page transform for area selection, including page rotation and crop origins. External targets are limited to http, https and mailto; targets are never opened by the editor. Existing unsupported actions can be replaced or deleted. Reconstruct the selected annotation with a safe primary destination and retained visual properties, isolating shared annotation references. Preserve named destinations, coordinates, fit mode and zoom when the local target is unchanged. Selection validation compares the current revision, annotation identity, destination and bounds; it is not an opaque document authentication token.
+
 ## Selected-page OCR transactions
 
 Run selected-page OCR sequentially with at most one rendered image and one recognized word vector in flight. Limit batches to 100 pages and 100,000 words, with 10,000 words per page. Reuse one native recognizer and one page mapping setup per recognized page. Release PDFium handles and its global operation lock while Windows recognizes text so independent PDF work can proceed. Build staging bytes without history snapshots and publish only once after verification and a final cancellation checkpoint. Existing text and empty recognition results are reported as separate skips; an all-skipped batch creates no edit. Cooperative cancellation polls the native job without spinning, requests cancellation and waits for terminal completion before releasing its resources.

@@ -110,7 +110,7 @@ impl Tool {
                 (Tool::Pictures, "Images…", Icon::Image),
                 (Tool::ImageCreate, "Images to PDF…", Icon::Image),
                 (Tool::ScanCleanup, "Scan cleanup…", Icon::Scan),
-                (Tool::Markup, "Markup and notes…", Icon::Highlighter),
+                (Tool::Markup, "Markup and links…", Icon::Highlighter),
                 (Tool::Drawing, "Draw and shapes…", Icon::Pen),
                 (Tool::Redact, "Redact…", Icon::Redact),
                 (Tool::Privacy, "Search and redact…", Icon::Redact),
@@ -143,7 +143,7 @@ impl Tool {
             Self::Forms => "Fill, design, move and resize fields; checkboxes, radio groups and dropdowns; flatten forms.",
             Self::Signatures => "Draw or import a reusable signature, then place and resize it.",
             Self::Pictures => "Insert PNG or JPG images; move, resize and remove pictures.",
-            Self::Markup => "Highlight, underline, strike through and add editable sticky notes.",
+            Self::Markup => "Highlight, add notes, and create or edit web, email and page links.",
             Self::Drawing => "Freehand ink, rectangles, ellipses, lines and arrows.",
             Self::Privacy => "Find emails, phone numbers, IBANs, identity codes or card patterns; preview and redact.",
             Self::Redact => "Permanently remove text, images and vector content from a selected rectangle.",
@@ -954,6 +954,7 @@ impl EditorApp {
     // ----- Commands -----
 
     fn send(&mut self, request: Request) {
+        self.markup.prepare_request(&request);
         if let Request::EditItems(items,pdf_editor_core::ObjectAction::Move {..}|pdf_editor_core::ObjectAction::Resize {..})|Request::LayoutItems(items,_) = &request {
             self.qol.restore_objects=items.first().map(|first|(first.page,items.iter().map(|i|i.index).collect()));
         }
@@ -1144,7 +1145,8 @@ impl EditorApp {
 
     fn refresh_tool_lists(&mut self) {
         for (open, request) in [
-            (self.markup.open, Request::Annotations),
+            (self.markup.open && !self.markup.links_mode, Request::Annotations),
+            (self.markup.open && self.markup.links_mode, Request::Links),
             (self.pictures.open, Request::Pictures),
         ] {
             if open {
@@ -1411,19 +1413,13 @@ impl EditorApp {
                     }));
                 self.pictures.items = items;
             }
+            Reply::Links(items) => {
+                self.busy=self.busy.saturating_sub(1);
+                self.markup.links.receive(items);
+            }
             Reply::Annotations(items) => {
                 self.busy = self.busy.saturating_sub(1);
-                self.markup.selected = self.markup.selected
-                    .and_then(|i| self.markup.items.get(i))
-                    .and_then(|old| items.iter().position(|new| {
-                        new.index == old.index && new.markup.page == old.markup.page
-                            && new.markup.kind == old.markup.kind
-                            && new.markup.bounds == old.markup.bounds
-                            && new.markup.color == old.markup.color
-                            && new.markup.opacity == old.markup.opacity
-                            && new.markup.text == old.markup.text
-                    }));
-                self.markup.items = items;
+                self.markup.receive(items);
             }
             Reply::Exported(message) => {
                 self.busy = self.busy.saturating_sub(1);
@@ -1633,6 +1629,8 @@ impl EditorApp {
                     explicit_page: None,
                 });
                 self.sessions_apply_view();
+                self.markup.links=Default::default();
+                self.markup.failed();
                 self.markup.items.clear();
                 self.markup.selected = None;
                 self.pictures.items.clear();
@@ -1743,6 +1741,7 @@ impl EditorApp {
                 self.busy = self.busy.saturating_sub(1);
                 let Some(doc) = &mut self.doc else { return };
                 let comparison_changed=doc.generation!=generation;
+                if !comparison_changed {self.markup.failed();}
                 let selected = doc.applying.take().map_or(1, |(_, _, n)| n);
                 doc.pending_edit = None;
                 doc.can_undo = can_undo;
@@ -1936,6 +1935,7 @@ impl EditorApp {
                     return;
                 }
                 self.drag_preview.cancel();
+                self.markup.failed();
                 self.busy = self.busy.saturating_sub(1);
                 self.pending_comparison=None;self.compare.preparation_failed(&message);
                 if self.pending_action.take().is_some() {
@@ -2658,8 +2658,11 @@ impl EditorApp {
                 if let Some(o) = self.text_tool.selection.get(self.text_tool.selected) {
                     self.markup.draft.page = o.page;
                     self.markup.draft.bounds = o.bounds;
+                    if self.markup.links.selected.is_none() {self.markup.links.draft.page=o.page;self.markup.links.draft.bounds=o.bounds;}
+                } else if self.markup.links.selected.is_none() {
+                    self.markup.links.draft.page=self.doc.as_ref().map_or(0,|d|d.current_page as u16);
                 }
-                self.document_action(Request::Annotations);
+                self.document_action(if self.markup.links_mode {Request::Links}else{Request::Annotations});
             }
             Tool::Organize => self.organize.open = true,
             Tool::Replace => self.replace.open = true,
@@ -2692,6 +2695,7 @@ impl EditorApp {
         self.text_tool.adding = false;
         self.drawing.active = false;
         self.tables.selecting = false;
+        self.markup.links.cancel_selection();
         self.text_tool.selection.clear();
         if let Some(doc) = &mut self.doc {
             doc.object_mode = true;
@@ -3513,6 +3517,23 @@ impl EditorApp {
                 if response.clicked() || response.dragged() {
                     doc.explicit_page = Some(index);
                     doc.current_page = index;
+                }
+                if self.markup.open && self.markup.links_mode {
+                    if let Some(objects)=&page.objects {
+                        let draft=&self.markup.links.draft;
+                        if draft.page==page_no && (self.markup.links.selected.is_some()||self.markup.links.selecting) {
+                            painter.rect_stroke(to_screen(bounds_rect(&objects.transform,draft.bounds),rect,scale),0.,Stroke::new(1.5,p.accent),egui::StrokeKind::Inside);
+                        }
+                    }
+                    if self.markup.links.selecting {
+                        doc.panning=false;doc.dragging_item=None;
+                        if !busy && doc.edit.is_none() && let Some(objects)=&page.objects
+                            && let Some(bounds)=self.markup.links.on_page(&response,&painter,page_no,rect,scale,p.accent)
+                            && let Some(bounds)=raster_bounds(&objects.transform,bounds) {
+                            self.markup.links.draft.bounds=bounds;
+                        }
+                        continue;
+                    }
                 }
                 if !busy && doc.edit.is_none() && !self.drawing.active && !self.tables.selecting && !self.text_tool.adding
                     && self.qol.on_canvas(&ctx,&response,&painter,page_no,rect,scale,page.objects.as_ref(),&mut doc.selected_item,&mut requests,p.accent) {
@@ -4695,6 +4716,7 @@ impl eframe::App for EditorApp {
         ) {
             self.document_action(request);
         }
+        let selecting_link_area=self.markup.links.selecting;
         if let Some(request) = self.markup.show(
             &ctx,
             &p,
@@ -4702,6 +4724,13 @@ impl eframe::App for EditorApp {
             self.doc.as_ref().map_or(0, |d| d.pages.len()),
         ) {
             self.document_action(request);
+        }
+        if let Some(page)=self.markup.links.jump.take() {self.go_to_page(usize::from(page));}
+        if self.markup.links.selecting {
+            if !selecting_link_area {self.commit_edit();}
+            self.text_tool.adding=false;self.drawing.active=false;self.tables.selecting=false;
+            self.signatures.placing=false;
+            self.markup.links.finish_frame(&ctx);
         }
         if let Some(request) = self.organize.show(&ctx, &p, self.busy == 0) {
             self.document_action(request);
@@ -5588,6 +5617,7 @@ mod tests {
     include!("tile_workflow_tests.rs");
     include!("rotated_workflow_tests.rs");
     include!("action_workflow_tests.rs");
+    include!("hyperlink_workflow_tests.rs");
     include!("ocr_workflow_tests.rs");
     include!("drag_workflow_tests.rs");
     include!("font_readout_workflow_tests.rs");
@@ -7122,7 +7152,7 @@ mod tests {
                 "Forms",
                 "Find and replace",
                 "Merge, split and extract",
-                "Markup and notes",
+                "Markup and links",
                 "Images",
                 "Secure redaction",
                 "Search and redact",

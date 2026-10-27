@@ -57,6 +57,8 @@ mod pictures;
 pub use pictures::PlacedPicture;
 mod ocr;
 pub use ocr::OcrReport;
+mod links;
+pub use links::{LinkTarget, LinkSpec, PdfLink};
 mod organize;
 mod pages;
 mod page_batch;
