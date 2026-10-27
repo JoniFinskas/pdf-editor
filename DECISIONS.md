@@ -1,5 +1,13 @@
 # Engine decisions
 
+## Empty extracted text versus deletion
+
+An empty replacement deletes a selected PDF text object, even when its extracted
+text is already empty. Browser-style space glyphs can have no extracted text
+while still owning a real page object and advancing the cursor. Keep the no-op
+shortcut for identical nonempty replacements. A generated Type3 regression checks
+object removal, unchanged neighboring pixels, saved reopening and undo/redo.
+
 ## Unchanged text styles
 
 Compare requested size and color with the current text object after validating

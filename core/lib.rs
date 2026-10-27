@@ -438,7 +438,7 @@ impl Engine {
             }
             let ordinal = ordinals[0];
             let actual = &objects[ordinal];
-            if ordinals.len() == 1 && actual.text == replacement {
+            if ordinals.len() == 1 && !replacement.is_empty() && actual.text == replacement {
                 return Ok(EditResult {
                     warning: None,
                     objects_changed: 0,

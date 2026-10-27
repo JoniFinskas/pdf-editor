@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn deleting_empty_extracted_glyph_runs_removes_the_object_and_preserves_pixels() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let source = fixture("glyph-runs.pdf");
+    let original = fs::read(&source).unwrap();
+    let mut doc = e.open(&source).unwrap();
+    let before = e.text_objects(&doc, 0).unwrap();
+    let selected = before.iter().find(|o| o.text.is_empty()).expect("Generated browser PDF must contain a blank glyph run");
+    let image = e.render(&doc, 0, 2.).unwrap();
+    let result = e.delete_text(&mut doc, selected).unwrap();
+    assert_eq!(result.objects_changed, 1, "The blank PDF object was not deleted");
+    let after = e.text_objects(&doc, 0).unwrap();
+    assert_eq!(after.len() + 1, before.len());
+    for (old, new) in before.iter().filter(|o| o.index != selected.index).zip(&after) {
+        assert_eq!(old.text, new.text);
+        assert_eq!(old.font, new.font);
+        assert!(old.matrix.iter().zip(new.matrix).all(|(a,b)| (a-b).abs() < 0.001));
+    }
+    assert_eq!(e.render(&doc, 0, 2.).unwrap().rgba, image.rgba);
+    let saved = temp("blank-glyph-deleted.pdf");
+    if saved.exists() { fs::remove_file(&saved).unwrap(); }
+    doc.save_as(&saved).unwrap();
+    assert_eq!(e.text_objects(&e.open(&saved).unwrap(), 0).unwrap().len(), after.len());
+    let changed = doc.bytes.clone();
+    assert!(doc.undo());
+    assert!(doc.bytes == original);
+    assert!(doc.redo());
+    assert!(doc.bytes == changed);
+    assert_eq!(fs::read(source).unwrap(), original);
+    fs::remove_file(saved).unwrap();
+}
+
+#[test]
 fn unchanged_style_checks_visible_stroke_color_before_skipping() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();
