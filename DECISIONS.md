@@ -1,5 +1,13 @@
 # Engine decisions
 
+## Preview request freshness
+
+Recheck the input channel between worker jobs, including after a bounded reply
+send. Append new requests after the remaining batch before using the existing
+coalescer, so stale previews are skipped without moving work across a document
+mutation. A generated-PDF rendezvous test verifies obsolete native renders are
+removed while renders on either side of a page rotation retain their order.
+
 ## Zoom anchor coordinates
 
 Zoom page coordinates while keeping canvas padding and page gaps in UI points.

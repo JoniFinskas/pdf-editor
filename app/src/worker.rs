@@ -442,8 +442,18 @@ fn run(
         while let Ok(next) = inbox.try_recv() {
             batch.push(next);
         }
-        let batch = coalesce(batch);
-        for request in batch {
+        let mut batch = coalesce(batch).into_iter();
+        loop {
+            // New previews can arrive during native work or a bounded reply send.
+            // Append them in order before coalescing, preserving mutation barriers.
+            if let Ok(next) = inbox.try_recv() {
+                let queued = batch.by_ref()
+                    .chain(std::iter::once(next))
+                    .chain(inbox.try_iter())
+                    .collect();
+                batch = coalesce(queued).into_iter();
+            }
+            let Some(request) = batch.next() else { break };
             let cancellable=matches!(&request,Request::Sanitize(..)|Request::ExportSanitized(..)|Request::CleanupScan(..)|Request::ImagesToPdf(..)|Request::Merge(..)|Request::Extract(..)|Request::Split(..)|Request::ExportWord(..)|Request::ExportImages(..)|Request::Compress(..)|Request::Ocr(..)|Request::PageBatch(..)|Request::LayoutItems(..)|Request::HighlightText(..)|Request::FormatText(..)|Request::Replace {..}|Request::ReplaceOptions {..}|Request::EditParagraph(..)|Request::Print);
             let control = if cancellable {active.start()} else {Default::default()};
             let reply = catch_unwind(AssertUnwindSafe(|| {
