@@ -232,6 +232,7 @@ pub(crate) fn resources(doc: &lopdf::Document, page: ObjectId) -> Result<Diction
 thread_local! {
     pub(crate) static REPAIR_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static ENCODING_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static ORDINAL_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 enum CursorRepair {
@@ -454,6 +455,10 @@ fn edit_with_font(
             _ => return Err(err("This run uses symbol glyphs that cannot be edited")),
         }
     }
+    let mut target_by_ordinal = std::collections::HashMap::with_capacity(targets.len());
+    for (ordinal, text) in targets {
+        target_by_ordinal.entry(*ordinal).or_insert(text);
+    }
     let run = source
         .get(ordinal)
         .ok_or_else(|| err("Unsupported text-object mapping"))?;
@@ -496,12 +501,13 @@ fn edit_with_font(
         verify_mapping(&records, &before)?;
         let mut changes = vec![];
         for (i, r) in records.iter().enumerate() {
-            let target = (number == selected.page as u32 + 1)
-                .then(|| targets.iter().find(|(o, _)| *o == i))
-                .flatten();
+            let target = if number == selected.page as u32 + 1 {
+                #[cfg(test)] ORDINAL_PROBES.with(|count| count.set(count.get() + 1));
+                target_by_ordinal.get(&i).copied()
+            } else { None };
             if target.is_some() || (whole && font_name(&r.font)? == missing_name) {
                 let replacement = match target {
-                    Some((_, t)) => t.clone(),
+                    Some(t) => t.clone(),
                     None => r.text.clone(),
                 };
                 combined.push_str(&replacement);
@@ -651,10 +657,15 @@ fn edit_with_font(
     // Batch predictable cursor translations, then independently verify the whole
     // page. Unsupported graphics-state propagation retains sequential repairs.
     for (number, page_id, _, _, before, changes) in &plans {
+        let change_by_ordinal: std::collections::HashMap<usize, &str> = changes.iter()
+            .map(|(ordinal, text)| (*ordinal, text.as_str())).collect();
         let expected: Vec<_> = before
             .iter()
             .enumerate()
-            .filter(|(i, _)| !changes.iter().any(|(j, t)| j == i && t.is_empty()))
+            .filter(|(i, _)| {
+                #[cfg(test)] ORDINAL_PROBES.with(|count| count.set(count.get() + 1));
+                !change_by_ordinal.get(i).is_some_and(|text| text.is_empty())
+            })
             .collect();
         let mut settled = false;
         for _ in 0..=expected.len().min(1024) {
@@ -675,10 +686,8 @@ fn edit_with_font(
             }
             // Validate text and transforms before skipping unnecessary repair decoding.
             for ((ordinal, old), new) in expected.iter().zip(&after) {
-                let wanted = changes
-                    .iter()
-                    .find(|(i, _)| i == ordinal)
-                    .map(|(_, t)| t.as_str())
+                #[cfg(test)] ORDINAL_PROBES.with(|count| count.set(count.get() + 1));
+                let wanted = change_by_ordinal.get(ordinal).copied()
                     .unwrap_or(&old.text);
                 if wanted != new.text {
                     return Err(err("Text encoding verification failed"));

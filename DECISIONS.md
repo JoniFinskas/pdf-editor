@@ -1,5 +1,14 @@
 # Engine decisions
 
+## Bulk edit ordinal lookups
+
+Index replacement targets once and each page's expected changes once, preserving
+the ordered plans for paint order, reverse mutation and cursor repairs. Keep the
+first replacement for a duplicate internal target. Indexed verification uses
+original run ordinals, including deleted positions, and retains independent
+native text and matrix checks. Generated dense pages bound lookup work while
+mixed character maps, sparse deletions and duplicate targets preserve behavior.
+
 ## Paragraph page coordinates
 
 Validate paragraph placement against PDFium's MediaBox/CropBox intersection in

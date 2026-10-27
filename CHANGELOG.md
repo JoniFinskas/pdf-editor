@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Index bulk text replacements and deletion checks by original run position instead of repeatedly scanning every target.
+
 - Edit paragraphs on rotated and cropped pages with shifted origins, while rejecting true page overflow without changing the document.
 
 - Remove a repeated comparison source label and clarify difference navigation and counts.

@@ -5,8 +5,9 @@ fn bulk_replacement_reuses_font_decoding_without_mixing_character_maps() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();
     let seed = generated("AB", false, 0, 0., false, false);
-    for mixed in [false, true] {
-        let mut bytes = dense_fixture::dense_page(&seed, 1000);
+    let mut excessive = vec![];
+    for (total, mixed) in [(1000, false), (1000, true), (4000, false)] {
+        let mut bytes = dense_fixture::dense_page(&seed, total);
         if mixed {
             let mut pdf = parse(&bytes).unwrap();
             let page = pdf.get_pages()[&1];
@@ -41,12 +42,15 @@ fn bulk_replacement_reuses_font_decoding_without_mixing_character_maps() {
         fs::write(&source, &bytes).unwrap();
         let mut doc = e.open(&source).unwrap();
         let before = e.text_objects(&doc, 0).unwrap();
-        assert_eq!(before.len(), 1000);
+        assert_eq!(before.len(), total);
         content::ENCODING_BUILDS.with(|count| count.set(0));
+        content::ORDINAL_PROBES.with(|count| count.set(0));
         let started = std::time::Instant::now();
-        assert_eq!(e.replace_text(&mut doc, "AB", "BA", None).unwrap(), 1000);
+        assert_eq!(e.replace_text(&mut doc, "AB", "BA", None).unwrap(), total);
         let builds = content::ENCODING_BUILDS.with(|count| count.get());
-        eprintln!("mixed={mixed} encoder_builds={builds} elapsed_us={}", started.elapsed().as_micros());
+        let probes = content::ORDINAL_PROBES.with(|count| count.get());
+        eprintln!("objects={total} mixed={mixed} encoder_builds={builds} ordinal_probes={probes} elapsed_us={}", started.elapsed().as_micros());
+        if probes > total * 8 { excessive.push((total, probes)); }
         assert!(builds <= 16, "Repeated font map construction: {builds}");
         let after = e.text_objects(&doc, 0).unwrap();
         assert_eq!(after.len(), before.len());
@@ -68,6 +72,39 @@ fn bulk_replacement_reuses_font_decoding_without_mixing_character_maps() {
         fs::remove_file(source).unwrap();
         fs::remove_file(saved).unwrap();
     }
+    assert!(excessive.is_empty(), "Repeated ordinal scans: {excessive:?}");
+}
+
+#[test]
+fn ordinal_indexes_preserve_first_targets_and_sparse_deletion_order() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let path = temp("ordinal-targets.pdf");
+    let source = generated("AB", false, 0, 0., false, false);
+    fs::write(&path, &source).unwrap();
+    for sparse in [false, true] {
+        let mut doc = e.open(&path).unwrap();
+        let before = e.text_objects(&doc, 0).unwrap();
+        assert_eq!(before.len(), 3);
+        let targets = if sparse { vec![(2, String::new()), (0, "BA".into())] }
+            else { vec![(0, "BA".into()), (0, "AB".into())] };
+        let (bytes, result) = content::edit(&e, &doc, &before[0], &targets).unwrap();
+        assert_eq!(result.objects_changed, if sparse { 2 } else { 1 });
+        doc.accept(bytes);
+        let after = e.text_objects(&doc, 0).unwrap();
+        assert_eq!(after[0].text, "BA");
+        assert_eq!(after.len(), if sparse { 2 } else { 3 });
+        assert_eq!(after[1].text, before[1].text);
+        assert_eq!(after[1].matrix, before[1].matrix);
+        assert_eq!(after[1].font, before[1].font);
+        let changed = doc.bytes.clone();
+        assert!(doc.undo());
+        assert!(doc.bytes == source);
+        assert!(doc.redo());
+        assert!(doc.bytes == changed);
+    }
+    assert_eq!(fs::read(&path).unwrap(), source);
+    fs::remove_file(path).unwrap();
 }
 
 #[test]
