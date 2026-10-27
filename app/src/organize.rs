@@ -9,16 +9,25 @@ enum Selection {
     Paths(Vec<std::path::PathBuf>),
     Export(Request),
 }
+
 #[derive(Default)]
 pub struct Organize {
     pub open: bool,
     dialog: crate::dialogs::ToolDialog<Selection>,
     range: String,
     groups: String,
+    split_bookmarks: bool,
     paths: Vec<std::path::PathBuf>,
     shell_collecting: bool,
 }
 impl Organize {
+    fn choose_split_folder(&mut self, choose: impl FnOnce() -> Option<std::path::PathBuf> + Send + 'static) {
+        let groups = self.groups.clone();
+        let bookmarks = self.split_bookmarks;
+        self.dialog.launch(move || choose().map(|folder| Selection::Export(if bookmarks {
+            Request::SplitBookmarks(folder)
+        } else { Request::Split(groups, folder) })));
+    }
     pub fn collect_shell_selection(&mut self) {
         self.open = true;
         self.shell_collecting = true;
@@ -47,9 +56,10 @@ impl Organize {
             }
         }
         let idle = idle && !self.dialog.busy() && request.is_none();
+        let mut open = self.open;
         ToolWindow::new("Merge, split and extract", Icon::Layers)
             .width(420.0)
-            .show(ctx, p, &mut self.open, |ui| {
+            .show(ctx, p, &mut open, |ui| {
                 self.dialog.feedback(ui,p);
                 let width = ui.available_width();
                 widgets::subheading(ui, p, "Merge");
@@ -138,20 +148,31 @@ impl Organize {
                 ui.add_space(4.0);
                 widgets::rule(ui, p);
                 widgets::subheading(ui, p, "Split");
-                widgets::field(ui, p, "Groups, for example 1-3;4-6;7", |ui| {
-                    ui.add(widgets::text_field(&mut self.groups, width));
+                ui.add_enabled_ui(idle, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Split by");
+                        egui::ComboBox::from_id_salt("split-method")
+                            .selected_text(if self.split_bookmarks { "Top-level bookmarks" } else { "Page ranges" })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.split_bookmarks, false, "Page ranges");
+                                ui.selectable_value(&mut self.split_bookmarks, true, "Top-level bookmarks");
+                            }).response.on_hover_text("Each top-level bookmark starts a PDF. Leading pages are kept separately.");
+                    });
+                    if !self.split_bookmarks {
+                        widgets::field(ui, p, "Groups, for example 1-3;4-6;7", |ui| {
+                            ui.add(widgets::text_field(&mut self.groups, width));
+                        });
+                    }
                 });
                 widgets::actions(ui, |ui| {
                     if Btn::new("Split into folder…")
                         .with_icon(Icon::Folder)
                         .look(Look::Outline)
-                        .enabled(idle && !self.groups.is_empty())
+                        .enabled(idle && (self.split_bookmarks || !self.groups.trim().is_empty()))
                         .show(ui, p)
                         .clicked()
                     {
-                        let groups=self.groups.clone();
-                        self.dialog.launch(move || rfd::FileDialog::new().pick_folder()
-                            .map(|folder| Selection::Export(Request::Split(groups,folder))));
+                        self.choose_split_folder(|| rfd::FileDialog::new().pick_folder());
                     }
                 });
                 widgets::hint(
@@ -160,6 +181,7 @@ impl Organize {
                     "Exported PDFs are new files without password protection.",
                 );
             });
+        self.open = open;
         if !self.open {
             self.shell_collecting = false;
         }
@@ -194,5 +216,40 @@ mod shell_tests {
         assert!(!tool.add_path("overflow.pdf".into()));
         tool.open = false;
         assert!(!tool.collecting_shell_selection());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn split_picker_keeps_its_method_and_ranges_until_idle() {
+        for bookmarks in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            let mut organize = Organize { open: true, groups: "1-3;4".into(), split_bookmarks: bookmarks, ..Default::default() };
+            organize.choose_split_folder(|| Some("generated-chapters".into()));
+            organize.groups = "changed later".into();
+            organize.split_bookmarks = !bookmarks;
+            let mut request = None;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            for idle in [false, true] {
+                loop {
+                    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                        request = organize.show(ui.ctx(), &crate::theme::palette(ui), idle);
+                    });
+                    output.textures_delta.clear();
+                    assert!(std::time::Instant::now() < deadline);
+                    if !idle { assert!(request.is_none()); break; }
+                    if request.is_some() { break; }
+                    std::thread::yield_now();
+                }
+            }
+            match request.unwrap() {
+                Request::SplitBookmarks(folder) => { assert!(bookmarks); assert_eq!(folder, std::path::Path::new("generated-chapters")); }
+                Request::Split(groups, folder) => { assert!(!bookmarks); assert_eq!(groups, "1-3;4"); assert_eq!(folder, std::path::Path::new("generated-chapters")); }
+                _ => panic!("Unexpected split request"),
+            }
+        }
     }
 }

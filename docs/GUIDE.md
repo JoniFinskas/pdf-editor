@@ -163,8 +163,10 @@ to reveal its close button. Closing a dirty tab asks whether to discard changes.
   and encrypted working copies. A blank Save As
   password deliberately exports an unencrypted copy.
 - Merge appends PDFs in the chosen order. Extract accepts ranges such as `1-3,5`;
-  Split separates groups with semicolons, such as `1-3;4-6`. These exports are
-  unencrypted. Encrypted merge inputs need a separately decrypted copy.
+  Split accepts semicolon-separated ranges such as `1-3;4-6`, or **Top-level
+  bookmarks**. Bookmark destinations start new PDFs; leading pages are kept in a
+  separate file. Exports are unencrypted and refuse existing files. Encrypted
+  merge inputs need a separately decrypted copy.
 - Markup creates editable PDF highlights, underlines, strikethroughs and sticky
   notes. Select an entry in its list to update or delete it.
 - OCR recognizes an image-only current page with installed Windows OCR languages

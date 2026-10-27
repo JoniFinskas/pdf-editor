@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Split PDFs at top-level bookmarks from the existing page organizer, retaining leading pages and refusing existing output files.
+
 - Index bulk text replacements and deletion checks by original run position instead of repeatedly scanning every target.
 
 - Edit paragraphs on rotated and cropped pages with shifted origins, while rejecting true page overflow without changing the document.

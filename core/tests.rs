@@ -1538,6 +1538,51 @@ fn merge_extract_split_keep_order_and_source() {
 }
 
 #[test]
+fn bookmark_splitting_preserves_page_order_source_and_existing_files() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let source = fixture("multi-page.pdf");
+    let original = fs::read(&source).unwrap();
+    let mut doc = e.open(&source).unwrap();
+    for _ in 0..4 {
+        e.edit_page_batch(&mut doc, &PageBatch::Duplicate { pages: vec![0], before: 1 }).unwrap();
+    }
+    assert_eq!(e.pages(&doc).unwrap().len(), 6);
+    let folder = temp("bookmark-split-outputs");
+    fs::create_dir_all(&folder).unwrap();
+    assert!(e.split_pdf_at_bookmarks(&doc, &folder).is_err());
+    assert_eq!(fs::read_dir(&folder).unwrap().count(), 0);
+    for page in [4, 2, 2] {
+        let revision = doc.revision();
+        e.edit_bookmarks(&mut doc, revision, BookmarkEdit::Add { title: "Chapter".into(), page, parent: None }).unwrap();
+    }
+    let parent = e.bookmarks(&doc).unwrap().items[0].id;
+    let revision = doc.revision();
+    e.edit_bookmarks(&mut doc, revision, BookmarkEdit::Add { title: "Subchapter".into(), page: 1, parent: Some(parent) }).unwrap();
+    let before = doc.bytes.clone();
+    let history = doc.recovery_bytes().unwrap();
+    let outputs = e.split_pdf_at_bookmarks(&doc, &folder).unwrap();
+    assert_eq!(outputs.len(), 3);
+    for (index, path) in outputs.iter().enumerate() {
+        let split = e.open(path).unwrap();
+        assert_eq!(e.pages(&split).unwrap().len(), 2);
+        for page in 0..2 {
+            assert_eq!(e.render(&split, page, 1.).unwrap().rgba, e.render(&doc, (index * 2 + page as usize) as u16, 1.).unwrap().rgba);
+        }
+    }
+    let copies: Vec<_> = outputs.iter().map(|path| fs::read(path).unwrap()).collect();
+    assert!(e.split_pdf_at_bookmarks(&doc, &folder).is_err());
+    for (path, bytes) in outputs.iter().zip(copies) {
+        assert_eq!(fs::read(path).unwrap(), bytes);
+        fs::remove_file(path).unwrap();
+    }
+    assert!(doc.bytes == before);
+    assert!(doc.recovery_bytes().unwrap() == history);
+    assert_eq!(fs::read(source).unwrap(), original);
+    fs::remove_dir(folder).unwrap();
+}
+
+#[test]
 fn real_annotations_edit_delete_and_roundtrip() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();

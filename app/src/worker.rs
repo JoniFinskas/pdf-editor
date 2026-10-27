@@ -75,6 +75,7 @@ pub enum Request {
     Merge(Vec<PathBuf>),
     Extract(String, PathBuf),
     Split(String, PathBuf),
+    SplitBookmarks(PathBuf),
     FormFields,
     DesignForm(pdf_editor_core::FormDesignEdit),
     FlattenForms,
@@ -454,7 +455,7 @@ fn run(
                 batch = coalesce(queued).into_iter();
             }
             let Some(request) = batch.next() else { break };
-            let cancellable=matches!(&request,Request::Sanitize(..)|Request::ExportSanitized(..)|Request::CleanupScan(..)|Request::ImagesToPdf(..)|Request::Merge(..)|Request::Extract(..)|Request::Split(..)|Request::ExportWord(..)|Request::ExportImages(..)|Request::Compress(..)|Request::Ocr(..)|Request::PageBatch(..)|Request::LayoutItems(..)|Request::HighlightText(..)|Request::FormatText(..)|Request::Replace {..}|Request::ReplaceOptions {..}|Request::EditParagraph(..)|Request::Print);
+            let cancellable=matches!(&request,Request::Sanitize(..)|Request::ExportSanitized(..)|Request::CleanupScan(..)|Request::ImagesToPdf(..)|Request::Merge(..)|Request::Extract(..)|Request::Split(..)|Request::SplitBookmarks(..)|Request::ExportWord(..)|Request::ExportImages(..)|Request::Compress(..)|Request::Ocr(..)|Request::PageBatch(..)|Request::LayoutItems(..)|Request::HighlightText(..)|Request::FormatText(..)|Request::Replace {..}|Request::ReplaceOptions {..}|Request::EditParagraph(..)|Request::Print);
             let control = if cancellable {active.start()} else {Default::default()};
             let reply = catch_unwind(AssertUnwindSafe(|| {
                 pdf_editor_core::operation::with_control(&control, || {
@@ -660,6 +661,10 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
                 Err(e) => failed(e),
             }
         }
+        Request::SplitBookmarks(folder) => match engine.split_pdf_at_bookmarks(state.doc.as_ref()?, &folder) {
+            Ok(paths) => Some(Reply::Exported(format!("Created {} split PDFs.", paths.len()))),
+            Err(e) => failed(e),
+        },
         Request::Annotations => match engine.annotations(state.doc.as_ref()?) {
             Ok(items) => Some(Reply::Annotations(items)),
             Err(e) => failed(e),

@@ -1087,7 +1087,7 @@ impl EditorApp {
                 |Request::Extract(_,path)|Request::ExportWord(path)|Request::ExportTable(_,_,path)
                 |Request::ImagesToPdf(_,_,path) => self.recovery_destination(path),
             Request::SaveWorkingCopy => self.qol.working_copy.as_ref().is_some_and(|path|self.recovery_destination(path)),
-            Request::Split(_,folder)|Request::ExportImages(_,_,_,folder) => self.recovery_destination(&folder.join("output")),
+            Request::Split(_,folder)|Request::SplitBookmarks(folder)|Request::ExportImages(_,_,_,folder) => self.recovery_destination(&folder.join("output")),
             _ => false,
         };
         if reserved {

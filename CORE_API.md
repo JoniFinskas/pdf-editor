@@ -124,6 +124,7 @@ uses the search APIs, and zoom uses `Engine::render`.
 - `Engine::merge_pdfs(document, paths) -> Result<()>`: append multiple PDFs in order as one atomic undoable operation.
 - `Engine::extract_pages(document, pages, destination) -> Result<()>`: export selected pages in the supplied order to a new PDF.
 - `Engine::split_pdf(document, ranges, folder) -> Result<Vec<PathBuf>>`: export semicolon-separated page groups as split-1.pdf, split-2.pdf, etc., refusing existing destinations.
+- `Engine::split_pdf_at_bookmarks(document, folder) -> Result<Vec<PathBuf>>`: split at sorted, unique top-level bookmark page destinations, keeping leading pages in a separate file. Reuses exclusive numbered exports and rollback; requires valid bookmarks and at most 100 output groups.
 
 ## PDF annotations
 

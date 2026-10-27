@@ -1,5 +1,15 @@
 # Engine decisions
 
+## Bookmark split boundaries
+
+Read bookmarks from the current worker-owned document when exporting, independent
+of sidebar caches. Sort and deduplicate valid top-level page destinations; keep
+leading pages in a separate PDF and exclude child or unresolved destinations.
+Reuse range-based splitting, including its 100-file limit, exclusive numbered
+filenames and rollback. Bookmark titles never become filenames. The existing
+Split section selects ranges or bookmarks, and captures the method before folder
+selection. Cancellation and recovery-directory protection cover both methods.
+
 ## Bulk edit ordinal lookups
 
 Index replacement targets once and each page's expected changes once, preserving

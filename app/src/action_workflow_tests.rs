@@ -244,7 +244,7 @@ fn print_waits_for_pending_edit_and_cancels_on_failure() {
 
 #[test]
 fn document_actions_do_not_run_after_rejected_drafts() {
-    for case in 0..8 {
+    for case in 0..9 {
         let ctx = Context::default();
         let (mut app, inbox, _outbox) = mock_app();
         opened(&mut app, &ctx);
@@ -279,6 +279,7 @@ fn document_actions_do_not_run_after_rejected_drafts() {
                 width: 300.,
                 height: 400.,
             }),
+            8 => Request::SplitBookmarks("generated-chapters".into()),
             _ => Request::Print,
         };
         app.document_action(request());

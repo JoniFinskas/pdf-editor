@@ -97,10 +97,11 @@ fn all_export_targets_reject_recovery_files_and_folders() {
         Request::ExportTable(pdf_editor_core::TableGrid {cells:vec![vec!["Generated".into()]]},pdf_editor_core::TableFormat::Csv,output.with_extension("csv")),
         Request::Split("1".into(),directory.to_owned()),
         Request::ExportImages("1".into(),36,pdf_editor_core::PageImageFormat::Png,directory.to_owned()),
+        Request::SplitBookmarks(directory.to_owned()),
         Request::ImagesToPdf(vec![],pdf_editor_core::ImagePageSize::A4,output.clone()),
     ];
     for (index,request) in requests.into_iter().enumerate() {
-        if index==5 {app.doc=None;}
+        if matches!(request, Request::ImagesToPdf(..)) {app.doc=None;}
         app.document_action(request);
         assert_eq!(app.busy,0,"Export {index} reached the worker");
         assert!(inbox.try_recv().is_err());
@@ -365,6 +366,7 @@ fn recovery_directory_junctions_preserve_external_files_and_reject_save_aliases(
     }
     for request in [Request::Extract("1".into(),alias.join("extract.pdf")),
         Request::Split("1".into(),alias.clone()),
+        Request::SplitBookmarks(alias.clone()),
         Request::ExportImages("1".into(),36,pdf_editor_core::PageImageFormat::Png,alias.clone())] {
         app.document_action(request);
         assert_eq!(app.busy,0,"Export bypassed the recovery junction guard");

@@ -33,7 +33,7 @@ impl Tool {
         match self {
             Self::Compare => "diff difference differences revisions changes",
             Self::Ocr => "recognition searchable scan scanned",
-            Self::Organize => "combine join separate divide",
+            Self::Organize => "combine join separate divide chapters bookmarks",
             Self::Stamps => "watermark numbering pagination",
             Self::Pictures => "photo picture jpg jpeg png",
             Self::Sanitize => "privacy remove metadata javascript attachments",

@@ -1,5 +1,45 @@
 // Generated-document integration for selection, batch operations and working copies.
 #[test]
+fn generated_bookmark_split_uses_current_document_and_preserves_editor_state() {
+    let (mut app, ctx, source) = qol_worker();
+    let original = std::fs::read(&source).unwrap();
+    assert_eq!(app.doc.as_ref().unwrap().pages.len(), 1);
+    for _ in 0..2 {
+        app.document_action(Request::PageBatch(pdf_editor_core::PageBatch::Duplicate { pages: vec![0], before: 1 }));
+        workflow_settle(&mut app, &ctx);
+    }
+    for page in [0, 2] {
+        app.busy += 1;
+        app.send(Request::Bookmarks);
+        workflow_settle(&mut app, &ctx);
+        app.document_action(Request::EditBookmarks(app.bookmarks.items.revision,
+            pdf_editor_core::BookmarkEdit::Add { title: "Chapter".into(), page, parent: None }));
+        workflow_settle(&mut app, &ctx);
+    }
+    app.bookmarks.items = Default::default();
+    let doc = app.doc.as_ref().unwrap();
+    let generation = doc.generation;
+    let history = (doc.can_undo, doc.can_redo, doc.dirty());
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let folder = root.join(format!("target/bookmark-worker-{unique}"));
+    std::fs::create_dir(&folder).unwrap();
+    app.document_action(Request::SplitBookmarks(folder.clone()));
+    workflow_settle(&mut app, &ctx);
+    let engine = pdf_editor_core::Engine::new(&root.join("target/debug/pdfium.dll")).unwrap();
+    for (index, count) in [2, 1].into_iter().enumerate() {
+        let path = folder.join(format!("split-{}.pdf", index + 1));
+        assert_eq!(engine.pages(&engine.open(&path).unwrap()).unwrap().len(), count);
+        std::fs::remove_file(path).unwrap();
+    }
+    std::fs::remove_dir(folder).unwrap();
+    let doc = app.doc.as_ref().unwrap();
+    assert_eq!(doc.generation, generation);
+    assert_eq!((doc.can_undo, doc.can_redo, doc.dirty()), history);
+    assert_eq!(std::fs::read(source).unwrap(), original);
+}
+
+#[test]
 fn generated_identical_font_format_preserves_saved_state_previews_and_redo() {
     let (mut app, ctx, source) = qol_worker();
     let original = std::fs::read(&source).unwrap();
