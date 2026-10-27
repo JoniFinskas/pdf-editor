@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Remove a repeated comparison source label and clarify difference navigation and counts.
+
 - Preserve redo, previews and saved state when applying identical font formatting; verify the full embedded font resource before skipping a change.
 
 - Reuse the paragraph font's encoding map for measuring and writing reflowed text.

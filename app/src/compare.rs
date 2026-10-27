@@ -612,7 +612,7 @@ impl Compare {
                     ui.horizontal(|ui| {
                         ui.strong(if i == 0 { "Original" } else { "Revised" });
                         let name = if self.current_mode && i == 1 {
-                            "Current edits".into()
+                            String::new()
                         } else {
                             self.paths[i]
                                 .as_ref()
@@ -643,7 +643,9 @@ impl Compare {
                                     .pick_file()
                             });
                         }
-                        ui.add(egui::Label::new(name).truncate());
+                        if !name.is_empty() {
+                            ui.add(egui::Label::new(name).truncate());
+                        }
                     });
                 }
             });
@@ -765,8 +767,9 @@ impl Compare {
                     || self.changed_page(false).is_some()
                 {
                     ui.separator();
-                    if Btn::new("‹ Change")
+                    if Btn::new("‹ Difference")
                         .id("compare-change-prev")
+                        .tip("Previous difference")
                         .show(ui, p)
                         .clicked()
                     {
@@ -778,8 +781,9 @@ impl Compare {
                             self.step_change(false);
                         }
                     }
-                    if Btn::new("Change ›")
+                    if Btn::new("Difference ›")
                         .id("compare-change-next")
+                        .tip("Next difference")
                         .show(ui, p)
                         .clicked()
                     {
@@ -889,7 +893,7 @@ impl Compare {
             .filter(|(t, v)| *t > 0 || *v > 0)
             .count();
         if changed > 0 {
-            ui.strong(format!("{changed} changed pages"));
+            ui.strong(format!("{changed} changed page{}", if changed == 1 { "" } else { "s" }));
         }
         if scanned < self.summaries.len() {
             ui.label(format!("Checking {scanned} / {}", self.summaries.len()));
@@ -897,7 +901,7 @@ impl Compare {
         if !self.errors.is_empty() {
             ui.colored_label(
                 p.error_fg,
-                format!("{} pages could not be checked", self.errors.len()),
+                format!("{} page{} could not be checked", self.errors.len(), if self.errors.len() == 1 { "" } else { "s" }),
             );
         }
         ui.checkbox(&mut self.show_all_pages, "All pages");
@@ -914,8 +918,9 @@ impl Compare {
                         && !self.errors.iter().any(|(page, _)| *page == i)
                     {
                         let label = format!(
-                            "{} · {text} text changes{}",
+                            "{} · {text} text change{}{}",
                             self.pair_label(i),
+                            if *text == 1 { "" } else { "s" },
                             if *pixels > 0 { " · visual" } else { "" }
                         );
                         if ui
@@ -944,7 +949,7 @@ impl Compare {
                 {
                     ui.separator();
                     if !self.regions.is_empty() {
-                        ui.strong(format!("{} text changes", self.regions.len()));
+                        ui.strong(format!("{} text change{}", self.regions.len(), if self.regions.len() == 1 { "" } else { "s" }));
                     }
                     if self.regions.is_empty()
                         && self.changed_pixels > 0
