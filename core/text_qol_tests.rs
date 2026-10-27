@@ -76,6 +76,40 @@ fn bulk_replacement_reuses_font_decoding_without_mixing_character_maps() {
 }
 
 #[test]
+fn text_handles_from_other_content_or_tampered_groups_are_rejected() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let source_a = temp("selection-source-a.pdf");
+    let source_b = temp("selection-source-b.pdf");
+    fs::write(&source_a, generated("AB", false, 0, 0., false, false)).unwrap();
+    fs::write(&source_b, generated("BA", false, 0, 0., false, false)).unwrap();
+    let a = e.open(&source_a).unwrap();
+    let foreign = e.text_objects(&a, 0).unwrap().remove(0);
+    for action in 0..4 {
+        let mut doc = e.open(&source_b).unwrap();
+        let bytes = doc.bytes.clone();
+        let history = doc.recovery_bytes().unwrap();
+        let result = match action {
+            0 => e.edit(&mut doc, &foreign, "BA").map(|_| ()),
+            1 => e.delete_text(&mut doc, &foreign).map(|_| ()),
+            2 => e.style_text(&mut doc, &foreign, foreign.size + 1., [1,2,3]),
+            _ => e.edit_group(&mut doc, std::slice::from_ref(&foreign), "Changed").map(|_| ()),
+        };
+        assert!(result.is_err(), "Foreign selection accepted for action {action}");
+        assert!(doc.bytes == bytes);
+        assert!(doc.recovery_bytes().unwrap() == history);
+    }
+    let mut doc = e.open(&fixture("paragraph-Left.pdf")).unwrap();
+    let bytes = doc.bytes.clone();
+    let mut selected = paragraphs(&e.text_objects(&doc, 0).unwrap()).remove(0);
+    selected.objects[1].text = "Tampered".into();
+    assert!(e.edit_paragraph(&mut doc, &selected, "Muutos").is_err());
+    assert!(doc.bytes == bytes);
+    fs::remove_file(source_a).unwrap();
+    fs::remove_file(source_b).unwrap();
+}
+
+#[test]
 fn ordinal_indexes_preserve_first_targets_and_sparse_deletion_order() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();

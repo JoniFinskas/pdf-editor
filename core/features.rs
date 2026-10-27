@@ -60,6 +60,7 @@ impl Engine {
                 .position(|o| o.index == selected.index)
                 .ok_or_else(|| err("Text object no longer exists"))?;
             let actual = &objects[ordinal];
+            validate_text_selection(selected, actual)?;
             if actual.size == size && actual.color[..3] == color {
                 let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
                 let page = pdf.pages().get(i32::from(selected.page))?;

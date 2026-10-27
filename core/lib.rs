@@ -217,6 +217,16 @@ pub struct TextObject {
     pub color: [u8; 4],
     pub matrix: [f32; 6],
 }
+fn validate_text_selection(selected: &TextObject, actual: &TextObject) -> Result<()> {
+    if selected.page != actual.page || selected.index != actual.index
+        || selected.revision != actual.revision || selected.text != actual.text
+        || selected.font != actual.font || selected.size != actual.size
+        || selected.color != actual.color || selected.matrix != actual.matrix
+        || selected.bounds != actual.bounds || selected.quad != actual.quad {
+        return Err(err("Selection no longer matches the document"));
+    }
+    Ok(())
+}
 #[derive(Clone, Debug)]
 pub struct PageInfo {
     pub width: f32,
@@ -433,13 +443,14 @@ impl Engine {
                 ));
             }
             let objects = self.text_objects(doc, first.page)?;
+            let positions: std::collections::HashMap<_, _> = objects.iter().enumerate()
+                .map(|(ordinal, object)| (object.index, ordinal)).collect();
             let mut ordinals = selected
                 .iter()
                 .map(|s| {
-                    objects
-                        .iter()
-                        .position(|o| o.index == s.index)
-                        .ok_or_else(|| err("Text object no longer exists"))
+                    let ordinal = *positions.get(&s.index).ok_or_else(|| err("Text object no longer exists"))?;
+                    validate_text_selection(s, &objects[ordinal])?;
+                    Ok(ordinal)
                 })
                 .collect::<Result<Vec<_>>>()?;
             ordinals.sort_unstable();

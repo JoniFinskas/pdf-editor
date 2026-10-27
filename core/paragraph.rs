@@ -338,6 +338,11 @@ impl Engine {
                 return Err(err("Selection is stale; select the paragraph again"));
             }
             let all = self.text_objects(doc, first.page)?;
+            let current: std::collections::HashMap<_, _> = all.iter().map(|object| (object.index, object)).collect();
+            for object in &selected.objects {
+                let actual = current.get(&object.index).ok_or_else(|| err("Paragraph selection changed"))?;
+                validate_text_selection(object, actual)?;
+            }
             let p = paragraphs(&all)
                 .into_iter()
                 .find(|p| {

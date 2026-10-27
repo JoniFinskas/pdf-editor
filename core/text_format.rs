@@ -43,14 +43,7 @@ impl Engine {
                     .position(|o| o.index == selection.index)
                     .ok_or_else(|| err("Text object no longer exists"))?;
                 let actual = &objects[ordinal];
-                if actual.text != selection.text
-                    || actual.matrix != selection.matrix
-                    || actual.font != selection.font
-                    || actual.size != selection.size
-                    || actual.color != selection.color
-                {
-                    return Err(err("Selection no longer matches the document"));
-                }
+                validate_text_selection(selection, actual)?;
                 let entries = groups.entry(selection.page).or_default();
                 if !entries.contains(&ordinal) {
                     entries.push(ordinal);

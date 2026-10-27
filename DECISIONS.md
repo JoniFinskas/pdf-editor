@@ -1,5 +1,14 @@
 # Engine decisions
 
+## Current text selection validation
+
+Validate every selected run's page, index, revision, wording, font, style and
+geometry against the current native objects before edits or no-op shortcuts.
+Apply the same check to paragraph members and size/color formatting. Resolve group
+indices once so validating large selections does not add repeated linear scans.
+These checks establish current source equality; they do not introduce document
+identity tokens or an authorization boundary for public API callers.
+
 ## Bookmark split boundaries
 
 Read bookmarks from the current worker-owned document when exporting, independent

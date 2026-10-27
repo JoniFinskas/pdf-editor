@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Reject text edit, style and paragraph selections whose current content or geometry no longer matches, including handles from other documents.
+
 - Keep the full tool list in the searchable All tools panel; simplify the document menu to Save As and recent files.
 
 - Split PDFs at top-level bookmarks from the existing page organizer, retaining leading pages and refusing existing output files.
