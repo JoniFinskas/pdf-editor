@@ -193,7 +193,7 @@ fn type3_covers(doc: &lopdf::Document, font: &Dictionary, text: &str) -> bool {
 }
 
 /// The standard Latin Type1 fonts provide their predefined glyph sets without
-/// embedding. Custom descriptors or character maps require the normal checks.
+/// embedding. Custom descriptors, widths or maps require the normal checks.
 fn standard_font_covers(doc: &lopdf::Document, font: &Dictionary, text: &str) -> bool {
     matches!(font.get(b"Subtype").and_then(Object::as_name), Ok(b"Type1"))
         && matches!(font.get(b"BaseFont").and_then(Object::as_name),
@@ -202,6 +202,9 @@ fn standard_font_covers(doc: &lopdf::Document, font: &Dictionary, text: &str) ->
                 | b"Courier" | b"Courier-Bold" | b"Courier-Oblique" | b"Courier-BoldOblique"))
         && !font.has(b"FontDescriptor")
         && !font.has(b"ToUnicode")
+        && !font.has(b"Widths")
+        && !font.has(b"FirstChar")
+        && !font.has(b"LastChar")
         && (!font.has(b"Encoding") || matches!(
             font.get_deref(b"Encoding", doc).and_then(Object::as_name),
             Ok(b"StandardEncoding" | b"WinAnsiEncoding" | b"MacRomanEncoding")))
@@ -923,6 +926,9 @@ mod tests {
             ("FontDescriptor", Object::Dictionary(Dictionary::new())),
             ("Encoding", Object::Dictionary(Dictionary::new())),
             ("ToUnicode", Object::Null),
+            ("Widths", Object::Array(vec![667.into()])),
+            ("FirstChar", 65.into()),
+            ("LastChar", 66.into()),
         ] {
             let mut custom = base.clone();
             custom.set(key, value);

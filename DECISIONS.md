@@ -11,12 +11,15 @@ workflows verify original bytes, saved state and redo branches remain intact.
 
 ## Standard PDF font reuse
 
-Reuse the twelve standard Latin Type1 faces when they have no custom descriptor
-or ToUnicode map and use a supported predefined encoding. Encoding must round-trip
-the replacement before reuse. Symbolic fonts, subsets, custom encodings and missing
+Reuse the twelve standard Latin Type1 faces when they have no custom descriptor,
+width table or ToUnicode map and use a supported predefined encoding. Encoding
+must round-trip the replacement before reuse. Symbolic fonts, subsets, custom encodings and missing
 glyphs retain the existing fallback checks. Generated cases cover all twelve faces,
 four page rotations and default, Standard, WinAnsi and MacRoman encodings, including
 neighbor pixels, source preservation, saved rendering and undo/redo.
+
+Partial width tables retain the verified font fallback so newly inserted characters
+receive usable metrics instead of failing text extraction.
 
 ## Cursor anchors inside saved graphics state
 

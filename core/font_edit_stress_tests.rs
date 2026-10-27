@@ -2,6 +2,51 @@ use super::*;
 use skrifa::{FontRef, MetadataProvider};
 
 #[test]
+fn standard_font_partial_widths_do_not_collapse_new_character_positions() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let mut pdf = lopdf::Document::with_version("1.7");
+    let pages = pdf.new_object_id();
+    let font = pdf.add_object(dictionary! {
+        "Type"=>"Font", "Subtype"=>"Type1", "BaseFont"=>"Helvetica", "Encoding"=>"WinAnsiEncoding",
+        "FirstChar"=>65, "LastChar"=>66, "Widths"=>vec![667.into(),667.into()],
+    });
+    let content = pdf.add_object(Stream::new(dictionary! {}, b"BT /F1 18 Tf 1 0 0 1 50 200 Tm (AB) Tj ET".to_vec()));
+    let page = pdf.add_object(dictionary! {
+        "Type"=>"Page", "Parent"=>pages, "MediaBox"=>vec![0.into(),0.into(),500.into(),300.into()],
+        "Resources"=>dictionary! {"Font"=>dictionary! {"F1"=>font}}, "Contents"=>content,
+    });
+    pdf.objects.insert(pages, dictionary! {"Type"=>"Pages", "Kids"=>vec![page.into()], "Count"=>1}.into());
+    let catalog = pdf.add_object(dictionary! {"Type"=>"Catalog", "Pages"=>pages});
+    pdf.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    pdf.save_to(&mut bytes).unwrap();
+    let source = temp("standard-partial-widths.pdf");
+    fs::write(&source, &bytes).unwrap();
+    let mut doc = e.open(&source).unwrap();
+    let selected = e.text_objects(&doc, 0).unwrap().remove(0);
+    e.edit(&mut doc, &selected, "Added 123").unwrap();
+    let edited = e.text_objects(&doc, 0).unwrap().remove(0);
+    assert_eq!(edited.text, "Added 123");
+    assert!(edited.bounds.right - edited.bounds.left > (selected.bounds.right - selected.bounds.left) * 1.5,
+        "New characters collapsed because their original width table has no entries");
+    let changed = doc.bytes.clone();
+    let saved = temp("standard-partial-widths-saved.pdf");
+    if saved.exists() { fs::remove_file(&saved).unwrap(); }
+    doc.save_as(&saved).unwrap();
+    let reopened = e.open(&saved).unwrap();
+    assert_eq!(e.text_objects(&reopened, 0).unwrap()[0].text, "Added 123");
+    assert_eq!(e.render(&reopened, 0, 2.).unwrap().rgba, e.render(&doc, 0, 2.).unwrap().rgba);
+    assert!(doc.undo());
+    assert!(doc.bytes == bytes);
+    assert!(doc.redo());
+    assert!(doc.bytes == changed);
+    assert_eq!(fs::read(&source).unwrap(), bytes);
+    fs::remove_file(source).unwrap();
+    fs::remove_file(saved).unwrap();
+}
+
+#[test]
 fn standard_pdf_fonts_keep_identity_spacing_and_saved_edits() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();

@@ -6,7 +6,7 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 - Keep redo history, previews and the saved state when applying an unchanged text size and color.
 
-- Preserve built-in Helvetica, Times and Courier fonts when editing their supported characters, without embedding a substitute.
+- Preserve built-in Helvetica, Times and Courier fonts with standard metrics when editing supported characters; retain font fallback for custom width tables.
 
 - Speed up long text edits inside balanced saved graphics states without moving neighboring text.
 
