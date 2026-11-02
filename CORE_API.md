@@ -423,3 +423,19 @@ segments and trailing image payloads fail verification.
 
 - `OcrReport { pages_recognized, words_added, skipped_text, skipped_empty }`: successful page/word counts and explicit skips.
 - `Engine::ocr_pages(document, pages) -> Result<OcrReport>`: recognize 1–100 unique valid pages in document order using installed Windows OCR languages; skip pages with text and pages with no recognized words, process one image at a time, and commit as one cancellable undo step. Errors leave bytes and history unchanged. Limits: 10,000 words/page, 100,000 words/batch and existing document size limits. All-skipped batches leave the document unchanged.
+
+## Document creation and local commands
+
+- `BlankPdf { width, height, pages }`: dimensions in PDF points; defaults to one A4 portrait page; accepts 1–1000 pages and finite dimensions of 1–14400 points.
+- `Engine::blank_document(BlankPdf) -> Result<Document>`: create an editable unsaved document without reading a source PDF.
+- `Document::is_new() -> bool`: report whether the document has no opened source-file identity.
+- `CvSpec { name, headline, contact, sections, letter }` and `CvSection { heading, body }`: plain-text CV input; Letter or default A4.
+- `Engine::create_cv(&CvSpec) -> Result<Document>`: create single-column selectable text, embed permitted installed fonts, wrap and paginate without shrinking; reject unsupported glyphs, oversized words and input/page limits.
+- `Engine::check_cv(&Document) -> Result<CvCheck>`: return actual extracted text, page count, byte count and limited image/text/upload-size warnings; not a screening guarantee.
+- `CommandSession::new(&Engine, &Path) -> Result<CommandSession>`: start an in-memory document session in an existing local workspace.
+- `CommandSession::input_file(&str) -> Result<PathBuf>`: resolve an existing workspace-relative file, rejecting traversal and redirected paths.
+- `CommandSession::execute(&str) -> CommandResponse`: execute one bounded JSON command; response includes success, document identity, revision and dirty state.
+- `CommandSession::execute_with_control(&str, &OperationControl) -> CommandResponse`: execute with existing cooperative cancellation and progress support.
+- `command_schema() -> String`: discover operations and JSON input schemas without loading PDFium.
+
+See [the command protocol](docs/COMMANDS.md) for selection, file and error contracts.

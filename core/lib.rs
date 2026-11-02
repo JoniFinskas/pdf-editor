@@ -57,6 +57,10 @@ mod pictures;
 pub use pictures::PlacedPicture;
 mod ocr;
 pub use ocr::OcrReport;
+mod creation;
+pub use creation::{BlankPdf, CvSection, CvSpec, CvCheck};
+mod commands;
+pub use commands::{CommandSession, CommandResponse, command_schema};
 mod links;
 pub use links::{LinkTarget, LinkSpec, PdfLink};
 mod organize;
@@ -588,10 +592,13 @@ impl Document {
         }
     }
     pub fn suggested_save_path(&self) -> PathBuf {
+        if self.is_new() && self.original.file_name().is_some_and(|name|name.to_string_lossy().starts_with("Untitled-")) { return PathBuf::from("Untitled.pdf"); }
         let mut name = self.original.file_stem().unwrap_or_default().to_os_string();
         name.push("_edited.pdf");
         self.original.with_file_name(name)
     }
+    /// Generated documents have no original file to reopen or overwrite.
+    pub fn is_new(&self) -> bool { !self.original.is_absolute() }
     pub fn save_as(&self, path: &Path) -> Result<()> {
         if !path
             .extension()

@@ -21,6 +21,9 @@ const SAMPLE_SCALE: f32 = 4.0;
 const SAMPLE_SPAN: f32 = 1000.0;
 
 pub enum Request {
+    New(pdf_editor_core::BlankPdf),
+    CreateCv(pdf_editor_core::CvSpec),
+    CheckCv,
     ObjectPreview { id: u64, items: Vec<pdf_editor_core::PageItem>, scale: f32 },
     RenderTiles {page:u16,scale:f32,regions:Vec<[u32;4]>},
     ComparisonSnapshot(u64),
@@ -166,6 +169,8 @@ impl PageTransform {
 }
 
 pub enum Reply {
+    Created {generation:u64,pages:Vec<PageInfo>,cv:bool},
+    CvChecked(pdf_editor_core::CvCheck),
     ObjectPreview { id: u64, generation: u64, result: pdf_editor_core::Result<pdf_editor_core::ObjectPreview> },
     Tiles {generation:u64,page:u16,scale:f32,images:Result<Vec<([u32;4],pdf_editor_core::Image)>,String>},
     SanitizedExported(PathBuf),
@@ -460,7 +465,7 @@ fn run(
                 batch = coalesce(queued).into_iter();
             }
             let Some(request) = batch.next() else { break };
-            let cancellable=matches!(&request,Request::Sanitize(..)|Request::ExportSanitized(..)|Request::CleanupScan(..)|Request::ImagesToPdf(..)|Request::Merge(..)|Request::Extract(..)|Request::Split(..)|Request::SplitBookmarks(..)|Request::ExportWord(..)|Request::ExportImages(..)|Request::Compress(..)|Request::OcrPages(..)|Request::PageBatch(..)|Request::LayoutItems(..)|Request::HighlightText(..)|Request::FormatText(..)|Request::Replace {..}|Request::ReplaceOptions {..}|Request::EditParagraph(..)|Request::Print);
+            let cancellable=matches!(&request,Request::New(..)|Request::CreateCv(..)|Request::CheckCv|Request::Sanitize(..)|Request::ExportSanitized(..)|Request::CleanupScan(..)|Request::ImagesToPdf(..)|Request::Merge(..)|Request::Extract(..)|Request::Split(..)|Request::SplitBookmarks(..)|Request::ExportWord(..)|Request::ExportImages(..)|Request::Compress(..)|Request::OcrPages(..)|Request::PageBatch(..)|Request::LayoutItems(..)|Request::HighlightText(..)|Request::FormatText(..)|Request::Replace {..}|Request::ReplaceOptions {..}|Request::EditParagraph(..)|Request::Print);
             let control = if cancellable {active.start()} else {Default::default()};
             let reply = catch_unwind(AssertUnwindSafe(|| {
                 pdf_editor_core::operation::with_control(&control, || {
@@ -553,6 +558,21 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
+        Request::New(..)|Request::CreateCv(..) => {
+            let cv=matches!(&request,Request::CreateCv(_));
+            let result=match request {Request::New(spec)=>engine.blank_document(spec),Request::CreateCv(spec)=>engine.create_cv(&spec),_=>return None};
+            match result {
+                Ok(mut doc)=>{
+                    doc.substitution=state.policy;
+                    let pages=match engine.pages(&doc){Ok(pages)=>pages,Err(error)=>return failed(error)};
+                    state.comparison_original=Some(Arc::new(doc.comparison_snapshot()));state.working_copy=None;state.doc=Some(doc);state.generation+=1;
+                    Some(Reply::Created {generation:state.generation,pages,cv})
+                }
+                Err(error)=>failed(error),
+            }
+        }
+        Request::CheckCv=>match engine.check_cv(state.doc.as_ref()?) {Ok(report)=>Some(Reply::CvChecked(report)),Err(error)=>failed(error)},
+
         Request::ObjectPreview {id,items,scale} => Some(Reply::ObjectPreview {id,generation:state.generation,result:engine.object_preview(state.doc.as_ref()?,&items,scale)}),
         Request::RenderTiles {page,scale,regions}=>{
             let doc=state.doc.as_ref()?;

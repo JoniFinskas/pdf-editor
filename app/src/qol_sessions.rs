@@ -93,7 +93,7 @@ fn read_preference(path: &Path) -> io::Result<bool> {
     }
 }
 
-fn capture_tab(tab: &EditorApp, recovery: bool) -> Option<SessionTab> {
+pub(super) fn capture_tab(tab: &EditorApp, recovery: bool) -> Option<SessionTab> {
     let doc = tab.doc.as_ref()?;
     if doc.protected || tab.qol.original_protected || tab.qol.copy_encrypted {
         return None;
@@ -112,6 +112,7 @@ fn capture_tab(tab: &EditorApp, recovery: bool) -> Option<SessionTab> {
     } else {
         None
     };
+    let source=if source.as_os_str().is_empty() {recovery.clone()?}else{source};
     Some(SessionTab {
         source,
         recovery,

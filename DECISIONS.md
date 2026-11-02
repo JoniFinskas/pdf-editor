@@ -1225,3 +1225,13 @@ Keep link authoring inside the existing markup tool. Show source rectangles on t
 ## Selected-page OCR transactions
 
 Run selected-page OCR sequentially with at most one rendered image and one recognized word vector in flight. Limit batches to 100 pages and 100,000 words, with 10,000 words per page. Reuse one native recognizer and one page mapping setup per recognized page. Release PDFium handles and its global operation lock while Windows recognizes text so independent PDF work can proceed. Build staging bytes without history snapshots and publish only once after verification and a final cancellation checkpoint. Existing text and empty recognition results are reported as separate skips; an all-skipped batch creates no edit. Cooperative cancellation polls the native job without spinning, requests cancellation and waits for terminal completion before releasing its resources.
+
+## Creation, CV layout and local command sessions
+
+Create blank PDFs through the existing lopdf page tree and native validation. Give each unsaved document a distinct source identity so working-copy authority cannot cross drafts. Keep new documents dirty and open creation results in separate tabs when another document is present. Reuse existing editing, history, recovery and save operations.
+
+CVs use one column of embedded selectable Unicode text, body-level contact details, explicit readable sizes and automatic page breaks. Reject unsupported glyphs and unbreakable overflow rather than dropping text or shrinking it. Normalize whitespace into prose and preserve explicit body line breaks. Verify generated reading order. Text review reports extraction, images and file size only; employer screening rules and parser behavior vary, so there is no ATS score or acceptance claim.
+
+Expose editing operations through a local JSON-line session. Require document identity and revision for mutations, resolve native selections freshly, retain previews internally, reject unknown fields and use exclusive outputs inside an explicitly selected workspace. Exclude shell/network/OS configuration and printing. This is a trusted-workspace interface, not an operating-system sandbox against concurrent hostile filesystem changes.
+
+Use cached, exact serde_json 1.0.150 instead of implementing JSON parsing. Its transitive zmij 1.0.21 is pinned by Cargo.lock; both versions predate the minimum 14-day age. Other locked packages remain unchanged. Retain upstream MIT permission text in the portable documentation.

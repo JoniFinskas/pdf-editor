@@ -5,6 +5,8 @@ the command-line companion and the license files beside the application.
 
 ## Getting started
 
+- **Ctrl+N** creates a blank PDF. **Build CV** in All tools lays out a single-column CV.
+  Review extracted text before sharing; no format guarantees an ATS result.
 - Open a PDF with **Ctrl+O** or drag it into the window.
 - Click text to edit. **Enter** or clicking away applies; **Escape** cancels.
 - Choose **Move / resize objects** to move text, images and vector objects.
@@ -25,9 +27,9 @@ recognize text with installed Windows OCR languages; print.
 
 ## Compare two versions
 
-Choose **Compare PDFs** in the toolbar. The open PDF is selected as the original.
-Choose the other saved PDF; comparison starts automatically. **Change file** lets
-you replace either file. Save pending edits before comparing. Passwords and page
+Choose **Compare PDFs** in the toolbar. The opening version is compared with current applied edits.
+Choose other saved PDFs with **Change file** when needed. Apply any draft text
+before comparing. Passwords and page
 matching are under **Options and passwords**.
 Use the changed-page list to move through the document. Within a page, click a
 numbered highlight or use **‹ Change / Change ›**. The list shows removed text
@@ -48,6 +50,10 @@ Check important results before sharing or printing.
 ## Command line
 
 Run `pdf-editor-cli.exe --help` for command-line options.
+Use `new --output NEW.pdf` for blank pages or `commands --schema` to discover
+the JSON-line interface. `commands --root WORKSPACE` reads commands from stdin;
+all paths must be relative to that existing folder. Exports refuse existing files.
+`save.update` updates only this session's working copy.
 
 ## Licenses
 
@@ -56,3 +62,32 @@ Distributing binaries requires providing corresponding source under GPLv3.
 The included notices retain the licences of PDFium and bundled third-party
 components. Use current releases
 so PDFium receives security updates.
+
+
+### serde_json 1.0.150 and zmij 1.0.21
+
+These components are used under their MIT terms:
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.

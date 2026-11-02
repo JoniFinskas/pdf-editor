@@ -7,6 +7,7 @@ mod navigation;
 mod bookmarks;
 mod cli;
 mod image_create;
+mod create;
 mod scan_cleanup;
 
 mod compare;

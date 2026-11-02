@@ -4,6 +4,10 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Create blank PDFs with standard or custom page sizes, orientation and page count.
+- Build editable, selectable-text CVs with wrapping, page breaks and extracted-text review.
+- Author PDFs through a bounded local JSON-line editing interface with discoverable schemas and revision checks.
+
 - Add, edit and remove web, email and document-page hyperlinks from Markup and links; select link areas directly on the page.
 - Keep annotation selection after updates and render only visible rows in long annotation lists.
 - Run local OCR across selected pages as one undo step, with cancellation and explicit skips for existing text or unrecognized pages.

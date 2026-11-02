@@ -7,13 +7,15 @@ use lopdf::{
 use std::sync::Mutex;
 #[path = "render_tile_tests.rs"]
 mod render_tile_tests;
-static PDFIUM: Mutex<()> = Mutex::new(());
+pub(super) static PDFIUM: Mutex<()> = Mutex::new(());
 #[path = "sanitize_workflow_tests.rs"]
 mod sanitize_workflow_tests;
 #[path = "hyperlink_tests.rs"]
 mod hyperlink_tests;
 #[path = "ocr_batch_tests.rs"]
 mod ocr_batch_tests;
+#[path = "creation_tests.rs"]
+mod creation_tests;
 
 #[test]
 fn comparison_snapshots_keep_opening_bytes_and_never_copy_edit_history() {
@@ -218,11 +220,11 @@ fn root() -> PathBuf {
         .expect("core crate is inside the repository")
         .to_path_buf()
 }
-fn engine() -> Engine {
+pub(super) fn engine() -> Engine {
     Engine::new(&root().join("target/debug/pdfium.dll"))
         .expect("Run scripts/setup-pdfium.ps1 first")
 }
-fn temp(name: &str) -> PathBuf {
+pub(super) fn temp(name: &str) -> PathBuf {
     let dir = root().join("target/test-output");
     fs::create_dir_all(&dir).unwrap();
     dir.join(format!("{}-{}", std::process::id(), name))

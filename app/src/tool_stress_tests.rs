@@ -2,6 +2,7 @@ use super::*;
 
 fn show(app: &mut EditorApp, ctx: &Context, p: &Palette, tool: Tool, idle: bool) {
     let request = match tool {
+        Tool::NewPdf|Tool::Cv => {let (creation,check)=app.create.show(ctx,p,idle,true);assert!(creation.is_none()&&!check);None},
         Tool::ImageCreate => app.image_create.show(ctx, p, idle),
         Tool::ScanCleanup => app.scan_cleanup.show(ctx, p, idle, 2),
         Tool::Replace => app.replace.show(ctx, p, idle),
@@ -41,6 +42,8 @@ fn every_tool_window_keeps_close_reachable_when_idle_or_busy() {
         for dark in [false, true] {
             for idle in [false, true] {
                 for (tool, title) in [
+                    (Tool::NewPdf,"New blank PDF"),
+                    (Tool::Cv,"Build CV"),
                     (Tool::ImageCreate, "Images to PDF"),
                     (Tool::ScanCleanup, "Scan cleanup"),
                     (Tool::Replace, "Find and replace"),

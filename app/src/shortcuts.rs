@@ -4,6 +4,7 @@ use eframe::egui::{Context, Key, KeyboardShortcut, Modifiers};
 pub enum Command {
     Tools,
     GoToPage,
+    New,
     Open,
     Save,
     SaveAs,
@@ -26,6 +27,7 @@ pub fn consume(ctx: &Context, editing: bool) -> Vec<Command> {
     for (key, command) in [
         (Key::G, Command::GoToPage),
         (Key::K, Command::Tools),
+        (Key::N, Command::New),
         (Key::O, Command::Open),
         (Key::S, Command::Save),
         (Key::F, Command::Find),
@@ -80,6 +82,7 @@ mod tests {
         for (key, command) in [
             (Key::G, Command::GoToPage),
             (Key::K, Command::Tools),
+            (Key::N, Command::New),
             (Key::O, Command::Open),
             (Key::S, Command::Save),
             (Key::Z, Command::Undo),

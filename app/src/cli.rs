@@ -1,3 +1,5 @@
+#[path = "commands_cli.rs"]
+mod commands_cli;
 #[path = "cli_stamps.rs"]
 mod cli_stamps;
 use pdf_editor_core::{Engine, PageEdit, PageImageFormat, page_ranges};
@@ -7,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const HELP: &str = "PDF Editor headless CLI\nCommands:\n  merge INPUT... --output NEW.pdf\n  split INPUT --pages '1-3;4-6' --output EXISTING_FOLDER\n  extract INPUT --pages 1,3-5 --output NEW.pdf\n  compress INPUT --output NEW.pdf [--edge 1600] [--quality 80]\n  rotate INPUT --output NEW.pdf [--pages 1-3] [--degrees 90|180|270]\n  to-image INPUT --output EXISTING_FOLDER [--pages 1-3] [--dpi 144] [--format png|jpg]\n  ocr INPUT --output NEW.pdf [--pages 1-3]\n  find-replace INPUT_OR_FOLDER --find TEXT [--replace TEXT --output PATH] [--dry-run]\n  stamp INPUT_OR_FOLDER --output PATH [--text TEXT] [--pages 1-3] [--position header|footer|absolute] [--date YYYY-MM-DD] [--dry-run]\n  bates INPUT_OR_FOLDER --output PATH [--prefix TEXT] [--start 1] [--digits 6] [--pages 1-3] [--dry-run]\nStamp options: --font Arial --size 12 --color 000000 --opacity 1 --left 30 --margin 24. Tokens: {date}, {page}, {pages}.\nBates folders continue numbering in sorted filename order. --dry-run writes nothing and needs no output.\nFolders are nonrecursive. Outputs must be new; sources are never overwritten.\nExit: 0 success, 1 processing failure, 2 usage error. OCR requires Windows.\nUse -- before positional paths beginning with a dash.\n";
+pub const HELP: &str = "PDF Editor headless CLI\nCommands:\n  new --output NEW.pdf [--size a4|a5|letter] [--landscape] [--pages 1]\n  commands --root WORKSPACE [--script RELATIVE.jsonl]\n  commands --schema\n  merge INPUT... --output NEW.pdf\n  split INPUT --pages '1-3;4-6' --output EXISTING_FOLDER\n  extract INPUT --pages 1,3-5 --output NEW.pdf\n  compress INPUT --output NEW.pdf [--edge 1600] [--quality 80]\n  rotate INPUT --output NEW.pdf [--pages 1-3] [--degrees 90|180|270]\n  to-image INPUT --output EXISTING_FOLDER [--pages 1-3] [--dpi 144] [--format png|jpg]\n  ocr INPUT --output NEW.pdf [--pages 1-3]\n  find-replace INPUT_OR_FOLDER --find TEXT [--replace TEXT --output PATH] [--dry-run]\n  stamp INPUT_OR_FOLDER --output PATH [--text TEXT] [--pages 1-3] [--position header|footer|absolute] [--date YYYY-MM-DD] [--dry-run]\n  bates INPUT_OR_FOLDER --output PATH [--prefix TEXT] [--start 1] [--digits 6] [--pages 1-3] [--dry-run]\nStamp options: --font Arial --size 12 --color 000000 --opacity 1 --left 30 --margin 24. Tokens: {date}, {page}, {pages}.\nBates folders continue numbering in sorted filename order. --dry-run writes nothing and needs no output.\nFolders are nonrecursive. Outputs must be new; sources are never overwritten.\nExit: 0 success, 1 processing failure, 2 usage error. OCR requires Windows.\nUse -- before positional paths beginning with a dash.\n";
 const COMMANDS: &[&str] = &[
     "merge",
     "split",
@@ -171,6 +173,7 @@ fn parse(args: Vec<OsString>) -> Result<Command, String> {
 /// Recognized headless commands bypass all window creation. Bare PDF paths remain GUI inputs.
 pub fn dispatch(args: Vec<OsString>) -> Option<i32> {
     let first = args.first()?.to_str()?;
+    if matches!(first,"new"|"commands") {return Some(commands_cli::run(args));}
     if matches!(first, "--version" | "-V") {
         if args.len() != 1 { return Some(2); }
         println!("{VERSION}");
@@ -209,6 +212,7 @@ pub fn dispatch(args: Vec<OsString>) -> Option<i32> {
     Some(run(args))
 }
 pub fn run(args: Vec<OsString>) -> i32 {
+    if args.first().and_then(|a|a.to_str()).is_some_and(|a|matches!(a,"new"|"commands")) {return commands_cli::run(args);}
     if args.first().is_some_and(|a| a == "--version" || a == "-V") {
         return dispatch(args).unwrap_or(2);
     }

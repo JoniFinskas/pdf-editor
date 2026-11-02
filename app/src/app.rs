@@ -53,9 +53,10 @@ const KEEP_PAGES: usize = 2;
 const THUMB_BOX: Vec2 = vec2(112.0, 140.0);
 const THUMB_ROW: f32 = 186.0;
 /// Shortcut list on the settings page: action, keys and a note.
-const SHORTCUTS: [(&str, &[&str], &str); 11] = [
+const SHORTCUTS: [(&str, &[&str], &str); 12] = [
     ("Search all tools", &["Ctrl", "K"], "Arrow keys choose; Enter opens."),
     ("Go to page", &["Ctrl", "G"], ""),
+    ("New blank PDF", &["Ctrl", "N"], ""),
     ("Open a PDF", &["Ctrl", "O"], ""),
     ("Save working copy", &["Ctrl", "S"], "Ctrl + Shift + S creates another copy."),
     ("Undo", &["Ctrl", "Z"], ""),
@@ -74,6 +75,8 @@ const MENU_WIDTH: f32 = 280.0;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
     ImageCreate,
+    NewPdf,
+    Cv,
     ScanCleanup,
     Replace,
     Forms,
@@ -100,7 +103,8 @@ enum Tool {
 type MenuSection = (&'static str, &'static [(Tool, &'static str, Icon)]);
 
 impl Tool {
-    const MENU: [MenuSection; 2] = [
+    const MENU: [MenuSection; 3] = [
+        ("Create", &[(Tool::NewPdf,"New blank PDF…",Icon::File),(Tool::Cv,"Build CV…",Icon::File)]),
         (
             "Edit",
             &[
@@ -137,6 +141,8 @@ impl Tool {
 
     fn description(self) -> &'static str {
         match self {
+            Self::NewPdf => "Create a blank PDF with a chosen paper size, orientation and page count.",
+            Self::Cv => "Build a single-column CV and review its selectable text.",
             Self::ImageCreate => "Create a PDF from JPG, PNG or HEIC photos; reorder images and choose page size.",
             Self::ScanCleanup => "Straighten scanned photos, correct perspective, choose grayscale or black and white.",
             Self::Replace => "Find text and replace one match or all matches while preserving fonts.",
@@ -170,6 +176,8 @@ impl Tool {
     /// Stable button key, so tests can find the menu entries.
     fn key(self) -> &'static str {
         match self {
+            Tool::NewPdf => "tool-new-pdf",
+            Tool::Cv => "tool-cv",
             Tool::ImageCreate => "tool-image-create",
             Tool::ScanCleanup => "tool-scan-cleanup",
             Tool::Replace => "tool-replace",
@@ -429,6 +437,10 @@ impl eframe::App for TabbedApp {
         if let Some(path) = self.tabs.iter_mut().find_map(|(_, tab)| tab.new_tab_path.take()) {
             self.add(&ctx, Some(path));
         }
+        if let Some(creation)=self.tabs.iter_mut().find_map(|(_,tab)|tab.new_document.take()) {
+            if self.tabs.len()<32 {self.add(&ctx,None);self.tabs[self.active].1.create_here(creation);}
+            else {self.tabs[self.active].1.banner(BannerKind::Warning,"Close a tab before creating another document (32-tab limit).");}
+        }
         if let Some(target) = self.closing {
             let busy = self
                 .tabs
@@ -486,6 +498,8 @@ pub struct EditorApp {
     dragging_page: Option<usize>,
     text_tool: TextTool,
     image_create: crate::image_create::ImageCreate,
+    create:crate::create::CreateTool,
+    new_document:Option<crate::create::Creation>,
     scan_cleanup: crate::scan_cleanup::ScanCleanup,
     signatures: crate::signatures::Signatures,
     forms: crate::forms::Forms,
@@ -896,6 +910,7 @@ impl EditorApp {
             dragging_page: None,
             text_tool: TextTool::default(),
             image_create: Default::default(),
+            create:Default::default(),new_document:None,
             scan_cleanup: Default::default(),
             signatures: Default::default(),
             forms: Default::default(),
@@ -1514,6 +1529,12 @@ impl EditorApp {
                     }
                 }
             }
+            Reply::Created {generation,pages,cv} => {
+                self.handle(ctx,Reply::Opened {generation,path:PathBuf::new(),name:if cv {"CV.pdf".into()}else{"Untitled.pdf".into()},pages,suggested:PathBuf::from(if cv {"CV.pdf"}else{"Untitled.pdf"}),protected:false,can_undo:false,can_redo:false});
+                if let Some(doc)=&mut self.doc {doc.changes=pdf_editor_core::ChangeState::recovered();doc.object_mode=false;}
+                self.text_tool.adding = !cv;
+            }
+            Reply::CvChecked(report) => {self.busy=self.busy.saturating_sub(1);self.create.check=Some(report);}
             Reply::Opened {
                 generation,
                 path,
@@ -1528,29 +1549,12 @@ impl EditorApp {
                 self.drag_preview = Default::default();
                 self.sanitize.close();
                 self.compare.reset_document();self.pending_comparison=None;
-                self.compare_origin=if protected {None}else{self.config_path.as_deref().and_then(|config|crate::comparison_origin::resolve(config,&path).ok().flatten())};
+                self.compare_origin=if protected || path.as_os_str().is_empty() {None}else{self.config_path.as_deref().and_then(|config|crate::comparison_origin::resolve(config,&path).ok().flatten())};
                 self.tools_open=false;
-                self.qol.document_changed();self.qol.restore_objects=None;
+                self.qol.document_changed();self.qol.restore_objects=None;self.create.check=None;
                 self.qol.working_copy=None; self.qol.copy_encrypted=false; self.qol.original_protected=protected;
                 self.scan_cleanup.invalidate();
-                if self.restoring.is_none()
-                    && let Some(config) = &self.config_path
-                {
-                    let result = (|| -> pdf_editor_core::Result<Vec<PathBuf>> {
-                        let mut settings = pdf_editor_core::Settings::load(config)?;
-                        let absolute = path.canonicalize().unwrap_or_else(|_| path.clone());
-                        settings.remember(&absolute);
-                        settings.save(config)?;
-                        Ok(settings.recent_files)
-                    })();
-                    match result {
-                        Ok(paths) => self.recent_files = paths,
-                        Err(e) => self.banner(
-                            BannerKind::Warning,
-                            format!("Recent files could not be saved: {e}"),
-                        ),
-                    }
-                }
+                if self.restoring.is_none() {self.remember_recent(&path);}
                 self.tables = Default::default();
                 self.text_tool.selection.clear();
                 self.text_tool.adding = false;
@@ -1763,6 +1767,7 @@ impl EditorApp {
                 if doc.generation != generation {
                     self.drag_preview.changed(generation);
                     self.qol.document_changed();
+                    self.create.check=None;
                     self.scan_cleanup.invalidate();
                     doc.selected_item = None;
                     doc.dragging_item = None;
@@ -1841,7 +1846,7 @@ impl EditorApp {
             Reply::WorkingCopySaved {path,encrypted} => {
                 if !encrypted && !self.qol.original_protected && let (Some(config),Some(doc))=(&self.config_path,&self.doc) {
                     let source=self.compare_origin.as_ref().unwrap_or(&doc.source);
-                    if crate::comparison_origin::remember(config,source,&path).is_err() {
+                    if !source.as_os_str().is_empty() && crate::comparison_origin::remember(config,source,&path).is_err() {
                         self.banner(BannerKind::Warning,"Saved. The original-file link could not be remembered.");
                     }
                 }
@@ -1854,6 +1859,7 @@ impl EditorApp {
                 self.handle(ctx,Reply::Saved(path));
             }
             Reply::Saved(path) => {
+                if self.doc.as_ref().is_some_and(|doc|doc.source.as_os_str().is_empty()) {self.remember_recent(&path);}
                 self.busy = self.busy.saturating_sub(1);
                 if let Some(doc) = &mut self.doc {
                     doc.changes.mark_saved();
@@ -2549,6 +2555,7 @@ impl EditorApp {
                     if let Some(doc) = &self.doc { self.page_jump.open_at(doc.current_page); }
                 },
                 Command::Tools => { self.tools_open = true; self.tools_focus = true; },
+                Command::New => self.create.open(false),
                 Command::Open => self.request_open(None),
                 Command::Save => self.save(),
                 Command::SaveAs => self.save_as(),
@@ -2611,11 +2618,25 @@ impl EditorApp {
 
     // ----- Layout -----
 
-    /// Top bar: the document toolbar, or the app bar on the home and
-    /// settings pages.
-    /// Opens a tool picked from the document menu.
+    fn remember_recent(&mut self,path:&std::path::Path) {
+        if path.as_os_str().is_empty() {return;}
+        let Some(config)=&self.config_path else {return;};
+        let result=(||->pdf_editor_core::Result<Vec<PathBuf>> {
+            let mut settings=pdf_editor_core::Settings::load(config)?;
+            settings.remember(&path.canonicalize().unwrap_or_else(|_|path.to_path_buf()));
+            settings.save(config)?;Ok(settings.recent_files)
+        })();
+        match result {Ok(paths)=>self.recent_files=paths,Err(e)=>self.banner(BannerKind::Warning,format!("Recent files could not be saved: {e}"))}
+    }
+    /// Installs a generated document in an empty tab.
+    fn create_here(&mut self,creation:crate::create::Creation) {
+        self.create.remember(&creation);self.busy+=1;self.opening=true;
+        self.send(match creation {crate::create::Creation::Blank(spec)=>Request::New(spec),crate::create::Creation::Cv(spec)=>Request::CreateCv(spec)});
+    }
     fn open_tool(&mut self, tool: Tool) {
         match tool {
+            Tool::NewPdf => self.create.open(false),
+            Tool::Cv => self.create.open(true),
             Tool::ImageCreate => self.image_create.open = true,
             Tool::ScanCleanup => {
                 self.commit_edit();
@@ -2745,6 +2766,8 @@ impl EditorApp {
                     .show(ui, |ui| {
                         ui.set_width(MENU_WIDTH);
                         ui.spacing_mut().item_spacing.y = 0.0;
+                        if Btn::new("New blank PDF...").id("menu-new-pdf").with_icon(Icon::File).align_left().min_width(MENU_WIDTH).enabled(idle).show(ui,p).clicked(){self.create.open(false);ui.close();}
+                        if Btn::new("Build CV...").id("menu-build-cv").with_icon(Icon::File).align_left().min_width(MENU_WIDTH).enabled(idle).show(ui,p).clicked(){self.create.open(true);ui.close();}
                         if Btn::new("Save As...").with_icon(Icon::Save).id("save-copy-as").align_left().min_width(MENU_WIDTH).enabled(idle).show(ui,p).clicked() {self.save_as();ui.close();}
                         menu_caption(ui, p, "Recent files");
                         if self.recent_files.is_empty() {
@@ -3155,7 +3178,12 @@ impl EditorApp {
                         if self.drop_zone(ui, p, width) {
                             open = Some(None);
                         }
-                        ui.add_space(32.0);
+                        ui.add_space(12.0);
+                        ui.horizontal_wrapped(|ui| {
+                            if Btn::new("New blank PDF").id("home-new-pdf").enabled(idle).show(ui,p).clicked(){self.create.open(false);}
+                            if Btn::new("Build CV").id("home-build-cv").enabled(idle).show(ui,p).clicked(){self.create.open(true);}
+                        });
+                        ui.add_space(24.0);
                     }
                     ui.label(RichText::new("Recent files").font(theme::semibold(24.0)));
                     let summary = if recent_files.is_empty() {
@@ -4732,6 +4760,11 @@ impl eframe::App for EditorApp {
             self.signatures.placing=false;
             self.markup.links.finish_frame(&ctx);
         }
+        let (creation,check)=self.create.show(&ctx,&p,self.busy==0&&self.engine_alive,self.doc.is_some());
+        if let Some(creation)=creation {
+            if self.doc.is_none()&&!self.opening&&self.busy==0 {self.create_here(creation);}else{self.new_document=Some(creation);}
+        }
+        if check {self.document_action(Request::CheckCv);}
         if let Some(request) = self.organize.show(&ctx, &p, self.busy == 0) {
             self.document_action(request);
         }
@@ -5618,6 +5651,7 @@ mod tests {
     include!("rotated_workflow_tests.rs");
     include!("action_workflow_tests.rs");
     include!("hyperlink_workflow_tests.rs");
+    include!("creation_workflow_tests.rs");
     include!("ocr_workflow_tests.rs");
     include!("drag_workflow_tests.rs");
     include!("font_readout_workflow_tests.rs");
@@ -5773,6 +5807,7 @@ mod tests {
                 dragging_page: None,
                 text_tool: TextTool::default(),
                 image_create: Default::default(),
+            create:Default::default(),new_document:None,
                 scan_cleanup: Default::default(),
                 signatures: Default::default(),
                 forms: Default::default(),

@@ -46,8 +46,8 @@ fn generated_cli_explains_missing_runtime_without_exposing_paths() {
     std::fs::create_dir(&folder).unwrap();
     let executable = folder.join(if cfg!(windows) { "pdf-editor-cli.exe" } else { "pdf-editor-cli" });
     std::fs::copy(env!("CARGO_BIN_EXE_pdf-editor-cli"), &executable).unwrap();
-    for flag in ["--help", "--version"] {
-        assert_eq!(invoke_at(&executable, vec![flag.into()]).status.code(), Some(0));
+    for args in [vec!["--help".into()],vec!["--version".into()],vec!["commands".into(),"--schema".into()]] {
+        assert_eq!(invoke_at(&executable, args).status.code(), Some(0));
     }
     let source = root.join("tests/fixtures/generated/multi-page.pdf");
     let original = std::fs::read(&source).unwrap();
@@ -75,6 +75,46 @@ fn success(args: Vec<OsString>) -> Output {
         String::from_utf8_lossy(&output.stderr)
     );
     output
+}
+
+#[test]
+fn generated_creation_cli_builds_real_blank_and_cv_files_and_stops_bad_scripts() {
+    let root=Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let folder=root.join(format!("target/creation-cli-{}",std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let blank=folder.join("blank.pdf");
+    success(vec!["new".into(),"--output".into(),blank.clone().into(),"--size".into(),"letter".into(),"--landscape".into(),"--pages".into(),"2".into()]);
+    let engine=Engine::new(&root.join("target/debug/pdfium.dll")).unwrap();
+    let doc=engine.open(&blank).unwrap();let pages=engine.pages(&doc).unwrap();
+    assert_eq!(pages.len(),2);assert_eq!((pages[0].width,pages[0].height),(792.,612.));
+    assert!(engine.text_objects(&doc,0).unwrap().is_empty());
+    let original=std::fs::read(&blank).unwrap();
+    assert_eq!(invoke(vec!["new".into(),"--output".into(),blank.clone().into()]).status.code(),Some(1));
+    assert_eq!(std::fs::read(&blank).unwrap(),original);
+    let script=folder.join("build.jsonl");
+    std::fs::write(&script,concat!(
+        "{\"op\":\"cv.create\",\"name\":\"Avery Example\",\"contact\":[\"reader@example.org\"],\"sections\":[{\"heading\":\"Experience\",\"body\":\"Built a fictional Rust project.\"}]}\n",
+        "{\"op\":\"inspect\",\"view\":\"text\"}\n",
+        "{\"op\":\"cv.check\"}\n",
+        "{\"op\":\"render\",\"path\":\"CV.png\",\"dpi\":36}\n",
+        "{\"op\":\"save\",\"document\":1,\"revision\":0,\"path\":\"CV.pdf\"}\n",
+    )).unwrap();
+    let result=success(vec!["commands".into(),"--root".into(),folder.clone().into(),"--script".into(),"build.jsonl".into()]);
+    let output=String::from_utf8(result.stdout).unwrap();
+    assert_eq!(output.lines().count(),5);assert_eq!(output.matches("\"ok\":true").count(),5);
+    let cv=engine.open(&folder.join("CV.pdf")).unwrap();let review=engine.check_cv(&cv).unwrap();
+    assert!(review.text.find("Avery Example").unwrap()<review.text.find("reader@example.org").unwrap());
+    assert!(review.text.contains("Built a fictional Rust project."));
+    assert!(review.warnings.is_empty());assert!(folder.join("CV.png").metadata().unwrap().len()>100);
+    std::fs::write(&script,"{\"op\":\"new\"}\n{\"op\":\"text.add\",\"document\":1,\"revision\":99,\"text\":\"Stale\"}\n{\"op\":\"save\",\"path\":\"must-not-exist.pdf\"}\n").unwrap();
+    let result=invoke(vec!["commands".into(),"--root".into(),folder.clone().into(),"--script".into(),"build.jsonl".into()]);
+    assert_eq!(result.status.code(),Some(1));assert_eq!(String::from_utf8(result.stdout).unwrap().lines().count(),2);
+    assert!(!folder.join("must-not-exist.pdf").exists());
+    assert_eq!(std::fs::read(blank).unwrap(),original);
+    let schema=success(vec!["commands".into(),"--schema".into()]);
+    assert!(String::from_utf8(schema.stdout).unwrap().contains("privacy.apply"));
+    for name in ["blank.pdf","CV.pdf","CV.png","build.jsonl"] {std::fs::remove_file(folder.join(name)).unwrap();}
+    std::fs::remove_dir(folder).unwrap();
 }
 
 #[test]

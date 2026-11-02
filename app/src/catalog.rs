@@ -17,7 +17,7 @@ impl Tool {
             Self::Replace | Self::Pictures | Self::Forms => CATEGORIES[1],
             Self::Markup | Self::Drawing | Self::Signatures => CATEGORIES[2],
             Self::Organize | Self::Crop | Self::Stamps | Self::Bookmarks => CATEGORIES[3],
-            Self::ImageCreate
+            Self::NewPdf | Self::Cv | Self::ImageCreate
             | Self::ScanCleanup
             | Self::Ocr
             | Self::Export
@@ -31,6 +31,8 @@ impl Tool {
 
     pub(super) fn aliases(self) -> &'static str {
         match self {
+            Self::Cv => "resume résumé curriculum vitae ATS",
+            Self::NewPdf => "blank new create document paper",
             Self::Compare => "diff difference differences revisions changes",
             Self::Ocr => "recognition searchable scan scanned",
             Self::Organize => "combine join separate divide chapters bookmarks",
@@ -175,7 +177,7 @@ impl EditorApp {
                         tool: Some(tool),
                         description: tool.description(),
                         enabled: ready
-                            && (document || matches!(tool, Tool::ImageCreate | Tool::Compare)),
+                            && (document || matches!(tool, Tool::NewPdf | Tool::Cv | Tool::ImageCreate | Tool::Compare)),
                     });
                 }
             }
