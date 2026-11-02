@@ -1530,6 +1530,7 @@ impl EditorApp {
                 }
             }
             Reply::Created {generation,pages,cv} => {
+                self.create.pending=false;self.create.open=false;
                 self.handle(ctx,Reply::Opened {generation,path:PathBuf::new(),name:if cv {"CV.pdf".into()}else{"Untitled.pdf".into()},pages,suggested:PathBuf::from(if cv {"CV.pdf"}else{"Untitled.pdf"}),protected:false,can_undo:false,can_redo:false});
                 if let Some(doc)=&mut self.doc {doc.changes=pdf_editor_core::ChangeState::recovered();doc.object_mode=false;}
                 self.text_tool.adding = !cv;
@@ -1949,7 +1950,9 @@ impl EditorApp {
                         "Cancelled because a pending edit failed. Apply or discard the edit first.");
                 }
                 self.restoring = None;
-                let message = if std::mem::take(&mut self.opening) {
+                let creation_failed=self.create.failed(&message);
+                let was_opening=std::mem::take(&mut self.opening);
+                let message = if was_opening&&!creation_failed {
                     format!(
                         "The file could not be opened. {}.",
                         message.trim_end_matches('.')
@@ -1961,7 +1964,7 @@ impl EditorApp {
                     doc.restore_failed_edit();
                 }
                 let kind=if message=="Operation cancelled" {BannerKind::Warning} else {BannerKind::Error};
-                self.banner(kind, message);
+                if !creation_failed {self.banner(kind, message);}
             }
         }
     }
@@ -2630,7 +2633,7 @@ impl EditorApp {
     }
     /// Installs a generated document in an empty tab.
     fn create_here(&mut self,creation:crate::create::Creation) {
-        self.create.remember(&creation);self.busy+=1;self.opening=true;
+        self.create.remember(&creation);self.create.pending=true;self.busy+=1;self.opening=true;
         self.send(match creation {crate::create::Creation::Blank(spec)=>Request::New(spec),crate::create::Creation::Cv(spec)=>Request::CreateCv(spec)});
     }
     fn open_tool(&mut self, tool: Tool) {

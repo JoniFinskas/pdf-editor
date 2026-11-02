@@ -11,7 +11,7 @@ pdf-editor-cli.exe commands --root WORKSPACE --script build.jsonl
 ```
 
 `new` accepts A4, A5, Letter or custom dimensions in PDF points, `--landscape`
-and 1–1000 pages. Outputs must be new files. For custom dimensions use
+and 1–1000 pages. Landscape keeps an already-wide custom page wide. Outputs must be new files. For custom dimensions use
 `--width POINTS --height POINTS`.
 
 Without `--script`, `commands` reads UTF-8 JSON objects from stdin and flushes
@@ -49,7 +49,7 @@ required inputs. Unknown operations and misspelled fields fail. Tool groups:
 | Task | Commands |
 | --- | --- |
 | Create or load | `new`, `cv.create`, `images.create`, `open` |
-| Inspect | `inspect`, `fonts`, `text.characters`, `text.find`, `text.spelling`, `cv.check` |
+| Inspect | `status`, `inspect`, `fonts`, `text.characters`, `text.find`, `text.spelling`, `cv.check` |
 | Edit text | `text.add/edit/delete/style/format/replace/highlight`, `paragraph.edit`, `document.policy` |
 | Arrange objects | `objects.edit/layout/copy/paste/ungroup/prepare_text`, `image.add/move`, `draw` |
 | Organize pages | `page.blank/rotate/delete/move/duplicate/import/merge/crop/extract/split/split_bookmarks` |
@@ -66,6 +66,10 @@ freehand drawing can place a signature without using a persistent signature
 library. OCR uses installed Windows languages and processes a numeric `pages`
 array. `compare` uses the opening snapshot by default; null `page` or
 `revised_page` represents an inserted or removed page.
+
+`status` reports actual page/byte counts, new-document and password-protection
+flags, undo/redo availability, font substitution policy and this session's
+workspace-relative working-copy path/encryption flag. It never returns a password.
 
 ## CV input
 

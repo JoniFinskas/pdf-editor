@@ -2,7 +2,10 @@
 
 Choose **Build CV** from the home screen or All tools. Enter your details,
 fill the sections you need, and create the PDF. A current document stays in its
-own tab. The form stays available in the new tab for revisions; rebuilding
+own tab. Form errors stay in the builder with a specific error. Font or layout failures
+reopen the entered draft for correction and retry.
+Move sections up or down; **Undo remove** restores the last removed section.
+The form stays available in the new tab for revisions; rebuilding
 creates another PDF rather than overwriting edits made on the page.
 
 The layout uses one column, selectable embedded text, conventional section

@@ -88,6 +88,10 @@ fn generated_creation_cli_builds_real_blank_and_cv_files_and_stops_bad_scripts()
     let doc=engine.open(&blank).unwrap();let pages=engine.pages(&doc).unwrap();
     assert_eq!(pages.len(),2);assert_eq!((pages[0].width,pages[0].height),(792.,612.));
     assert!(engine.text_objects(&doc,0).unwrap().is_empty());
+    let wide=folder.join("wide.pdf");
+    success(vec!["new".into(),"--output".into(),wide.clone().into(),"--size".into(),"custom".into(),"--width".into(),"792".into(),"--height".into(),"612".into(),"--landscape".into()]);
+    let wide_pages=engine.pages(&engine.open(&wide).unwrap()).unwrap();
+    assert_eq!((wide_pages[0].width,wide_pages[0].height),(792.,612.));
     let original=std::fs::read(&blank).unwrap();
     assert_eq!(invoke(vec!["new".into(),"--output".into(),blank.clone().into()]).status.code(),Some(1));
     assert_eq!(std::fs::read(&blank).unwrap(),original);
@@ -98,10 +102,12 @@ fn generated_creation_cli_builds_real_blank_and_cv_files_and_stops_bad_scripts()
         "{\"op\":\"cv.check\"}\n",
         "{\"op\":\"render\",\"path\":\"CV.png\",\"dpi\":36}\n",
         "{\"op\":\"save\",\"document\":1,\"revision\":0,\"path\":\"CV.pdf\"}\n",
+        "{\"op\":\"status\"}\n",
     )).unwrap();
     let result=success(vec!["commands".into(),"--root".into(),folder.clone().into(),"--script".into(),"build.jsonl".into()]);
     let output=String::from_utf8(result.stdout).unwrap();
-    assert_eq!(output.lines().count(),5);assert_eq!(output.matches("\"ok\":true").count(),5);
+    assert_eq!(output.lines().count(),6);assert_eq!(output.matches("\"ok\":true").count(),6);
+    assert!(output.lines().last().unwrap().contains("working_copy"));
     let cv=engine.open(&folder.join("CV.pdf")).unwrap();let review=engine.check_cv(&cv).unwrap();
     assert!(review.text.find("Avery Example").unwrap()<review.text.find("reader@example.org").unwrap());
     assert!(review.text.contains("Built a fictional Rust project."));
@@ -113,7 +119,7 @@ fn generated_creation_cli_builds_real_blank_and_cv_files_and_stops_bad_scripts()
     assert_eq!(std::fs::read(blank).unwrap(),original);
     let schema=success(vec!["commands".into(),"--schema".into()]);
     assert!(String::from_utf8(schema.stdout).unwrap().contains("privacy.apply"));
-    for name in ["blank.pdf","CV.pdf","CV.png","build.jsonl"] {std::fs::remove_file(folder.join(name)).unwrap();}
+    for name in ["blank.pdf","wide.pdf","CV.pdf","CV.png","build.jsonl"] {std::fs::remove_file(folder.join(name)).unwrap();}
     std::fs::remove_dir(folder).unwrap();
 }
 

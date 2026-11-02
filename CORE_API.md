@@ -439,3 +439,7 @@ segments and trailing image payloads fail verification.
 - `command_schema() -> String`: discover operations and JSON input schemas without loading PDFium.
 
 See [the command protocol](docs/COMMANDS.md) for selection, file and error contracts.
+
+- `BlankPdf::with_landscape(bool) -> BlankPdf`: make requested pages wide without rotating existing landscape dimensions back to portrait; false preserves explicit dimensions.
+- `BlankPdf::validate() -> Result<()>`: check page count and finite dimension limits before creating a document.
+- `CvSpec::validate() -> Result<()>`: check CV text/section/contact limits and filled headings before font lookup or tab creation.

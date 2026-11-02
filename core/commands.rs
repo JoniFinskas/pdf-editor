@@ -23,6 +23,7 @@ const OPS: &[(&str, &str, bool)] = &[
     ("images.create", "paths size discard", false),
     ("inspect", "view page offset limit", false),
     ("fonts", "", false),
+    ("status", "", false),
     ("cv.check", "", false),
     ("document.policy", "substitution", true),
     ("save", "path password", false),
@@ -388,6 +389,22 @@ impl<'a> CommandSession<'a> {
     }
     fn with_document(&mut self, op: &str, a: &Args<'_>, doc: &mut Document) -> Result<V> {
         match op {
+            "status" => {
+                let copy = self
+                    .copy
+                    .as_ref()
+                    .map(|copy| -> Result<V> {
+                        let path = copy
+                            .path()
+                            .strip_prefix(&self.root)
+                            .map_err(|_| err("Working copy escaped the workspace"))?;
+                        Ok(json!({"path":path.to_string_lossy(),"encrypted":copy.encrypted()}))
+                    })
+                    .transpose()?;
+                Ok(
+                    json!({"pages":self.engine.pages(doc)?.len(),"bytes":doc.bytes.len(),"new":doc.is_new(),"password_protected":doc.is_password_protected(),"can_undo":doc.can_undo(),"can_redo":doc.can_redo(),"substitution":match doc.substitution {Substitution::Line=>"line",Substitution::Document=>"document"},"working_copy":copy}),
+                )
+            }
             "inspect" => inspect::inspect(self.engine, doc, a),
             "cv.check" => {
                 let check = self.engine.check_cv(doc)?;
@@ -588,9 +605,7 @@ fn blank(a: &Args<'_>) -> Result<BlankPdf> {
     };
     spec.width = a.n("width", spec.width)?;
     spec.height = a.n("height", spec.height)?;
-    if a.b("landscape", false)? {
-        std::mem::swap(&mut spec.width, &mut spec.height);
-    }
+    spec = spec.with_landscape(a.b("landscape", false)?);
     spec.pages = match a.0.get("pages") {
         None => 1,
         Some(_) => a.page_key("pages")?,

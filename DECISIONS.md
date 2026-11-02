@@ -1235,3 +1235,7 @@ CVs use one column of embedded selectable Unicode text, body-level contact detai
 Expose editing operations through a local JSON-line session. Require document identity and revision for mutations, resolve native selections freshly, retain previews internally, reject unknown fields and use exclusive outputs inside an explicitly selected workspace. Exclude shell/network/OS configuration and printing. This is a trusted-workspace interface, not an operating-system sandbox against concurrent hostile filesystem changes.
 
 Use cached, exact serde_json 1.0.150 instead of implementing JSON parsing. Its transitive zmij 1.0.21 is pinned by Cargo.lock; both versions predate the minimum 14-day age. Other locked packages remain unchanged. Retain upstream MIT permission text in the portable documentation.
+
+## Creation draft validation and section state
+
+Reuse core CV and blank-page validation before desktop submission so invalid drafts stay in their builder and do not open empty tabs. Landscape normalizes to wide dimensions only when requested; explicit wide dimensions are not swapped back to portrait. Use stable local section IDs across reorder/removal and a contextual last-removal restore action to retain text-editor history with its content. The command `status` exposes current document/save authority metadata with workspace-relative paths and no passwords. Font/layout failures reopen the entered creation draft and retain their own error or cancellation message instead of a file-open error. No CV draft file is persisted automatically.

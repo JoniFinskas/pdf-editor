@@ -196,3 +196,19 @@ fn cv_wraps_paginates_without_tiny_text_or_stranded_headings_and_rejects_overflo
             .is_err()
     );
 }
+
+#[test]
+fn cv_validation_identifies_draft_errors_before_document_creation() {
+    let mut spec = fictional_cv();
+    spec.sections[0].heading.clear();
+    assert!(spec.validate().unwrap_err().to_string().contains("heading"));
+    spec.sections[0].heading = "Summary".into();
+    assert!(spec.validate().is_ok());
+    spec.contact = vec!["reader@example.org".into(); 11];
+    assert!(
+        spec.validate()
+            .unwrap_err()
+            .to_string()
+            .contains("10 contact")
+    );
+}

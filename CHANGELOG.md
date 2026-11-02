@@ -4,6 +4,10 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Keep custom landscape dimensions wide across desktop and command-line creation.
+- Validate CV drafts before opening another tab; retain failed font/layout drafts for retry, restore removed sections and keep editor state when reordering.
+- Inspect command-session document, save-copy and undo/redo state with `status`.
+
 - Create blank PDFs with standard or custom page sizes, orientation and page count.
 - Build editable, selectable-text CVs with wrapping, page breaks and extracted-text review.
 - Author PDFs through a bounded local JSON-line editing interface with discoverable schemas and revision checks.

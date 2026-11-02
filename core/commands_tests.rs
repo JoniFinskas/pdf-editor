@@ -90,6 +90,45 @@ fn commands_create_edit_save_reopen_and_reject_stale_selections() {
 }
 
 #[test]
+fn commands_landscape_and_status_reflect_actual_saved_geometry_and_history() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
+    let e = engine();
+    let root = folder("creation-qol-status");
+    let mut s = CommandSession::new(&e, &root).unwrap();
+    for (width, height) in [(792, 612), (612, 792)] {
+        call(
+            &mut s,
+            json!({"op":"new","preset":"custom","width":width,"height":height,"landscape":true,"discard":true}),
+        );
+        let page = call(&mut s, json!({"op":"inspect"}))["items"][0].clone();
+        assert_eq!(
+            (page["width"].as_f64(), page["height"].as_f64()),
+            (Some(792.), Some(612.))
+        );
+    }
+    let status = call(&mut s, json!({"op":"status"}));
+    assert_eq!(status["pages"], 1);
+    assert_eq!(status["new"], true);
+    assert_eq!(status["can_undo"], false);
+    assert_eq!(status["working_copy"], Value::Null);
+    call(&mut s, json!({"op":"text.add","text":"Generated content"}));
+    assert_eq!(call(&mut s, json!({"op":"status"}))["can_undo"], true);
+    call(&mut s, json!({"op":"save","path":"wide.pdf"}));
+    let status = call(&mut s, json!({"op":"status"}));
+    assert_eq!(status["working_copy"]["path"], "wide.pdf");
+    assert_eq!(status["working_copy"]["encrypted"], false);
+    call(&mut s, json!({"op":"history.undo"}));
+    let status = call(&mut s, json!({"op":"status"}));
+    assert_eq!(status["can_redo"], true);
+    assert_eq!(
+        e.pages(&e.open(&root.join("wide.pdf")).unwrap()).unwrap()[0].width,
+        792.
+    );
+    fs::remove_file(root.join("wide.pdf")).unwrap();
+    fs::remove_dir(root).unwrap();
+}
+
+#[test]
 fn commands_author_links_forms_images_and_privacy_with_fresh_inventories() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();

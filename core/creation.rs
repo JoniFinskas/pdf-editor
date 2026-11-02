@@ -26,7 +26,14 @@ impl Default for BlankPdf {
     }
 }
 impl BlankPdf {
-    pub(crate) fn validate(self) -> Result<()> {
+    /// Keep explicit dimensions unless landscape is requested; never rotate a wide page back to portrait.
+    pub fn with_landscape(mut self, landscape: bool) -> Self {
+        if landscape && self.width < self.height {
+            std::mem::swap(&mut self.width, &mut self.height);
+        }
+        self
+    }
+    pub fn validate(self) -> Result<()> {
         if !(1..=1000).contains(&self.pages)
             || [self.width, self.height]
                 .iter()
@@ -67,6 +74,52 @@ impl Default for CvSpec {
                 })
                 .collect(),
         }
+    }
+}
+impl CvSpec {
+    pub fn validate(&self) -> Result<()> {
+        if self.name.trim().is_empty() {
+            return Err(err("Enter a name."));
+        }
+        if self.name.len() > 500 {
+            return Err(err("Name exceeds 500 bytes."));
+        }
+        if self.contact.len() > 10 {
+            return Err(err("Use at most 10 contact lines."));
+        }
+        if self.sections.len() > 20 {
+            return Err(err("Use at most 20 CV sections."));
+        }
+        for section in &self.sections {
+            if !section.body.trim().is_empty() && section.heading.trim().is_empty() {
+                return Err(err("Give each filled section a heading."));
+            }
+            if section.heading.len() > 120 || section.heading.contains(['\r', '\n']) {
+                return Err(err("Keep section headings on one line, up to 120 bytes."));
+            }
+        }
+        let strings = std::iter::once(self.name.as_str())
+            .chain(std::iter::once(self.headline.as_str()))
+            .chain(self.contact.iter().map(String::as_str))
+            .chain(
+                self.sections
+                    .iter()
+                    .flat_map(|s| [s.heading.as_str(), s.body.as_str()]),
+            );
+        let mut bytes = 0;
+        for text in strings {
+            bytes += text.len();
+            if bytes > 64000 {
+                return Err(err("CV text exceeds 64 KB. Shorten the content."));
+            }
+            if text
+                .chars()
+                .any(|c| c.is_control() && !matches!(c, '\r' | '\n' | '\t'))
+            {
+                return Err(err("Remove unsupported control characters from the CV."));
+            }
+        }
+        Ok(())
     }
 }
 #[derive(Clone, Debug)]
@@ -120,6 +173,7 @@ impl Engine {
     /// Single-column selectable text, with explicit font sizes and no text in headers/footers.
     pub fn create_cv(&self, spec: &CvSpec) -> Result<Document> {
         guarded(|| {
+            spec.validate()?;
             let pieces = std::iter::once(spec.name.as_str())
                 .chain(std::iter::once(spec.headline.as_str()))
                 .chain(spec.contact.iter().map(String::as_str))
@@ -129,24 +183,6 @@ impl Engine {
                         .flat_map(|s| [s.heading.as_str(), s.body.as_str()]),
                 );
             let strings: Vec<_> = pieces.collect();
-            if spec.name.trim().is_empty()
-                || spec.name.len() > 500
-                || spec.contact.len() > 10
-                || spec.sections.len() > 20
-                || spec
-                    .sections
-                    .iter()
-                    .any(|s| s.heading.len() > 120 || s.heading.contains(['\r', '\n']))
-                || strings.iter().map(|s| s.len()).sum::<usize>() > 64000
-                || strings.iter().any(|s| {
-                    s.chars()
-                        .any(|c| c.is_control() && !matches!(c, '\r' | '\n' | '\t'))
-                })
-            {
-                return Err(err(
-                    "Enter a name and a CV within the text and section limits; section headings must be single lines",
-                ));
-            }
             let alphabet = strings.join(" ").replace(['\r', '\n', '\t'], " ");
             let regular = fonts::find("Arial", &alphabet)?;
             let heading_alphabet = std::iter::once(spec.name.as_str())
@@ -193,9 +229,6 @@ impl Engine {
             for section in &spec.sections {
                 if section.body.trim().is_empty() {
                     continue;
-                }
-                if section.heading.trim().is_empty() {
-                    return Err(err("Give each filled CV section a heading"));
                 }
                 let body = wrap(section.body.trim(), 11., max_width, &regular_face)?;
                 let heading = wrap(&section.heading, 12., max_width, &bold_face)?;

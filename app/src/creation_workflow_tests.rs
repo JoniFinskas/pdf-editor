@@ -211,3 +211,124 @@ fn creation_controls_fit_compact_view_and_keep_drafts_on_close() {
         assert_eq!(app.create.cv.sections[0].body, "Draft to retain");
     }
 }
+
+#[test]
+fn creation_cv_rejects_invalid_input_in_place_and_restores_removed_sections() {
+    let ctx = Context::default();
+    theme::install(&ctx);
+    let (mut app, inbox, _) = mock_app();
+    app.open_tool(Tool::Cv);
+    app.create.cv.name = "Avery Example".into();
+    app.create.cv.sections[0].body = "Important generated experience".into();
+    app.create.cv.sections[0].heading.clear();
+    let click = |app: &mut EditorApp, key: &str| {
+        for _ in 0..4 {
+            creation_frame(app, &ctx, vec![], vec2(640., 720.));
+        }
+        let response = ctx.read_response(widgets::tool_id(key)).unwrap();
+        assert!(
+            response.interact_rect.contains_rect(response.rect),
+            "{key} clipped: {response:?}"
+        );
+        let events = click_at(response.rect.center());
+        let down = creation_frame(app, &ctx, events[..2].to_vec(), vec2(640., 720.));
+        down.or(creation_frame(
+            app,
+            &ctx,
+            events[2..].to_vec(),
+            vec2(640., 720.),
+        ))
+    };
+    assert!(click(&mut app, "create-pdf").is_none());
+    assert!(app.create.open);
+    assert!(app.new_document.is_none());
+    assert!(inbox.try_recv().is_err());
+    assert_eq!(
+        app.create.cv.sections[0].body,
+        "Important generated experience"
+    );
+    app.create.cv.sections[0].heading = "Summary".into();
+    assert!(click(&mut app, "cv-remove-0").is_none());
+    assert_eq!(app.create.cv.sections.len(), 3);
+    app.open_tool(Tool::NewPdf);
+    for _ in 0..4 {
+        creation_frame(&mut app, &ctx, vec![], vec2(640., 720.));
+    }
+    assert!(
+        ctx.read_response(widgets::tool_id("cv-undo-remove"))
+            .is_none(),
+        "CV actions should stay out of the blank-page dialog"
+    );
+    app.open_tool(Tool::Cv);
+    app.create
+        .cv
+        .sections
+        .extend((0..17).map(|_| pdf_editor_core::CvSection {
+            heading: "Extra".into(),
+            body: String::new(),
+        }));
+    assert!(click(&mut app, "cv-undo-remove").is_none());
+    assert_eq!(
+        app.create.cv.sections.len(),
+        21,
+        "Undo must retain content even at the output section limit"
+    );
+    assert!(click(&mut app, "create-pdf").is_none());
+    assert!(app.create.open);
+    app.create.cv.sections.truncate(4);
+    assert_eq!(
+        app.create.cv.sections[0].body,
+        "Important generated experience"
+    );
+    assert!(click(&mut app, "cv-down-0").is_none());
+    assert_eq!(app.create.cv.sections[1].heading, "Summary");
+    assert_eq!(
+        app.create.cv.sections[1].body,
+        "Important generated experience"
+    );
+    let Some(crate::create::Creation::Cv(spec)) = click(&mut app, "create-pdf") else {
+        panic!("Valid CV should submit");
+    };
+    assert_eq!(spec.sections[1].body, "Important generated experience");
+}
+
+#[test]
+fn creation_cv_layout_failure_reopens_the_draft_and_retry_stays_usable() {
+    let (mut app, ctx, _) = qol_worker();
+    app.doc = None;
+    let mut spec = pdf_editor_core::CvSpec {
+        name: "Avery Example".into(),
+        ..Default::default()
+    };
+    spec.sections[0].body = "W".repeat(300);
+    assert!(
+        spec.validate().is_ok(),
+        "This error requires actual font/layout checks"
+    );
+    app.create_here(crate::create::Creation::Cv(spec.clone()));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while app.busy > 0 {
+        app.poll(&ctx);
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(app.doc.is_none());
+    assert!(app.create.open);
+    assert!(!app.opening);
+    assert_eq!(app.create.cv.sections[0].body, spec.sections[0].body);
+    assert!(
+        !app.banners.iter().any(|b| b.kind == BannerKind::Error),
+        "Creation errors belong in the restored form"
+    );
+    assert!(
+        !app.banners
+            .iter()
+            .any(|b| b.text.contains("file could not be opened"))
+    );
+    app.banners.clear();
+    spec.sections[0].body = "Fits on the page.".into();
+    app.create_here(crate::create::Creation::Cv(spec));
+    workflow_settle(&mut app, &ctx);
+    assert!(app.doc.as_ref().unwrap().dirty());
+    assert!(!app.create.pending);
+}

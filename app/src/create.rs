@@ -18,6 +18,11 @@ pub struct CreateTool {
     pub cv: CvSpec,
     pub check: Option<CvCheck>,
     pub contact: String,
+    error: Option<String>,
+    pub pending: bool,
+    removed: Option<(usize, u64, CvSection)>,
+    section_ids: Vec<u64>,
+    next_section_id: u64,
     preset: u8,
     landscape: bool,
     pages: u16,
@@ -27,6 +32,7 @@ pub struct CreateTool {
 impl CreateTool {
     pub fn open(&mut self, cv: bool) {
         self.open = true;
+        self.error = None;
         self.cv_mode = cv;
         if self.pages == 0 {
             self.pages = 1;
@@ -34,9 +40,27 @@ impl CreateTool {
             self.height_mm = 297.;
         }
     }
+    pub fn failed(&mut self, message: &str) -> bool {
+        if !std::mem::take(&mut self.pending) {
+            return false;
+        }
+        self.open = true;
+        self.error = Some(message.to_owned());
+        true
+    }
     pub fn remember(&mut self, creation: &Creation) {
+        if let Creation::Blank(spec) = creation {
+            self.cv_mode = false;
+            self.preset = 3;
+            self.width_mm = spec.width * 25.4 / 72.;
+            self.height_mm = spec.height * 25.4 / 72.;
+            self.pages = spec.pages;
+            self.landscape = false;
+        }
         if let Creation::Cv(spec) = creation {
             self.cv = spec.clone();
+            self.removed = None;
+            self.section_ids.clear();
             self.contact = spec.contact.join("\n");
             self.cv_mode = true;
         }
@@ -48,6 +72,13 @@ impl CreateTool {
         idle: bool,
         document: bool,
     ) -> (Option<Creation>, bool) {
+        if self.section_ids.len() != self.cv.sections.len() {
+            self.section_ids.clear();
+            for _ in &self.cv.sections {
+                self.next_section_id += 1;
+                self.section_ids.push(self.next_section_id);
+            }
+        }
         let mut creation = None;
         let mut check = false;
         let window = ToolWindow::new(
@@ -87,6 +118,9 @@ impl CreateTool {
                 });
                 widgets::hint(ui, p, "Local text checks cannot guarantee an ATS result.");
             }
+            if let Some(error) = &self.error {
+                widgets::hint(ui, p, error);
+            }
             ui.add_enabled_ui(idle, |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("creation-fields")
@@ -116,8 +150,9 @@ impl CreateTool {
                             });
                             let mut movement = None;
                             let mut remove = None;
+                            let section_count = self.cv.sections.len();
                             for (index, section) in self.cv.sections.iter_mut().enumerate() {
-                                ui.push_id(index, |ui| {
+                                ui.push_id(self.section_ids[index], |ui| {
                                     egui::CollapsingHeader::new(if section.heading.is_empty() {
                                         "Section"
                                     } else {
@@ -129,9 +164,10 @@ impl CreateTool {
                                         ui.horizontal(|ui| {
                                             ui.add(widgets::text_field(
                                                 &mut section.heading,
-                                                (ui.available_width() - 110.).max(80.),
+                                                (ui.available_width() - 120.).max(60.),
                                             ));
                                             if Btn::icon(Icon::ArrowUp)
+                                                .id(&format!("cv-up-{index}"))
                                                 .height(28.)
                                                 .enabled(index > 0)
                                                 .tip("Move section up")
@@ -140,7 +176,18 @@ impl CreateTool {
                                             {
                                                 movement = Some((index, index - 1));
                                             }
+                                            if Btn::icon(Icon::ArrowDown)
+                                                .id(&format!("cv-down-{index}"))
+                                                .height(28.)
+                                                .enabled(index + 1 < section_count)
+                                                .tip("Move section down")
+                                                .show(ui, p)
+                                                .clicked()
+                                            {
+                                                movement = Some((index, index + 1));
+                                            }
                                             if Btn::icon(Icon::Trash)
+                                                .id(&format!("cv-remove-{index}"))
                                                 .height(28.)
                                                 .tip("Remove section")
                                                 .show(ui, p)
@@ -159,9 +206,14 @@ impl CreateTool {
                             }
                             if let Some((a, b)) = movement {
                                 self.cv.sections.swap(a, b);
+                                self.section_ids.swap(a, b);
                             }
                             if let Some(index) = remove {
-                                self.cv.sections.remove(index);
+                                self.removed = Some((
+                                    index,
+                                    self.section_ids.remove(index),
+                                    self.cv.sections.remove(index),
+                                ));
                             }
                             if Btn::new("Add section")
                                 .id("cv-add-section")
@@ -169,6 +221,8 @@ impl CreateTool {
                                 .show(ui, p)
                                 .clicked()
                             {
+                                self.next_section_id += 1;
+                                self.section_ids.push(self.next_section_id);
                                 self.cv.sections.push(CvSection {
                                     heading: "Additional information".into(),
                                     body: String::new(),
@@ -225,6 +279,19 @@ impl CreateTool {
                         }
                     });
                 widgets::actions(ui, |ui| {
+                    if self.cv_mode
+                        && self.removed.is_some()
+                        && Btn::new("Undo remove")
+                            .id("cv-undo-remove")
+                            .show(ui, p)
+                            .clicked()
+                        && let Some((index, id, section)) = self.removed.take()
+                    {
+                        let at = index.min(self.cv.sections.len());
+                        self.cv.sections.insert(at, section);
+                        self.section_ids.insert(at, id);
+                    }
+
                     if Btn::new(if document {
                         "Create in new tab"
                     } else {
@@ -236,7 +303,7 @@ impl CreateTool {
                     .show(ui, p)
                     .clicked()
                     {
-                        creation = Some(if self.cv_mode {
+                        let candidate = if self.cv_mode {
                             let mut spec = self.cv.clone();
                             spec.contact = self
                                 .contact
@@ -247,21 +314,32 @@ impl CreateTool {
                                 .collect();
                             Creation::Cv(spec)
                         } else {
-                            let (mut width, mut height) = match self.preset {
+                            let (width, height) = match self.preset {
                                 0 => (595.276, 841.89),
                                 1 => (612., 792.),
                                 2 => (419.528, 595.276),
                                 _ => (self.width_mm * 72. / 25.4, self.height_mm * 72. / 25.4),
                             };
-                            if self.landscape {
-                                std::mem::swap(&mut width, &mut height);
+                            Creation::Blank(
+                                BlankPdf {
+                                    width,
+                                    height,
+                                    pages: self.pages,
+                                }
+                                .with_landscape(self.landscape),
+                            )
+                        };
+                        let valid = match &candidate {
+                            Creation::Cv(spec) => spec.validate(),
+                            Creation::Blank(spec) => spec.validate(),
+                        };
+                        match valid {
+                            Ok(()) => {
+                                creation = Some(candidate);
+                                self.error = None;
                             }
-                            Creation::Blank(BlankPdf {
-                                width,
-                                height,
-                                pages: self.pages,
-                            })
-                        });
+                            Err(error) => self.error = Some(error.to_string()),
+                        }
                     }
                     if self.cv_mode
                         && document

@@ -95,9 +95,7 @@ pub(super) fn run(args: Vec<OsString>) -> i32 {
                     .and_then(|v| v.parse().ok())
                     .ok_or((2, "Invalid page count".into()))?;
             }
-            if landscape {
-                std::mem::swap(&mut spec.width, &mut spec.height);
-            }
+            spec = spec.with_landscape(landscape);
             let engine=Engine::new(&library).map_err(|_|(1,"Cannot start PDF engine; keep the bundled PDFium library beside the executable".into()))?;
             engine
                 .blank_document(spec)
