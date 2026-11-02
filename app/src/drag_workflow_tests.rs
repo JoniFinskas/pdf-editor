@@ -419,6 +419,8 @@ fn zoom_during_generated_drag_keeps_the_page_anchor_and_release_position() {
     app.set_object_mode(true);
     workflow_frame(&mut app, &ctx, vec![]);
     for resize in [false, true] {
+        // Selection belongs to a new gesture, outside the previous double-click interval.
+        workflow_frame_at(&mut app,&ctx,vec![],Some(ctx.input(|i|i.time)+1.));
         app.set_zoom(0.75, None);
         workflow_settle(&mut app, &ctx);
         let at = workflow_line(&app, &ctx, 0);
@@ -452,7 +454,7 @@ fn zoom_during_generated_drag_keeps_the_page_anchor_and_release_position() {
             .unwrap()
             .dragging_item
             .as_ref()
-            .unwrap()
+            .unwrap_or_else(||panic!("Drag did not start: resize={resize}, busy={}, editing={}, panning={}, start={start:?}, pointer={pointer:?}, response={:?}, press={:?}",app.busy,app.doc.as_ref().unwrap().edit.is_some(),app.doc.as_ref().unwrap().panning,ctx.read_response(Id::new(("pdf-page",0usize))),ctx.input(|i|i.pointer.press_origin())))
             .anchor;
         app.set_zoom(1.5, Some(pointer));
         workflow_settle(&mut app, &ctx);

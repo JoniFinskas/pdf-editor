@@ -295,9 +295,13 @@ fn catalog_keyboard_search_categories_and_disabled_actions() {
 }
 
 fn workflow_frame(app: &mut EditorApp, ctx: &Context, events: Vec<egui::Event>) {
+    workflow_frame_at(app,ctx,events,None);
+}
+fn workflow_frame_at(app:&mut EditorApp,ctx:&Context,events:Vec<egui::Event>,time:Option<f64>) {
     app.poll(ctx);
     let mut output = ctx.run_ui(
         egui::RawInput {
+            time,
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 900.0))),
             events,
             ..Default::default()
