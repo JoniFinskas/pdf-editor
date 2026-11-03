@@ -72,10 +72,20 @@ fn generated_recovery_snapshot_survives_crash_and_restores_unsaved_edits() {
     );
     workflow_frame(&mut app, &ctx, vec![egui::Event::Text("AB".into())]);
     assert_eq!(app.recovery_status(), "Draft not applied");
+    app.autosave_tick(&ctx);
+    assert!(!app.doc.as_ref().unwrap().copying);
+    assert!(app.doc.as_ref().unwrap().next_copy.is_none());
     workflow_click(&mut app, &ctx, pos2(950.0, 850.0));
     workflow_settle(&mut app, &ctx);
     assert_eq!(app.recovery_status(), "Recovery pending");
-    app.doc.as_mut().unwrap().next_copy = Some(0.0);
+    app.autosave_tick(&ctx);
+    let due = app.doc.as_ref().unwrap().next_copy.unwrap();
+    assert_eq!(due, ctx.input(|i| i.time) + 60.0);
+    workflow_frame_at(&mut app, &ctx, vec![], Some(due - 0.1));
+    app.autosave_tick(&ctx);
+    assert!(!app.doc.as_ref().unwrap().copying);
+    assert_eq!(app.recovery_status(), "Recovery pending");
+    workflow_frame_at(&mut app, &ctx, vec![], Some(due));
     app.autosave_tick(&ctx);
     assert_eq!(app.recovery_status(), "Writing recovery…");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -85,6 +95,10 @@ fn generated_recovery_snapshot_survives_crash_and_restores_unsaved_edits() {
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
     assert_eq!(app.recovery_status(), "Recovery saved");
+    app.autosave_tick(&ctx);
+    assert!(!app.doc.as_ref().unwrap().copying);
+    assert!(app.doc.as_ref().unwrap().next_copy.is_none());
+    assert_eq!(std::fs::read(&fixture).unwrap(), original);
     assert!(
         recovery::orphans_in(&folder).is_empty(),
         "Live sessions must not be offered for restoration"

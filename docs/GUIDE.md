@@ -57,11 +57,12 @@ floor. Normal tests need neither Python nor fixture downloads.
 Before distributing a build, check native file dialogs, printing and Windows
 integration separately from the automated tests.
 
-Auto-save keeps recovery copies of unsaved edits in
+Crash recovery keeps local copies of applied, unsaved edits in
 `%LOCALAPPDATA%\PdfEditor\Recovery`, never in place of the original or a saved
 copy. They are deleted after a successful save, after edits are discarded and on a normal
-exit; after an unexpected exit the editor offers to restore them. Auto-save can
-be turned off in Settings. The editor opens no network connections.
+exit; after an unexpected exit the editor offers to restore them. It does not
+save the PDF or include text still being typed. Change the interval or turn it
+off under Settings → General → Crash recovery. The editor opens no network connections.
 Recovery folders are reserved for temporary copies; Save As requires another
 folder. Cleanup removes only recognized recovery artifacts, preserving unrelated
 files and subdirectories. A restored copy with missing source metadata suggests

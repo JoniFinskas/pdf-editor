@@ -1,4 +1,4 @@
-//! Auto-save as recovery copies.
+//! Automatic local crash-recovery copies.
 //!
 //! Unsaved edits are written to a private per-session folder under
 //! `%LOCALAPPDATA%\PdfEditor\Recovery`, never to the original or a saved copy.
@@ -16,7 +16,7 @@ const LOCK: &str = "session.lock";
 const SOURCE: &str = "source.txt";
 const PREFIX: &str = "snapshot-";
 
-/// Auto-save interval in minutes, or None when auto-save is off.
+/// Recovery-copy interval in minutes, or None when recovery is off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AutoSave(pub Option<u32>);
 

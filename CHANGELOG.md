@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Clarify that crash recovery creates local backups rather than saving the PDF; correct the one-minute interval label.
+
 - Resize selected text by changing its font size proportionally, with live text and size feedback; keep the original font shape.
 - Preserve character and word spacing when transforming clipped text, including neighboring runs.
 - Keep the original left text origin across repeated paragraph edits and avoid copying paragraph data on each width-drag frame.

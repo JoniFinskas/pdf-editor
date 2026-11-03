@@ -606,7 +606,7 @@ impl SettingsTab {
 
     fn summary(self) -> &'static str {
         match self {
-            Self::General => "Auto-save and unsaved changes.",
+            Self::General => "Recovery and unsaved changes.",
             Self::Editing => "How text edits handle fonts and characters.",
             Self::Shortcuts => "Keyboard shortcuts for common actions.",
             Self::About => "Version, privacy and licenses.",
@@ -919,7 +919,7 @@ impl EditorApp {
                 banners.push(Banner {
                     id: 1,
                     kind: BannerKind::Warning,
-                    text: format!("Auto-save settings could not be read ({e}). Using defaults."),
+                    text: format!("Recovery settings could not be read ({e}). Using defaults."),
                     expires: None,
                 });
                 AutoSave::default()
@@ -1967,7 +1967,7 @@ impl EditorApp {
                         doc.next_copy=Some(ctx.input(|i|i.time)+60.0);
                         self.banner(
                             BannerKind::Warning,
-                            format!("Auto-save could not write a recovery copy: {e}"),
+                            format!("Could not write a recovery copy: {e}"),
                         );
                     }
                 }
@@ -4582,16 +4582,17 @@ impl EditorApp {
         self.integration.show(ui);
         if ui.checkbox(&mut self.qol.remember_session,"Restore tabs on startup").changed() {self.qol.remember_changed=true;}
         ui.add_space(20.0);
-        section_title(ui, "Auto-save");
+        section_title(ui, "Crash recovery");
         let label = |value: AutoSave| match value.0 {
             None => "Off".to_string(),
+            Some(1) => "Every minute".to_string(),
             Some(minutes) => format!("Every {minutes} minutes"),
         };
         widgets::setting_row(
             ui,
             p,
             "Recovery copies",
-            "Recover applied edits after a crash.",
+            "Local backups of applied edits. Use Save to update your PDF.",
             |ui| {
                 egui::ComboBox::from_id_salt("autosave")
                     .width(240.0)
