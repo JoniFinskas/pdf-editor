@@ -1,5 +1,26 @@
 # Engine decisions
 
+## Opt-in working-copy auto-save
+
+Keep file auto-save separate from crash recovery and disabled until selected.
+Require an explicit Save As in each editing session; reopening a PDF never grants
+permission to replace it. Reuse the opaque working-copy token, encryption and
+atomic replacement checks used by Ctrl+S. Reject canonical destination changes
+before writing and before publication, including redirected parent folders.
+
+Offer a two-second debounce after applied edits and 1, 2, 5 or 10-minute
+intervals. A debounce avoids a full PDF write on each edit; interval modes keep
+the first dirty deadline during continued editing. Defer drafts, gestures,
+foreground jobs and close prompts. Limit automatic writes to one across tabs,
+keep the UI responsive, and never rewrite clean documents. Correlate replies
+with the document generation so a save cannot mark later edits clean. Pause on
+write failure instead of repeatedly touching a changed or unavailable file.
+
+The timing follows the configurable delay pattern in [VS Code Auto Save](https://code.visualstudio.com/docs/editing/codebasics#_save-auto-save).
+The separation of saving and recovery is also described in [Microsoft AutoSave](https://support.microsoft.com/en-us/office/what-is-autosave-6d6bd723-ebfd-4e40-b5f6-ae6e8088f7a5);
+PDF Editor keeps both mechanisms local and protects the original through explicit
+working-copy ownership. This supersedes the earlier recovery-only auto-save name.
+
 ## Labeled symbols and cursor-neutral groups
 
 Permit private-use glyph replacement when a fully selected ActualText span matches
@@ -358,8 +379,8 @@ using a fresh isolated profile. Tests treat exported files as read-only.
 - Settings moved from a modal to a full page with Font substitution, Auto-save
   and About sections. Three option groups and their explanations need more room
   than a small modal provides. Escape or Back returns to the document.
-- Auto-save writes recovery copies only. Writing to the original or to a Save As
-  target would require overwriting files, which the core forbids by design.
+- The initial Auto-save implementation writes recovery copies only. The later
+  working-copy auto-save above adds guarded updates to explicitly created copies.
   Copies go to a per-session folder under `%LOCALAPPDATA%\PdfEditor\Recovery`
   through `Document::save_as` with new file names. The previous copy is deleted
   after each write, and the folder is removed on a normal exit. Copies are also
@@ -370,8 +391,8 @@ using a fresh isolated profile. Tests treat exported files as read-only.
   copy are offered for restore and empty ones are removed. A restored copy is
   deleted only after its edits are protected again by a new copy or a save, or
   are discarded.
-- Auto-save defaults to every 2 minutes and can be set to off or 1, 2, 5 or 10
-  minutes. The setting is stored in `%APPDATA%\PdfEditorpp-settings.txt`
+- Crash recovery defaults to every 2 minutes and can be set to off or 1, 2, 5 or 10
+  minutes. The setting is stored in `%APPDATA%\PdfEditor\app-settings.txt`
   because the core's settings file accepts only the substitution policy. An
   unreadable value falls back to the default.
 

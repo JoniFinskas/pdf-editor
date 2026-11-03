@@ -13,7 +13,9 @@ the command-line companion and the license files beside the application.
   Drag the handles to resize. **Snap** aligns edges and centers; hold **Alt**
   for free placement.
 - **Ctrl+Z** undoes a change; **Ctrl+Y** redoes it.
-- **Ctrl+S** opens Save As. The original PDF is never overwritten.
+- **Ctrl+S** saves the working copy; the first save opens Save As. The original stays unchanged.
+- Optional auto-save in **Settings -> General** updates that working copy after edits or
+  at a minute interval. It is off by default and requires Save As once per opened document.
 - **Ctrl+K** searches all tools. Use arrow keys to select and Enter to open.
   Search terms include `diff`, `OCR`, `forms`, `watermark` and `recovery`.
 

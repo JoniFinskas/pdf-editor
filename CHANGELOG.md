@@ -4,6 +4,7 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Add optional local auto-save for session-owned working copies, with a two-second edit delay or minute intervals; preserve originals, encryption and unfinished drafts.
 - Reject working-copy saves when a parent folder has been redirected.
 
 - Keep resized text previews sharp with bounded high-resolution foreground layers and mipmap filtering.

@@ -57,7 +57,21 @@ floor. Normal tests need neither Python nor fixture downloads.
 Before distributing a build, check native file dialogs, printing and Windows
 integration separately from the automated tests.
 
-Crash recovery keeps local copies of applied, unsaved edits in
+Auto-save is off by default. Under Settings -> General -> Auto-save, choose
+**After edits (2 seconds)** or a 1, 2, 5 or 10-minute interval. Use **Save As** once
+per opened document to create its working copy. Auto-save updates only that copy,
+never the original. The two-second mode waits for a pause in applied edits;
+minute intervals start with the first unsaved edit. Neither mode applies text
+still being typed or forces a draft closed. Clean documents are not rewritten,
+and only one automatic save runs at a time across tabs.
+
+Saving runs locally in the background and retains the copy's encryption and
+Undo/Redo history. A missing, redirected or externally changed copy pauses
+auto-save with a warning; save manually or use Save As to resume. Reopening any
+PDF starts a new session, so use Save As again before auto-save can update it.
+Turn the setting off at any time; a write already in progress finishes.
+
+Crash recovery is separate. It keeps local copies of applied, unsaved edits in
 `%LOCALAPPDATA%\PdfEditor\Recovery`, never in place of the original or a saved
 copy. They are deleted after a successful save, after edits are discarded and on a normal
 exit; after an unexpected exit the editor offers to restore them. It does not
@@ -479,7 +493,7 @@ Snapping starts within six screen points and holds slightly farther to avoid
 jitter between nearby targets. Hold **Alt** for free placement or turn **Snap**
 off. The released object keeps the position shown by its preview.
 
-Settings → General shows recovery status and interval settings.
+Settings → General has separate working-copy auto-save and crash-recovery settings.
 Recovery is enabled every two minutes by default for unprotected documents; it
 never replaces Save As or writes over the original.
 

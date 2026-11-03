@@ -150,7 +150,7 @@ impl EditorApp {
             ("Go to page", "catalog-jump"),
             ("Pages: rotate, insert, reorder, delete", "catalog-pages"),
             ("Save As / password options", "catalog-save"),
-            ("Crash recovery settings", "catalog-recovery"),
+            ("Auto-save & recovery settings", "catalog-recovery"),
         ] {
             if self
                 .tools_query

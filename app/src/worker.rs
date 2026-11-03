@@ -36,6 +36,7 @@ pub enum Request {
     LayoutItems(Vec<pdf_editor_core::PageItem>, pdf_editor_core::ObjectLayout),
     HighlightText(Vec<(u16, pdf_editor_core::Bounds)>),
     SaveWorkingCopy,
+    AutoSaveWorkingCopy { generation: u64 },
 
     ScanPreview(u16, Option<pdf_editor_core::ScanOptions>),
     CleanupScan(u16, pdf_editor_core::ScanOptions),
@@ -178,6 +179,7 @@ pub enum Reply {
     Characters {generation:u64,page:u16,characters:Result<Vec<pdf_editor_core::TextCharacter>,String>},
     SearchResults {generation:u64,query:String,options:pdf_editor_core::SearchOptions,hits:Vec<pdf_editor_core::SearchHit>,boxes:Vec<(u16,Vec<[f32;4]>)>},
     WorkingCopySaved {path:PathBuf,encrypted:bool},
+    AutoSaved {generation:u64,result:Result<Option<(PathBuf,bool)>,String>},
 
     TableDetected(pdf_editor_core::TableGrid),
 
@@ -466,16 +468,19 @@ fn run(
             }
             let Some(request) = batch.next() else { break };
             let cancellable=matches!(&request,Request::New(..)|Request::CreateCv(..)|Request::CheckCv|Request::Sanitize(..)|Request::ExportSanitized(..)|Request::CleanupScan(..)|Request::ImagesToPdf(..)|Request::Merge(..)|Request::Extract(..)|Request::Split(..)|Request::SplitBookmarks(..)|Request::ExportWord(..)|Request::ExportImages(..)|Request::Compress(..)|Request::OcrPages(..)|Request::PageBatch(..)|Request::LayoutItems(..)|Request::HighlightText(..)|Request::FormatText(..)|Request::Replace {..}|Request::ReplaceOptions {..}|Request::EditParagraph(..)|Request::Print);
+            let auto_generation=match &request {Request::AutoSaveWorkingCopy {generation}=>Some(*generation),_=>None};
             let control = if cancellable {active.start()} else {Default::default()};
             let reply = catch_unwind(AssertUnwindSafe(|| {
                 pdf_editor_core::operation::with_control(&control, || {
                     if let Err(error) = pdf_editor_core::operation::checkpoint("Processing document", 0, 1) {
+                        if let Some(generation)=auto_generation {return Some(Reply::AutoSaved {generation,result:Err(error.to_string())});}
                         return Some(Reply::Failed { message: error.to_string(), blocking: page_of(&request).is_none(), page: page_of(&request) });
                     }
                     handle(&mut state, request)
                 })
             }))
                 .unwrap_or_else(|_| {
+                    if let Some(generation)=auto_generation {return Some(Reply::AutoSaved {generation,result:Err("An internal error occurred while auto-saving.".into())});}
                     Some(Reply::Failed {
                         message: "An internal error occurred while processing the document.".into(),
                         blocking: true,
@@ -532,6 +537,17 @@ fn coalesce(batch: Vec<Request>) -> Vec<Request> {
 
 fn handle(state: &mut State, request: Request) -> Option<Reply> {
     let request = state.clipboard.prepare(request);
+    if let Request::AutoSaveWorkingCopy {generation}=request {
+        let result=(||->pdf_editor_core::Result<_> {
+            if state.generation!=generation {return Ok(None);}
+            if state.engine.is_none() {return Err(pdf_editor_core::Error(state.engine_error.clone()));}
+            let doc=state.doc.as_ref().ok_or_else(||pdf_editor_core::Error("No document is open".into()))?;
+            let copy=state.working_copy.as_mut().ok_or_else(||pdf_editor_core::Error("Create a working copy with Save As first".into()))?;
+            doc.update_working_copy(copy)?;
+            Ok(Some((copy.path().to_owned(),copy.encrypted())))
+        })().map_err(|error|error.to_string());
+        return Some(Reply::AutoSaved {generation,result});
+    }
     if let Request::SetSubstitution(policy) = request {
         state.policy = policy;
         if let Some(doc) = state.doc.as_mut() {
@@ -558,6 +574,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
     };
 
     match request {
+        Request::AutoSaveWorkingCopy {..}=>unreachable!(),
         Request::New(..)|Request::CreateCv(..) => {
             let cv=matches!(&request,Request::CreateCv(_));
             let result=match request {Request::New(spec)=>engine.blank_document(spec),Request::CreateCv(spec)=>engine.create_cv(&spec),_=>return None};

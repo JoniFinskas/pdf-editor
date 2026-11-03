@@ -17,6 +17,8 @@ mod affine_edit;
 mod drag_preview;
 #[path = "tab_drag.rs"]
 mod tab_drag;
+#[path = "working_autosave.rs"]
+mod working_autosave;
 #[path = "font_readout.rs"]
 mod font_readout;
 use crate::icons::Icon;
@@ -310,13 +312,14 @@ impl TabbedApp {
             return;
         }
         let mut tab = EditorApp::new(ctx, Ok(path), self.clipboard.clone());
+        if let Some((_,active))=self.tabs.get(self.active) {tab.file_save.configure(active.file_save.mode);}
         tab.orphans.clear();
         self.tabs.push((self.next_id, tab));
         self.next_id += 1;
         self.active = self.tabs.len() - 1;
     }
     fn needs_warning(tab: &EditorApp) -> bool {
-        tab.busy > 0
+        tab.busy > 0 || tab.file_save.in_flight.is_some()
             || tab.doc.as_ref().is_some_and(|d| {
                 d.dirty() || d.edit.as_ref().is_some_and(|e| e.changed())
             })
@@ -353,9 +356,11 @@ impl eframe::App for TabbedApp {
         if self.closing.is_some() && ctx.input_mut(|i|i.consume_key(egui::Modifiers::NONE,Key::Escape)) {
             self.closing = None;
         }
+        self.sync_working_auto_save(&ctx);
         for (index, (_, tab)) in self.tabs.iter_mut().enumerate() {
             if index != self.active {
                 tab.poll(&ctx);
+                tab.working_auto_save_tick(&ctx);
                 tab.autosave_tick(&ctx);
             }
         }
@@ -400,7 +405,7 @@ impl eframe::App for TabbedApp {
             let busy = self
                 .tabs
                 .iter()
-                .any(|(id, t)| target.is_none_or(|key| key == *id) && t.busy > 0);
+                .any(|(id, t)| target.is_none_or(|key| key == *id) && (t.busy > 0 || t.file_save.in_flight.is_some()));
             let choice = close_tabs_prompt(&ctx,&p,target.is_some(),busy);
             if let Some(discard) = choice {
                 self.closing = None;
@@ -501,6 +506,7 @@ pub struct EditorApp {
     allow_close: bool,
     title: String,
     autosave: AutoSave,
+    file_save: working_autosave::State,
     autosave_path: Option<PathBuf>,
     /// This editor's recovery folder; None when it could not be created.
     session: Option<Session>,
@@ -561,7 +567,7 @@ impl SettingsTab {
 
     fn summary(self) -> &'static str {
         match self {
-            Self::General => "Recovery and unsaved changes.",
+            Self::General => "Auto-save, recovery and unsaved changes.",
             Self::Editing => "How text edits handle fonts and characters.",
             Self::Shortcuts => "Keyboard shortcuts for common actions.",
             Self::About => "Version, privacy and licenses.",
@@ -881,6 +887,15 @@ impl EditorApp {
             }
             None => AutoSave::default(),
         };
+        let file_save_mode=match config_path.as_ref().map(|path|working_autosave::Mode::load(&path.with_file_name("working-copy-autosave.txt"))) {
+            Some(Ok(mode))=>mode,
+            Some(Err(error))=>{
+                let id=banners.iter().map(|b|b.id).max().unwrap_or(0)+1;
+                banners.push(Banner {id,kind:BannerKind::Warning,text:format!("Auto-save settings could not be read ({error}). Auto-save is off."),expires:None});
+                working_autosave::Mode::Off
+            }
+            None=>working_autosave::Mode::Off,
+        };
         let (session, session_error) = match Session::start() {
             Ok(session) => (Some(session), None),
             Err(e) => (None, Some(e.to_string())),
@@ -955,6 +970,7 @@ impl EditorApp {
             allow_close: false,
             title: String::new(),
             autosave,
+            file_save:working_autosave::State::new(file_save_mode),
             autosave_path,
             session,
             session_error,
@@ -993,6 +1009,8 @@ impl EditorApp {
     }
 
     fn engine_stopped(&mut self) {
+        if self.file_save.in_flight.is_some() && let Some(doc)=&mut self.doc {doc.changes=pdf_editor_core::ChangeState::recovered();}
+        self.file_save.stopped();
         self.drag_preview = Default::default();
         self.pending_action = None;
         self.pending_comparison=None;
@@ -1032,7 +1050,7 @@ impl EditorApp {
             return;
         }
         let committed = self.commit_edit();
-        if committed || self.busy > 0 || self.doc.as_ref().is_some_and(|d| d.dirty() || d.edit.as_ref().is_some_and(|e|e.changed())) {
+        if committed || self.busy > 0 || self.file_save.in_flight.is_some() || self.doc.as_ref().is_some_and(|d| d.dirty() || d.edit.as_ref().is_some_and(|e|e.changed())) {
             self.confirm = Some(Pending::Open(path));
         } else {
             self.open_dialog_or_path(path);
@@ -1549,6 +1567,7 @@ impl EditorApp {
                 can_undo,
                 can_redo,
             } => {
+                self.clear_auto_save_warning();self.file_save.reset_document();
                 self.pending_action = None;
                 self.drag_preview = Default::default();
                 self.sanitize.close();
@@ -1847,35 +1866,15 @@ impl EditorApp {
                     else {self.find.active=0;self.go_match();}
                 }
             }
+            Reply::AutoSaved {generation,result}=>self.auto_saved(generation,result),
             Reply::WorkingCopySaved {path,encrypted} => {
-                if !encrypted && !self.qol.original_protected && let (Some(config),Some(doc))=(&self.config_path,&self.doc) {
-                    let source=self.compare_origin.as_ref().unwrap_or(&doc.source);
-                    if !source.as_os_str().is_empty() && crate::comparison_origin::remember(config,source,&path).is_err() {
-                        self.banner(BannerKind::Warning,"Saved. The original-file link could not be remembered.");
-                    }
-                }
-
-                self.qol.working_copy=Some(path.clone());self.qol.copy_encrypted=encrypted;
-                if let Some(doc)=&mut self.doc {
-                    doc.protected=self.qol.original_protected||encrypted;
-                    doc.name=path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                }
+                self.working_copy_saved(&path,encrypted);
                 self.handle(ctx,Reply::Saved(path));
             }
             Reply::Saved(path) => {
                 if self.doc.as_ref().is_some_and(|doc|doc.source.as_os_str().is_empty()) {self.remember_recent(&path);}
                 self.busy = self.busy.saturating_sub(1);
-                if let Some(doc) = &mut self.doc {
-                    doc.changes.mark_saved();
-                    doc.copied_generation = None;
-                    doc.next_copy = None;
-                    if let Some(orphan) = doc.restored_from.take() {
-                        orphan.discard();
-                    }
-                }
-                if let Some(session) = &mut self.session {
-                    session.clear();
-                }
+                self.saved_current_document();
                 let name = path
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
@@ -2604,7 +2603,7 @@ impl EditorApp {
             return;
         }
         let committed = self.commit_edit();
-        if committed || self.busy > 0 || self.doc.as_ref().is_some_and(|d| d.dirty() || d.edit.as_ref().is_some_and(|e|e.changed())) {
+        if committed || self.busy > 0 || self.file_save.in_flight.is_some() || self.doc.as_ref().is_some_and(|d| d.dirty() || d.edit.as_ref().is_some_and(|e|e.changed())) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.confirm = Some(Pending::Close);
         }
@@ -4233,7 +4232,7 @@ impl EditorApp {
                 let discard = format!("Discard and {}", action.to_lowercase());
                 if Btn::new(&discard)
                     .look(Look::Danger)
-                    .enabled(self.busy == 0)
+                    .enabled(self.busy == 0 && self.file_save.in_flight.is_none())
                     .show(ui, p)
                     .clicked()
                 {
@@ -4297,6 +4296,7 @@ impl EditorApp {
 
     /// Writes a recovery copy once unsaved edits are one interval old.
     fn autosave_tick(&mut self, ctx: &Context) {
+        if self.file_save.in_flight.is_some() {return;}
         let (Some(minutes), Some(session), Some(doc)) =
             (self.autosave.0, &mut self.session, &mut self.doc)
         else {
@@ -4537,6 +4537,7 @@ impl EditorApp {
         self.integration.show(ui);
         if ui.checkbox(&mut self.qol.remember_session,"Restore tabs on startup").changed() {self.qol.remember_changed=true;}
         ui.add_space(20.0);
+        self.working_auto_save_settings(ui,p);
         section_title(ui, "Crash recovery");
         let label = |value: AutoSave| match value.0 {
             None => "Off".to_string(),
@@ -4547,7 +4548,7 @@ impl EditorApp {
             ui,
             p,
             "Recovery copies",
-            "Local backups of applied edits. Use Save to update your PDF.",
+            "Local backups for recovering applied edits after a crash.",
             |ui| {
                 egui::ComboBox::from_id_salt("autosave")
                     .width(240.0)
@@ -4601,6 +4602,7 @@ impl eframe::App for EditorApp {
         }
 
         self.poll(&ctx);
+        self.working_auto_save_tick(&ctx);
         self.autosave_tick(&ctx);
         self.close_guard(&ctx);
         self.dropped_files(&ctx);
@@ -5715,6 +5717,7 @@ fn round_rect(rect: Rect, ppp: f32) -> Rect {
 #[cfg(test)]
 mod tests {
     include!("workflow_tests.rs");
+    include!("working_autosave_tests.rs");
     include!("qol_workflow_tests.rs");
     include!("recovery_safety_tests.rs");
     include!("comparison_workflow_tests.rs");
@@ -5921,6 +5924,7 @@ mod tests {
                 allow_close: false,
                 title: String::new(),
                 autosave: AutoSave(None),
+                file_save:Default::default(),
                 autosave_path: None,
                 session: None,
                 session_error: None,
