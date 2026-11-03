@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Refresh documented limitations and release acceptance guidance.
+
 - Keep custom landscape dimensions wide across desktop and command-line creation.
 - Validate CV drafts before opening another tab; retain failed font/layout drafts for retry, restore removed sections and keep editor state when reordering.
 - Inspect command-session document, save-copy and undo/redo state with `status`.

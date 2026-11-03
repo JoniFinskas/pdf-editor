@@ -10,7 +10,8 @@ Run with the same limits plus `--network none --read-only --tmpfs /tmp:rw,noexec
 
 The harness exercises opening, rendering all pages, enumerating text, finding, an actual edit per eligible page, render differences outside padded edit bounds, saving and reopening. Unsupported documents or edits are explicit failure categories; they are never silently counted as passes. Aggregate result output contains no file identifiers. This on-demand harness is not part of cargo test.
 
-No full corpus run or download is implied by the presence of these scripts. Execution evidence belongs in TEST_REPORT.md.
+The presence of these scripts does not imply a completed corpus run or download.
+Keep raw execution reports outside version control.
 
 Upstream feature verification: https://github.com/bblanchon/pdfium-binaries/blob/master/steps/05-configure.sh sets both pdf_enable_v8 and pdf_enable_xfa to ENABLE_V8 (default false). build.yml names enabled archives pdfium-v8-*. Standard archive SHA256: bdc60126399f39fe768566a18d4be055a7b3681bc9e248e8a6656b4f6cae0aa2. FPDF_LoadXFA is exported even without XFA and is not a valid presence test. V8 initialization exports are checked additionally.
 

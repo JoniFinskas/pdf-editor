@@ -374,13 +374,11 @@ to the paragraph to preserve its neighbors.
 The on-demand [corpus harness](../scripts/corpus/README.md) runs downloaded PDFs only
 in restricted Linux containers. Scan downloaded inputs with
 `scripts/scan-corpus.ps1` before each changed corpus is processed. Corpus bytes,
-provenance and per-file results remain ignored local data. See [BLOCKED.md](../BLOCKED.md) for outstanding requirements.
+provenance and per-file results remain ignored local data.
 
-The latest 340-file PDFium corpus run passed 175 files (51.47%); 165 returned
-guarded errors, most often unavailable fallback fonts or unsupported text layouts.
-No crashes, panics, timeouts or render-diff failures were observed. This is not
-full Part H acceptance: the 3,000-file Govdocs minimum and fuzz testing remain
-incomplete. The native desktop itself is not container-sandboxed.
+The harness reports unsupported fonts and text layouts as failures. Its presence
+does not imply exhaustive compatibility testing or a completed fuzz campaign.
+The native desktop itself is not container-sandboxed.
 
 ## Additional editing tools
 

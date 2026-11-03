@@ -26,8 +26,8 @@ While the version is below 1.0.0, the public API is not yet stable:
 Changes that do not bump the version are still listed under `Unreleased` in
 CHANGELOG.md and ship with the next release.
 
-1.0.0 is released when every v1 feature in SPEC.md works, the release build is
-produced and the manual test checklist passes. From 1.0.0 on, a breaking core
+1.0.0 requires verified documented features, a reproducible release build and
+completed interactive release acceptance. From 1.0.0 on, a breaking core
 API change or an incompatible settings or behavior change bumps MAJOR, new
 features bump MINOR, and fixes bump PATCH.
 

@@ -1,3 +1,9 @@
+# Core security model
+
+This is a historical review of the initial core library, not a security audit of
+the current desktop app, command interface or later editing tools. Runtime and
+save behavior have changed since this review; consult the current API and guide.
+
 ## Executive summary
 
 The main risks are native parsing of hostile PDFs, resource exhaustion, and loading

@@ -33,6 +33,8 @@ desktop.ini
 # Local contributor configuration
 /AGENTS.md
 /CLAUDE.md
+/SPEC.md
+/BLOCKED.md
 /.claude/
 
 /scripts/__pycache__/
