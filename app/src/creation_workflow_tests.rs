@@ -27,6 +27,75 @@ fn creation_frame(
 }
 
 #[test]
+fn cv_draft_save_restart_load_undo_and_failed_load_preserve_entered_content() {
+    let folder=recovery_safety_folder("cv-draft-restart");
+    let path=folder.join("unfinished.cvdraft");
+    let (mut app,_,_)=mock_app();let ctx=Context::default();theme::install(&ctx);
+    app.open_tool(Tool::Cv);
+    app.create.cv.name.clear();
+    app.create.cv.sections[0].body="Generated unfinished äöå experience".into();
+    app.create.contact="fictional@example.org\n\n".into();
+    let chosen=path.clone();app.create.choose_draft_save(move||Some(chosen));
+    app.create.cv.sections[0].body="Changed after choosing save".into();
+    let settle=|app:&mut EditorApp,ctx:&Context|{
+        let deadline=std::time::Instant::now()+std::time::Duration::from_secs(10);
+        while app.create.draft_pending(){
+            creation_frame(app,ctx,vec![],vec2(640.,720.));
+            assert!(std::time::Instant::now()<deadline,"Draft operation did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        for _ in 0..3{creation_frame(app,ctx,vec![],vec2(640.,720.));}
+    };
+    settle(&mut app,&ctx);
+    assert!(path.exists());drop(app);
+    let (mut app,_,_)=mock_app();let ctx=Context::default();theme::install(&ctx);app.open_tool(Tool::Cv);
+    app.create.cv.name="Current unsaved draft".into();
+    app.create.cv.sections[0].body="Keep this previous content".into();
+    let chosen=path.clone();app.create.choose_draft_open(move||Some(chosen));
+    settle(&mut app,&ctx);
+    assert!(app.create.cv.name.is_empty());
+    assert_eq!(app.create.cv.sections[0].body,"Generated unfinished äöå experience");
+    assert_eq!(app.create.contact,"fictional@example.org\n\n");
+    app.create.cv.sections[0].body="Edited after loading the draft".into();
+    let click=|app:&mut EditorApp,key:&str|{
+        let response=ctx.read_response(widgets::tool_id(key)).unwrap();
+        assert!(response.interact_rect.contains_rect(response.rect),"Clipped {key}");
+        let events=click_at(response.rect.center());
+        creation_frame(app,&ctx,events[..2].to_vec(),vec2(640.,720.));
+        creation_frame(app,&ctx,events[2..].to_vec(),vec2(640.,720.));
+        for _ in 0..3{creation_frame(app,&ctx,vec![],vec2(640.,720.));}
+    };
+    click(&mut app,"cv-draft-menu");click(&mut app,"cv-draft-undo");
+    assert_eq!(app.create.cv.name,"Current unsaved draft");
+    assert_eq!(app.create.cv.sections[0].body,"Keep this previous content");
+    click(&mut app,"cv-draft-menu");click(&mut app,"cv-draft-undo");
+    assert_eq!(app.create.cv.sections[0].body,"Edited after loading the draft");
+    click(&mut app,"cv-draft-menu");click(&mut app,"cv-draft-undo");
+    let invalid=folder.join("invalid.cvdraft");std::fs::write(&invalid,b"invalid JSON").unwrap();
+    app.create.choose_draft_open(move||Some(invalid));settle(&mut app,&ctx);
+    assert_eq!(app.create.cv.sections[0].body,"Keep this previous content");
+    std::fs::remove_file(&path).unwrap();std::fs::remove_file(folder.join("invalid.cvdraft")).unwrap();std::fs::remove_dir(folder).unwrap();
+}
+
+#[test]
+fn closing_cv_builder_discards_a_late_draft_path_without_writing_a_file() {
+    let folder=recovery_safety_folder("cv-draft-cancel");let path=folder.join("cancelled.cvdraft");
+    let (mut app,_,_)=mock_app();let ctx=Context::default();theme::install(&ctx);app.open_tool(Tool::Cv);
+    app.create.cv.name="Generated draft".into();
+    let (release,wait)=std::sync::mpsc::channel();let chosen=path.clone();
+    app.create.choose_draft_save(move||{wait.recv().unwrap();Some(chosen)});
+    app.create.open=false;creation_frame(&mut app,&ctx,vec![],vec2(640.,720.));
+    release.send(()).unwrap();
+    let deadline=std::time::Instant::now()+std::time::Duration::from_secs(10);
+    while app.create.draft_pending(){
+        creation_frame(&mut app,&ctx,vec![],vec2(640.,720.));
+        assert!(std::time::Instant::now()<deadline);std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(!path.exists());assert_eq!(app.create.cv.name,"Generated draft");
+    std::fs::remove_dir(folder).unwrap();
+}
+
+#[test]
 fn creation_cv_builder_pointer_create_worker_edit_save_and_text_review_roundtrip() {
     let (mut app, ctx, _) = qol_worker();
     let folder = recovery_safety_folder("created-cv");

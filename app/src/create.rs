@@ -5,6 +5,13 @@ use crate::{
 };
 use eframe::egui;
 use pdf_editor_core::{BlankPdf, CvCheck, CvSection, CvSpec};
+use std::path::PathBuf;
+
+enum DraftAction {
+    Open(PathBuf),
+    Save(PathBuf, CvSpec),
+    Done(Result<Option<CvSpec>, String>),
+}
 
 #[derive(Clone, Debug)]
 pub enum Creation {
@@ -23,6 +30,10 @@ pub struct CreateTool {
     removed: Option<(usize, u64, CvSection)>,
     section_ids: Vec<u64>,
     next_section_id: u64,
+    draft_dialog: crate::dialogs::ToolDialog<DraftAction>,
+    draft_processing: bool,
+    previous_draft: Option<CvSpec>,
+    draft_redo: bool,
     preset: u8,
     landscape: bool,
     pages: u16,
@@ -30,6 +41,48 @@ pub struct CreateTool {
     height_mm: f32,
 }
 impl CreateTool {
+    #[cfg(test)]
+    pub(crate) fn draft_pending(&self) -> bool {
+        self.draft_dialog.busy()
+    }
+    fn draft_snapshot(&self) -> CvSpec {
+        let mut spec = self.cv.clone();
+        spec.contact = if self.contact.is_empty() {
+            Vec::new()
+        } else {
+            self.contact.split('\n').map(str::to_owned).collect()
+        };
+        spec
+    }
+    pub(crate) fn choose_draft_open(
+        &mut self,
+        choose: impl FnOnce() -> Option<PathBuf> + Send + 'static,
+    ) {
+        if self.draft_dialog.busy() {
+            return;
+        }
+        self.error = None;
+        self.draft_processing = false;
+        self.draft_dialog
+            .launch(move || choose().map(DraftAction::Open));
+    }
+    pub(crate) fn choose_draft_save(
+        &mut self,
+        choose: impl FnOnce() -> Option<PathBuf> + Send + 'static,
+    ) {
+        if self.draft_dialog.busy() {
+            return;
+        }
+        let spec = self.draft_snapshot();
+        if let Err(error) = spec.to_draft_json() {
+            self.error = Some(error.to_string());
+            return;
+        }
+        self.error = None;
+        self.draft_processing = false;
+        self.draft_dialog
+            .launch(move || choose().map(|path| DraftAction::Save(path, spec)));
+    }
     pub fn open(&mut self, cv: bool) {
         self.open = true;
         self.error = None;
@@ -72,6 +125,45 @@ impl CreateTool {
         idle: bool,
         document: bool,
     ) -> (Option<Creation>, bool) {
+        if let Some(action) = self.draft_dialog.poll(ctx, self.open && self.cv_mode, idle) {
+            match action {
+                DraftAction::Open(path) => {
+                    self.draft_processing = true;
+                    self.draft_dialog.launch(move || {
+                        Some(DraftAction::Done(
+                            CvSpec::load_draft(&path)
+                                .map(Some)
+                                .map_err(|e| e.to_string()),
+                        ))
+                    });
+                }
+                DraftAction::Save(path, spec) => {
+                    self.draft_processing = true;
+                    self.draft_dialog.launch(move || {
+                        Some(DraftAction::Done(
+                            spec.save_draft(&path)
+                                .map(|()| None)
+                                .map_err(|e| e.to_string()),
+                        ))
+                    });
+                }
+                DraftAction::Done(result) => {
+                    self.draft_processing = false;
+                    match result {
+                        Ok(Some(spec)) => {
+                            self.previous_draft = Some(self.draft_snapshot());
+                            self.draft_redo = false;
+                            self.remember(&Creation::Cv(spec));
+                            self.check = None;
+                            self.error = Some("Draft opened.".into());
+                        }
+                        Ok(None) => self.error = Some("Draft copy saved.".into()),
+                        Err(error) => self.error = Some(error),
+                    }
+                }
+            }
+        }
+        let idle = idle && !self.draft_dialog.busy();
         if self.section_ids.len() != self.cv.sections.len() {
             self.section_ids.clear();
             for _ in &self.cv.sections {
@@ -81,6 +173,7 @@ impl CreateTool {
         }
         let mut creation = None;
         let mut check = false;
+        let mut undo_draft = false;
         let window = ToolWindow::new(
             if self.cv_mode {
                 "Build CV"
@@ -95,7 +188,9 @@ impl CreateTool {
         } else {
             window
         };
-        window.show(ctx, p, &mut self.open, |ui| {
+        let mut open = self.open;
+        window.show(ctx, p, &mut open, |ui| {
+            self.draft_dialog.feedback_for(ui,p,"Reading or saving draft…",!self.draft_processing);
             if self.cv_mode
                 && let Some(report) = &mut self.check
             {
@@ -128,6 +223,21 @@ impl CreateTool {
                     .max_height((ui.clip_rect().bottom() - ui.cursor().top() - 56.).max(60.))
                     .show(ui, |ui| {
                         if self.cv_mode {
+                            let draft_menu=Btn::new("Draft").id("cv-draft-menu").show(ui,p);
+                            egui::Popup::menu(&draft_menu).show(|ui|{
+                                if Btn::new("Open draft…").id("cv-draft-open").show(ui,p).clicked(){
+                                    self.choose_draft_open(||rfd::FileDialog::new().set_title("Open CV draft").add_filter("CV draft", &["cvdraft"]).pick_file());
+                                    ui.close();
+                                }
+                                if Btn::new("Save draft copy…").id("cv-draft-save").show(ui,p).on_hover_text("Saves entered details in an unencrypted draft file. Existing files are protected.").clicked(){
+                                    self.choose_draft_save(||rfd::FileDialog::new().set_title("Save CV draft copy").set_file_name("CV.cvdraft").add_filter("CV draft", &["cvdraft"]).save_file());
+                                    ui.close();
+                                }
+                                if self.previous_draft.is_some() && Btn::new(if self.draft_redo {"Redo open draft"}else{"Undo open draft"}).id("cv-draft-undo").show(ui,p).clicked(){
+                                    undo_draft=true;
+                                    ui.close();
+                                }
+                            });
                             widgets::field(ui, p, "Name", |ui| {
                                 ui.add(
                                     widgets::text_field(&mut self.cv.name, ui.available_width())
@@ -353,6 +463,14 @@ impl CreateTool {
                 });
             });
         });
+        self.open = open;
+        if undo_draft && let Some(spec) = self.previous_draft.take() {
+            self.previous_draft = Some(self.draft_snapshot());
+            self.draft_redo = !self.draft_redo;
+            self.remember(&Creation::Cv(spec));
+            self.check = None;
+            self.error = None;
+        }
         if creation.is_some() {
             self.open = false;
             self.check = None;

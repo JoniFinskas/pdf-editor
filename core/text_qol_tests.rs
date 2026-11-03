@@ -1,5 +1,114 @@
 use super::*;
 
+fn icon_actual_text_pdf(named: bool, shared: bool, rotation: i64, ambiguous: bool) -> Vec<u8> {
+    let mut pdf = parse(&type3_glyph_runs()).unwrap();
+    let page = pdf.get_pages()[&1];
+    let font_id = pdf.get_page_fonts(page).unwrap().get(b"T3".as_slice()).unwrap().get(b"ToUnicode").unwrap().as_reference().unwrap();
+    let stream = pdf.get_object_mut(font_id).unwrap().as_stream_mut().unwrap();
+    let decoded = stream.decompressed_content().unwrap_or_else(|_|stream.content.clone());
+    let cmap=String::from_utf8(decoded).unwrap().replace("<01> <0048>", "<01> <E32C>");
+    stream.set_plain_content(if shared || ambiguous {cmap.replace("<02> <0065>","<02> <E32D>")}else{cmap}.into_bytes());
+    let ops = Content::decode(&pdf.get_page_content(page)).unwrap();
+    let label = Object::String([vec![0xfe,0xff],"smartphone".encode_utf16().flat_map(u16::to_be_bytes).collect()].concat(),lopdf::StringFormat::Hexadecimal);
+    let property=dictionary!{"ActualText"=>label};
+    let operand=if named {
+        let id=pdf.add_object(property);
+        let mut res=content::resources(&pdf,page).unwrap();res.set("Properties",dictionary!{"Shared"=>id,"Alias"=>id});
+        pdf.get_dictionary_mut(page).unwrap().set("Resources",res);
+        Object::Name(b"Shared".to_vec())
+    } else {Object::Dictionary(property)};
+    let mut operations=vec![];let mut show=0;
+    for op in ops.operations {
+        if op.operator=="Tj" {
+            if show==0 || (shared && show==1 && !ambiguous) {operations.push(Operation::new("BDC",vec![Object::Name(b"Span".to_vec()),if shared && show==1 {Object::Name(b"Alias".to_vec())}else{operand.clone()}]));}
+            operations.push(op);
+            if (show==0 && !ambiguous) || (show==1 && (shared || ambiguous)) {operations.push(Operation::new("EMC",vec![]));}
+            show+=1;
+        } else {operations.push(op);}
+    }
+    pdf.get_dictionary_mut(page).unwrap().set("Rotate",rotation);
+    pdf.change_page_content(page,Content{operations}.encode().unwrap()).unwrap();
+    let mut bytes=Vec::new();pdf.save_to(&mut bytes).unwrap();bytes
+}
+
+#[test]
+fn generated_icon_actual_text_remains_editable_without_touching_neighbors() {
+    let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());let e = engine();
+    for named in [false,true] { for rotation in [0,90,180,270] {
+    let path=temp("generated-icon-actualtext.pdf");fs::write(&path,icon_actual_text_pdf(named,false,rotation,false)).unwrap();
+    for action in ["delete", "replace", "style"] {
+        let text=match action {"delete"=>"", "replace"=>"AB",_=>"smartphone"};
+        let mut doc=e.open(&path).unwrap();
+        let original=e.open(&path).unwrap();
+        let original_bytes=doc.bytes.clone();
+        let before=e.text_objects(&doc,0).unwrap();
+        assert_eq!(before[0].text,"smartphone");
+        if action=="style"{e.style_text(&mut doc,&before[0],30.,[30,80,140]).unwrap_or_else(|e|panic!("named={named} rotation={rotation} action={action}: {e}"));}
+        else {e.edit(&mut doc,&before[0],text).unwrap_or_else(|e|panic!("named={named} rotation={rotation} action={action}: {e}"));}
+        let after=e.text_objects(&doc,0).unwrap();
+        assert_eq!(after.len(),before.len()-usize::from(text.is_empty()));
+        if !text.is_empty(){assert_eq!(after[0].text,text);}
+        let unchanged=if text.is_empty(){&after[..]}else{&after[1..]};
+        for (old,new) in before[1..].iter().zip(unchanged){assert_eq!(old.text,new.text);assert_eq!(old.matrix,new.matrix);assert_eq!(old.font,new.font);}
+        assert_outside_equal(&e,&original,&doc,&before[0],if text.is_empty(){&before[0]}else{&after[0]});
+        let image=e.render(&doc,0,1.).unwrap();
+        let edited_bytes=doc.bytes.clone();
+        assert!(doc.undo());assert_eq!(doc.bytes,original_bytes);
+        assert!(doc.redo());assert_eq!(doc.bytes,edited_bytes);
+        let saved=temp(&format!("icon-{named}-{rotation}-{action}.pdf"));
+        doc.save_as(&saved).unwrap();
+        let reopened=e.open(&saved).unwrap();
+        assert_eq!(e.render(&reopened,0,1.).unwrap().rgba,image.rgba);
+        assert_eq!(e.text_objects(&reopened,0).unwrap()[0].text,if text.is_empty(){before[1].text.as_str()}else{text});
+    }
+    }}
+}
+
+#[test]
+fn ambiguous_icon_labels_fail_without_changing_document_or_history() {
+    let _lock=PDFIUM.lock().unwrap_or_else(|e|e.into_inner());let e=engine();
+    for shared in [false,true] {
+    let path=temp("generated-ambiguous-icons.pdf");let bytes=icon_actual_text_pdf(shared,shared,0,!shared);fs::write(&path,&bytes).unwrap();
+    let mut doc=e.open(&path).unwrap();let first=e.text_objects(&doc,0).unwrap().remove(0);
+    assert!(e.edit(&mut doc,&first,"Replacement").unwrap_err().to_string().contains("label"));
+    assert_eq!(doc.bytes,bytes);assert!(!doc.can_undo());assert!(!doc.can_redo());
+    let selection=e.text_objects(&doc,0).unwrap();
+    assert!(e.format_text(&mut doc,&selection[..2],&TextFormat{font:"Arial".into(),bold:false,italic:false,size:18.,color:[0,0,0]}).is_err());
+    assert_eq!(doc.bytes,bytes);assert!(!doc.can_undo());
+    e.edit_group(&mut doc,&selection[..2],"AB").unwrap();
+    let after=e.text_objects(&doc,0).unwrap();
+    assert_eq!(after.len(),selection.len()-1);assert_eq!(after[0].text,"AB");
+    for (old,new) in selection[2..].iter().zip(&after[1..]){assert_eq!(old.text,new.text);assert_eq!(old.matrix,new.matrix);}
+    assert!(doc.undo());assert_eq!(doc.bytes,bytes);
+    }
+}
+
+#[test]
+fn empty_text_glyph_style_keeps_the_object_and_neighbor_positions() {
+    let _lock=PDFIUM.lock().unwrap_or_else(|e|e.into_inner());let e=engine();
+    let bytes=type3_glyph_runs();let path=temp("empty-text-style.pdf");fs::write(&path,&bytes).unwrap();
+    let mut doc=e.open(&path).unwrap();let before=e.text_objects(&doc,0).unwrap();assert!(before[5].text.is_empty());
+    let image=e.render(&doc,0,1.).unwrap();
+    e.style_text(&mut doc,&before[5],30.,[30,80,140]).unwrap();
+    let after=e.text_objects(&doc,0).unwrap();assert_eq!(before.len(),after.len());assert!(after[5].text.is_empty());assert_eq!(after[5].size,30.);
+    for (index,(old,new)) in before.iter().zip(&after).enumerate(){assert_eq!(old.text,new.text);assert_eq!(old.matrix,new.matrix);if index!=5{assert_eq!(old.size,new.size);assert_eq!(old.color,new.color);}}
+    assert_eq!(image.rgba,e.render(&doc,0,1.).unwrap().rgba);
+    assert!(doc.undo());assert_eq!(doc.bytes,bytes);assert!(doc.redo());
+}
+
+#[test]
+fn private_use_glyph_replacement_keeps_unselected_font_runs_unchanged() {
+    let _lock=PDFIUM.lock().unwrap_or_else(|e|e.into_inner());let e=engine();
+    let mut pdf=parse(&icon_actual_text_pdf(false,false,0,false)).unwrap();let page=pdf.get_pages()[&1];
+    let mut ops=Content::decode(&pdf.get_page_content(page)).unwrap();ops.operations.retain(|op|!matches!(op.operator.as_str(),"BDC"|"EMC"));
+    pdf.change_page_content(page,ops.encode().unwrap()).unwrap();let mut bytes=vec![];pdf.save_to(&mut bytes).unwrap();
+    let path=temp("literal-private-use-icon.pdf");fs::write(&path,&bytes).unwrap();
+    let mut doc=e.open(&path).unwrap();let original=e.open(&path).unwrap();let before=e.text_objects(&doc,0).unwrap();assert_eq!(before[0].text,"\u{e32c}");
+    e.edit(&mut doc,&before[0],"AB").unwrap();let after=e.text_objects(&doc,0).unwrap();assert_eq!(after[0].text,"AB");
+    for (old,new) in before[1..].iter().zip(&after[1..]){assert_eq!(old.font,new.font);assert_eq!(old.matrix,new.matrix);assert_eq!(old.text,new.text);}
+    assert_outside_equal(&e,&original,&doc,&before[0],&after[0]);assert!(doc.undo());assert_eq!(doc.bytes,bytes);
+}
+
 #[test]
 fn bulk_replacement_reuses_font_decoding_without_mixing_character_maps() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());

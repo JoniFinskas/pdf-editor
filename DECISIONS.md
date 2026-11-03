@@ -1,5 +1,34 @@
 # Engine decisions
 
+## Labeled symbols and cursor-neutral groups
+
+Permit private-use glyph replacement when a fully selected ActualText span matches
+independent native extraction. Update only the selected content-stream property;
+copy named properties locally so shared labels stay intact. Keep native text,
+transform and history verification, and reject partial or ambiguous label edits.
+Limit font fallback for symbol replacement to the selected runs.
+Group aliases of the same property resource before validating selection, and reuse
+shared property dictionaries to avoid multiplying large metadata. Size/color edits
+retain glyph objects that extract as empty text; changing an ambiguous
+symbol's font requires replacing its text first.
+
+Closed graphics saves containing only known styling or painting operations cannot
+advance the surrounding text cursor. Identify these scopes in linear time and
+reuse that classification for batching and eligible absolute anchors. Text-bearing,
+unbalanced and unknown scopes retain conservative handling.
+
+## Explicit CV draft files
+
+Keep draft persistence separate from PDF saving and recovery. Store only entered
+CV fields in bounded versioned JSON, permit unfinished fields and a restored 21st
+section, and reuse the command CV parser. Require explicit .cvdraft file selection
+and exclusive output creation. Select paths before background I/O begins; closing
+the builder discards late selections. Loading retains a reversible form restore,
+including edits made after loading.
+Apply loaded/restored sections between frames so editor identities remain valid.
+Local command draft operations use the existing workspace path boundary and leave
+the active document and history unchanged.
+
 ## Current text selection validation
 
 Validate every selected run's page, index, revision, wording, font, style and

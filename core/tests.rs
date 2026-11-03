@@ -4227,6 +4227,8 @@ fn batched_cursor_repairs_preserve_layout_pixels_and_history() {
         "chain",
         "long-chain",
         "saved-state-chain",
+        "style-saved-chain",
+        "paint-saved-chain",
         "quote",
         "double-quote",
         "scaled",
@@ -4237,7 +4239,7 @@ fn batched_cursor_repairs_preserve_layout_pixels_and_history() {
     ] {
         for replacement in ["AB", ""] {
             let seed = fs::read(fixture("unicode-cid.pdf")).unwrap();
-            let pair_count = if matches!(layout, "long-chain" | "saved-state-chain") { 150 } else { 12 };
+            let pair_count = if matches!(layout, "long-chain" | "saved-state-chain" | "style-saved-chain" | "paint-saved-chain") { 150 } else { 12 };
             let bytes = cursor_fixture::cursor_page(
                 &seed,
                 pair_count,
@@ -4308,6 +4310,16 @@ fn batched_cursor_repairs_preserve_layout_pixels_and_history() {
                         op.operands = vec![Object::Array(vec![17.into(), op.operands[0].clone()])];
                     }
                     run += 1;
+                    if matches!(layout, "style-saved-chain" | "paint-saved-chain") {
+                        revised.push(Operation::new("q", vec![]));
+                        revised.push(Operation::new("rg",vec![0.2.into(),0.3.into(),0.4.into()]));
+                        if layout == "paint-saved-chain" {
+                            revised.push(Operation::new("cm",vec![1.into(),0.into(),0.into(),1.into(),0.into(),(-100).into()]));
+                            revised.push(Operation::new("re",vec![0.into(),0.into(),1.into(),1.into()]));
+                            revised.push(Operation::new("f",vec![]));
+                        }
+                        revised.push(Operation::new("Q", vec![]));
+                    }
                     revised.push(op);
                 } else {
                     revised.push(op);

@@ -106,17 +106,21 @@ impl<T: Send + 'static> ToolDialog<T> {
         self.ready = None;
     }
     pub fn feedback(&mut self, ui: &mut eframe::egui::Ui, p: &crate::theme::Palette) {
+        self.feedback_for(ui,p,"Waiting for file selection…",true);
+    }
+    pub fn feedback_for(&mut self, ui: &mut eframe::egui::Ui, p: &crate::theme::Palette, activity: &str, cancellable: bool) {
         if self.busy() {
             ui.horizontal_wrapped(|ui| {
                 ui.spinner();
                 ui.label(if self.discarded {
-                    "Action cancelled. Close the file dialog to continue."
+                    if cancellable { "Action cancelled. Close the file dialog to continue." } else { "Finishing draft operation…" }
                 } else if self.ready.is_some() {
                     "Waiting for the current operation…"
                 } else {
-                    "Waiting for file selection…"
+                    activity
                 });
                 if !self.discarded
+                    && cancellable
                     && crate::widgets::Btn::new("Cancel pending action")
                         .show(ui, p)
                         .clicked()

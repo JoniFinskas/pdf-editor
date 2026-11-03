@@ -50,7 +50,7 @@ fn field_schema(op: &str, field: &str) -> V {
         }
         "paths" | "contact" | "options" => strings(),
         "sections" => {
-            json!({"type":"array","maxItems":20,"items":{"type":"object","properties":{"heading":{"type":"string","maxLength":120},"body":{"type":"string"}},"required":["heading","body"],"additionalProperties":false}})
+            json!({"type":"array","maxItems":if op=="cv.draft.write" {21}else{20},"items":{"type":"object","properties":{"heading":{"type":"string","maxLength":if op=="cv.draft.write" {64000}else{120}},"body":{"type":"string"}},"required":["heading","body"],"additionalProperties":false}})
         }
         "cells" => json!({"type":"array","maxItems":10000,"items":strings()}),
         "discard" | "landscape" | "letter" | "case_sensitive" | "whole_word" | "bold"
@@ -104,9 +104,10 @@ fn field_schema(op: &str, field: &str) -> V {
 fn required_fields(op: &str) -> &'static str {
     match op {
         "open" | "save" | "compare.load" | "render" | "scan.preview" | "export.word"
-        | "export.sanitized" => "path",
+        | "export.sanitized" | "cv.draft.read" => "path",
         "images.create" => "paths",
         "cv.create" => "name sections",
+        "cv.draft.write" => "path name sections",
         "document.policy" => "substitution",
         "text.add" => "text",
         "text.edit" => "indices text",

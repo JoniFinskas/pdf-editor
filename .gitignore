@@ -45,5 +45,6 @@ desktop.ini
 /last-session.bin
 /session-settings.txt
 *.history
+*.cvdraft
 
 /comparison-origins.bin

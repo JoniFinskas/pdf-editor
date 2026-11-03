@@ -8,6 +8,13 @@ Move sections up or down; **Undo remove** restores the last removed section.
 The form stays available in the new tab for revisions; rebuilding
 creates another PDF rather than overwriting edits made on the page.
 
+Use **Draft → Save draft copy…** to keep unfinished fields between sessions,
+then **Open draft…** to resume. **Undo open draft** restores the previous form;
+**Redo open draft** brings back the loaded form and its subsequent edits.
+Drafts are unencrypted `.cvdraft` files containing your entered details. Save them
+only where intended; nothing is saved automatically, and existing files are not
+overwritten. Draft text does not include later edits made directly on a PDF page.
+
 The layout uses one column, selectable embedded text, conventional section
 headings, body-level contact details and automatic page breaks. It keeps readable
 font sizes instead of shrinking a long CV. Text wraps at spaces; repeated spaces

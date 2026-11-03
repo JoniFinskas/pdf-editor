@@ -1,6 +1,58 @@
 use super::*;
 
 #[test]
+fn cv_drafts_preserve_unfinished_work_across_reload_and_build_an_editable_pdf() {
+    let _lock=PDFIUM.lock().unwrap_or_else(|e|e.into_inner());
+    let e=engine();
+    let mut spec=fictional_cv();
+    spec.name.clear();
+    spec.contact.push(String::new());
+    spec.sections[0].heading.clear();
+    spec.sections[0].body="Generated unfinished äöå €\nExperience to finish".into();
+    let path=temp("unfinished.cvdraft");
+    assert!(spec.validate().is_err());
+    spec.save_draft(&path).unwrap();
+    let initial=fs::read(&path).unwrap();
+    assert!(spec.save_draft(&path).is_err());
+    assert_eq!(fs::read(&path).unwrap(),initial);
+    let mut loaded=CvSpec::load_draft(&path).unwrap();
+    assert_eq!(loaded.to_draft_json().unwrap(),spec.to_draft_json().unwrap());
+    drop(spec);
+    loaded.name="Avery Example".into();
+    loaded.sections[0].heading="Summary".into();
+    let mut doc=e.create_cv(&loaded).unwrap();
+    let check=e.check_cv(&doc).unwrap();
+    assert!(check.text.contains("Experience to finish"));
+    let name=e.text_objects(&doc,0).unwrap().into_iter().find(|o|o.text=="Avery Example").unwrap();
+    e.edit(&mut doc,&name,"Morgan Example").unwrap();
+    let pdf=temp("draft-built.pdf");doc.save_as(&pdf).unwrap();
+    assert!(e.check_cv(&e.open(&pdf).unwrap()).unwrap().text.contains("Morgan Example"));
+}
+
+#[test]
+fn cv_drafts_reject_bad_versions_fields_sizes_and_output_types_without_overwriting() {
+    let spec=fictional_cv();
+    let data=spec.to_draft_json().unwrap();
+    let mut value:serde_json::Value=serde_json::from_str(&data).unwrap();
+    value["version"]=serde_json::json!(2);
+    assert!(CvSpec::from_draft_json(&value.to_string()).is_err());
+    value["version"]=serde_json::json!(1);
+    value["cv"]["unexpected"]=serde_json::json!(true);
+    assert!(CvSpec::from_draft_json(&value.to_string()).is_err());
+    assert!(CvSpec::from_draft_json("{").is_err());
+    assert!(CvSpec::from_draft_json(&" ".repeat(512001)).is_err());
+    let wrong=temp("draft-output.pdf");
+    assert!(spec.save_draft(&wrong).is_err());assert!(!wrong.exists());
+    let malformed=temp("malformed.cvdraft");fs::write(&malformed,b"not JSON").unwrap();
+    assert!(CvSpec::load_draft(&malformed).is_err());
+    assert_eq!(fs::read(&malformed).unwrap(),b"not JSON");
+    let mut restored=spec.clone();restored.sections=vec![CvSection::default();21];
+    assert!(restored.to_draft_json().is_ok());
+    assert!(restored.validate().is_err());
+    restored.sections.push(CvSection::default());assert!(restored.to_draft_json().is_err());
+}
+
+#[test]
 fn blank_documents_are_editable_unsaved_and_keep_separate_save_authority() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();

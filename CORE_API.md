@@ -443,3 +443,7 @@ See [the command protocol](docs/COMMANDS.md) for selection, file and error contr
 - `BlankPdf::with_landscape(bool) -> BlankPdf`: make requested pages wide without rotating existing landscape dimensions back to portrait; false preserves explicit dimensions.
 - `BlankPdf::validate() -> Result<()>`: check page count and finite dimension limits before creating a document.
 - `CvSpec::validate() -> Result<()>`: check CV text/section/contact limits and filled headings before font lookup or tab creation.
+- `CvSpec::to_draft_json() -> Result<String>`: serialize a bounded unfinished CV as version-1 JSON without PDF bytes or history.
+- `CvSpec::from_draft_json(&str) -> Result<CvSpec>`: parse versioned UTF-8 draft content; reject unknown fields, oversized input and invalid data types while retaining unfinished text.
+- `CvSpec::save_draft(&Path) -> Result<()>`: explicitly write and flush a new `.cvdraft` copy; preserve existing files.
+- `CvSpec::load_draft(&Path) -> Result<CvSpec>`: read a selected regular `.cvdraft` file, bounded to 512 KB; creating a PDF still applies full CV validation.

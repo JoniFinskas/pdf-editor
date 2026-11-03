@@ -49,6 +49,7 @@ required inputs. Unknown operations and misspelled fields fail. Tool groups:
 | Task | Commands |
 | --- | --- |
 | Create or load | `new`, `cv.create`, `images.create`, `open` |
+| CV drafts | `cv.draft.read`, `cv.draft.write` |
 | Inspect | `status`, `inspect`, `fonts`, `text.characters`, `text.find`, `text.spelling`, `cv.check` |
 | Edit text | `text.add/edit/delete/style/format/replace/highlight`, `paragraph.edit`, `document.policy` |
 | Arrange objects | `objects.edit/layout/copy/paste/ungroup/prepare_text`, `image.add/move`, `draw` |
@@ -82,6 +83,13 @@ workspace-relative working-copy path/encryption flag. It never returns a passwor
 `letter:true` selects Letter instead of A4. See [CV formatting](CV.md) for
 limits and ATS guidance. `cv.check` reads the current PDF, including applied
 edits; it does not predict hiring decisions.
+
+`cv.draft.write` takes `path` plus the same CV fields and saves a new `.cvdraft`
+file. Unfinished names or section headings are allowed; PDF creation still applies
+full validation. `cv.draft.read` returns those fields for later `cv.create` calls.
+Both work without an open PDF and leave any current PDF and its history unchanged.
+Draft paths stay inside the workspace; existing outputs are protected. The desktop
+builder opens the same files. Their JSON format is `{"version":1,"cv":{...}}`.
 
 ## State and file safety
 

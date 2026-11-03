@@ -243,7 +243,7 @@ enum CursorRepair {
 // Absolute anchors avoid accumulated floating-point cursor drift. They are
 // equivalent only when no operation later consumes the text line matrix, the
 // graphics transform is untouched, and horizontal scale/rise are neutral.
-fn can_anchor_cursors(ops: &Content<Vec<Operation>>, records: &[Run]) -> bool {
+fn can_anchor_cursors(ops: &Content<Vec<Operation>>, records: &[Run], neutral: &[bool]) -> bool {
     let mut depth = 0i32;
     let mut text = false;
     records.iter().all(|r| {
@@ -251,7 +251,7 @@ fn can_anchor_cursors(ops: &Content<Vec<Operation>>, records: &[Run]) -> bool {
             r.font.get(b"Subtype").and_then(Object::as_name),
             Ok(b"Type0" | b"TrueType")
         )
-    }) && ops.operations.iter().all(|op| match op.operator.as_str() {
+    }) && ops.operations.iter().enumerate().all(|(index,op)| neutral[index] || match op.operator.as_str() {
         "BT" => { text = true; true }
         "ET" => { text = false; true }
         "q" | "Q" => {
@@ -303,6 +303,30 @@ impl CursorShift {
             _ => {}
         }
     }
+}
+
+// A closed graphics save containing no text-position or text-show operation
+// cannot change the text cursor outside the group, even if it paints with a CTM.
+fn cursor_neutral_scopes(ops: &Content<Vec<Operation>>) -> Vec<bool> {
+    let mut stack = Vec::<(usize,bool)>::new();
+    let mut coverage = vec![0i32;ops.operations.len()+1];
+    for (index,op) in ops.operations.iter().enumerate() {
+        match op.operator.as_str() {
+            "q" => stack.push((index,true)),
+            "Q" => if let Some((start,safe)) = stack.pop() {
+                if safe { coverage[start] += 1; coverage[index+1] -= 1; }
+                else if let Some((_,parent)) = stack.last_mut() { *parent = false; }
+            },
+            "cm" | "Tf" | "Tc" | "Tw" | "Tz" | "Ts" | "Tr" | "TL"
+            | "g" | "G" | "rg" | "RG" | "k" | "K" | "cs" | "CS" | "sc" | "SC" | "scn" | "SCN"
+            | "w" | "J" | "j" | "M" | "d" | "ri" | "i"
+            | "m" | "l" | "c" | "v" | "y" | "h" | "re"
+            | "S" | "s" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "n" | "W" | "W*" => {},
+            _ => if let Some((_,safe)) = stack.last_mut() { *safe = false; },
+        }
+    }
+    let mut active = 0;
+    coverage.into_iter().take(ops.operations.len()).map(|delta|{active+=delta;active>0}).collect()
 }
 
 /// Transform selected text shows without regenerating their font resources.
@@ -427,6 +451,99 @@ pub(crate) fn edit_formatted(
     edit_with_font(engine, state, selected, targets, Some((size, color)), Some(font), false)
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum LabelBinding { Local(usize), Named(Vec<u8>), Reference(ObjectId) }
+struct LabeledSpan {
+    op: usize,
+    property: std::sync::Arc<Dictionary>,
+    binding: LabelBinding,
+    runs: Vec<usize>,
+}
+fn labeled_spans(pdf: &lopdf::Document, page: ObjectId, ops: &Content<Vec<Operation>>, records: &[Run]) -> Result<Vec<LabeledSpan>> {
+    if !ops.operations.iter().any(|op|op.operator=="BDC") {return Ok(Vec::new());}
+    let res = resources(pdf, page)?;
+    let properties = res.get_deref(b"Properties", pdf).and_then(Object::as_dict).ok();
+    let mut spans = Vec::<LabeledSpan>::new();
+    let mut cache = std::collections::HashMap::<LabelBinding,std::sync::Arc<Dictionary>>::new();
+    let mut stack = Vec::new();
+    let mut ordinal = 0;
+    for (index, op) in ops.operations.iter().enumerate() {
+        match op.operator.as_str() {
+            "BDC" | "BMC" => {
+                if stack.len() >= 128 { return Err(err("Excessive marked-content nesting")); }
+                let property = if op.operator == "BDC" {
+                    match op.operands.get(1) {
+                        Some(Object::Dictionary(property)) => Some((property,LabelBinding::Local(index))),
+                        Some(Object::Name(name)) => properties.and_then(|p| {
+                            let property=p.get_deref(name,pdf).ok()?.as_dict().ok()?;
+                            let binding=match p.get(name).ok()? {Object::Reference(id)=>LabelBinding::Reference(*id),_=>LabelBinding::Named(name.clone())};
+                            Some((property,binding))
+                        }),
+                        _ => None,
+                    }
+                } else { None };
+                let span = property.filter(|(p,_)|p.has(b"ActualText")).map(|(property,binding)| {
+                    let id = spans.len();
+                    let property=cache.entry(binding.clone()).or_insert_with(||std::sync::Arc::new(property.clone())).clone();
+                    spans.push(LabeledSpan {op:index, property, binding, runs:Vec::new()});
+                    id
+                });
+                stack.push(span);
+            }
+            "EMC" => { stack.pop(); }
+            _ => {}
+        }
+        if records.get(ordinal).is_some_and(|r|r.op == index) {
+            for span in stack.iter().flatten() { spans[*span].runs.push(ordinal); }
+            ordinal += 1;
+        }
+    }
+    if !stack.is_empty() && !spans.is_empty() { return Err(err("Unclosed labeled text span")); }
+    Ok(spans)
+}
+fn span_label(property: &Dictionary) -> Option<String> {
+    let bytes = property.get(b"ActualText").ok()?.as_str().ok()?;
+    if bytes.len() > 64000 { return None; }
+    if let Some(bytes) = bytes.strip_prefix(&[0xfe,0xff]) {
+        let (pairs,remainder)=bytes.as_chunks::<2>();
+        if !remainder.is_empty() { return None; }
+        String::from_utf16(&pairs.iter().map(|b|u16::from_be_bytes(*b)).collect::<Vec<_>>()).ok()
+    } else { String::from_utf8(bytes.to_vec()).ok() }
+}
+fn update_labeled_spans(pdf: &mut lopdf::Document, page: ObjectId, ops: &mut Content<Vec<Operation>>, records: &[Run], changes: &[(usize,String)]) -> Result<()> {
+    let spans = labeled_spans(pdf,page,ops,records)?;
+    if spans.is_empty(){return Ok(());}
+    let by_ordinal: std::collections::HashMap<_,_> = changes.iter().map(|(i,t)|(*i,t.as_str())).collect();
+    let mut affected = std::collections::HashSet::new();
+    let mut res=resources(pdf,page)?;
+    let mut properties=if res.has(b"Properties"){res.get_deref(b"Properties",pdf)?.as_dict()?.clone()}else{Dictionary::new()};
+    let mut revised=std::collections::HashMap::<(LabelBinding,String),Vec<u8>>::new();
+    let mut updated=false;
+    for span in spans {
+        if !span.runs.iter().any(|i|by_ordinal.contains_key(i)) { continue; }
+        if !span.runs.iter().all(|i|by_ordinal.contains_key(i)) || span.runs.iter().any(|i|!affected.insert(*i)) {
+            return Err(err("Select the whole labeled text span before replacing it"));
+        }
+        let text: String = span.runs.iter().map(|i|by_ordinal[i]).collect();
+        let cache_key=(span.binding,text);
+        let key=if let Some(key)=revised.get(&cache_key) { key.clone() } else {
+            let bytes=[vec![0xfe,0xff],cache_key.1.encode_utf16().flat_map(u16::to_be_bytes).collect()].concat();
+            let mut property=(*span.property).clone();
+            property.set("ActualText",Object::String(bytes,lopdf::StringFormat::Hexadecimal));
+            let id=pdf.add_object(property);
+            let mut key=format!("PELabel{}",id.0).into_bytes();while properties.has(&key){key.push(b'X');}
+            properties.set(key.clone(),id);revised.insert(cache_key,key.clone());key
+        };
+        ops.operations[span.op].operands[1] = Object::Name(key);
+        updated=true;
+    }
+    if updated {
+        res.set("Properties",properties);
+        pdf.get_dictionary_mut(page)?.set("Resources",res);
+    }
+    Ok(())
+}
+
 fn edit_with_font(
     engine: &Engine, state: &Document, selected: &TextObject,
     targets: &[(usize, String)], style: Option<(f32, [u8; 3])>,
@@ -449,16 +566,50 @@ fn edit_with_font(
     let source = runs(&pdf, page, &content)?;
     let native = engine.text_objects(state, selected.page)?;
     verify_mapping(&source, &native)?;
+    let mut target_by_ordinal = std::collections::HashMap::with_capacity(targets.len());
+    for (ordinal, text) in targets { target_by_ordinal.entry(*ordinal).or_insert(text); }
+    let labels = labeled_spans(&pdf,page,&content,&source)?;
+    let mut groups=std::collections::HashMap::<&LabelBinding,Vec<usize>>::new();
+    for (index,span) in labels.iter().enumerate(){groups.entry(&span.binding).or_default().push(index);}
+    let mut usable_labels=vec![false;labels.len()];
+    for indices in groups.values() {
+        let Some(label)=span_label(&labels[indices[0]].property) else {continue};
+        let mut matched=false;
+        let valid=indices.iter().all(|&index|{
+            let span=&labels[index];
+            let matches=span.runs.iter().flat_map(|i|native[*i].text.chars()).eq(label.chars());
+            matched|=matches;
+            !span.runs.is_empty() && span.runs.iter().all(|i|target_by_ordinal.contains_key(i))
+                && (matches || span.runs.iter().all(|i|native[*i].text.is_empty()))
+        });
+        if valid && matched {for &index in indices {usable_labels[index]=true;}}
+    }
+    let mut label_by_ordinal = vec![None;source.len()];
+    let mut ambiguous_label = vec![false;source.len()];
+    for (index,span) in labels.iter().enumerate() {
+        for &ordinal in &span.runs {
+            if label_by_ordinal[ordinal].replace(index).is_some() { ambiguous_label[ordinal] = true; }
+        }
+    }
+    let mut symbolic = targets.iter().any(|(ordinal,_)|source.get(*ordinal).is_some_and(|r|private_use(&r.text)));
     for (o, _) in targets {
+        if label_by_ordinal.get(*o).copied().flatten().is_some_and(|i|!usable_labels[i] || ambiguous_label[*o]) {
+            return Err(err("Select all glyphs sharing this accessibility label before editing"));
+        }
         match (source.get(*o), native.get(*o)) {
             (Some(r), Some(n)) if same_text(&r.text, &n.text) => {}
+            (Some(r), Some(_)) if private_use(&r.text) && !ambiguous_label[*o]
+                && label_by_ordinal[*o].is_some_and(|i|usable_labels[i]) => { symbolic = true; }
+            (Some(r), Some(_)) if private_use(&r.text) && label_by_ordinal[*o].is_some() => {
+                return Err(err("Select all glyphs sharing this accessibility label before editing"));
+            }
             _ => return Err(err("This run uses symbol glyphs that cannot be edited")),
         }
     }
-    let mut target_by_ordinal = std::collections::HashMap::with_capacity(targets.len());
-    for (ordinal, text) in targets {
-        target_by_ordinal.entry(*ordinal).or_insert(text);
+    if symbolic && forced_font.is_some() {
+        return Err(err("Replace symbol text before choosing a different font"));
     }
+    let replaces_text=style.is_none() || forced_font.is_some();
     let run = source
         .get(ordinal)
         .ok_or_else(|| err("Unsupported text-object mapping"))?;
@@ -477,8 +628,8 @@ fn edit_with_font(
     } else {
         Some(fonts::find_for_object(selected, text)?)
     };
-    let whole =
-        chosen.as_ref().is_some_and(|f| !f.exact) && state.substitution == Substitution::Document;
+    let whole = !symbolic
+        && chosen.as_ref().is_some_and(|f| !f.exact) && state.substitution == Substitution::Document;
     let missing_name = font_name(&run.font)?;
     let mut plans = vec![];
     let mut combined = text.to_string();
@@ -506,6 +657,9 @@ fn edit_with_font(
                 target_by_ordinal.get(&i).copied()
             } else { None };
             if target.is_some() || (whole && font_name(&r.font)? == missing_name) {
+                if target.is_none() && !same_text(&r.text,&before[i].text) {
+                    return Err(err("Use line-only font substitution to preserve labeled symbols"));
+                }
                 let replacement = match target {
                     Some(t) => t.clone(),
                     None => r.text.clone(),
@@ -533,6 +687,9 @@ fn edit_with_font(
         .transpose()?;
     let mut count = 0;
     for (_, page_id, operations, records, _, changes) in &mut plans {
+        if replaces_text {
+            update_labeled_spans(&mut pdf,*page_id,operations,records,changes)?;
+        }
         let mut new_key = None;
         if let Some(font) = &embedded {
             let mut res = resources(&pdf, *page_id)?;
@@ -664,7 +821,7 @@ fn edit_with_font(
             .enumerate()
             .filter(|(i, _)| {
                 #[cfg(test)] ORDINAL_PROBES.with(|count| count.set(count.get() + 1));
-                !change_by_ordinal.get(i).is_some_and(|text| text.is_empty())
+                !replaces_text || !change_by_ordinal.get(i).is_some_and(|text| text.is_empty())
             })
             .collect();
         let mut settled = false;
@@ -713,7 +870,8 @@ fn edit_with_font(
             if records.len() != after.len() {
                 return Err(err("Text mapping changed"));
             }
-            let anchor = can_anchor_cursors(&ops, &records);
+            let neutral = cursor_neutral_scopes(&ops);
+            let anchor = can_anchor_cursors(&ops, &records, &neutral);
             let mut corrections = Vec::new();
             let mut cursor = CursorShift::default();
             let mut operation = 0;
@@ -723,8 +881,8 @@ fn edit_with_font(
                     continue;
                 }
                 let op_index = records[position].op;
-                for op in &ops.operations[operation..=op_index] {
-                    cursor.advance(&op.operator);
+                for (op,safe) in ops.operations[operation..=op_index].iter().zip(&neutral[operation..=op_index]) {
+                    if !safe { cursor.advance(&op.operator); }
                 }
                 operation = op_index + 1;
                 if cursor.uncertain {
@@ -867,8 +1025,8 @@ pub(crate) fn verify_mapping(runs: &[Run], objects: &[TextObject]) -> Result<()>
     // PDFium reports space-only glyph runs as empty text, so whitespace is not
     // compared; every other character must match in order.
     // Icon fonts map a glyph to a private-use code point while PDFium may
-    // report the glyph's name; such runs keep their position in the mapping
-    // but cannot be edited.
+    // report an accessibility label. Keep those ordinals; editing separately
+    // requires a verified, fully selected ActualText span.
     if runs.len() != objects.len()
         || runs
             .iter()
@@ -932,10 +1090,12 @@ mod tests {
             ("Q BT /F1 12 Tf (A) Tj ET", false),
             ("q BT /F1 12 Tf (A) Tj ET", false),
             ("BT q /F1 12 Tf (A) Tj Q ET", false),
+            ("BT /F1 12 Tf q 0.2 0.3 0.4 rg Q (A) Tj ET", true),
+            ("BT /F1 12 Tf q 1 0 0 1 5 6 cm 0 0 1 1 re f Q (A) Tj ET", true),
             ("q 1 0 0 1 2 3 cm BT /F1 12 Tf (A) Tj ET Q", false),
         ] {
             let ops = Content::decode(data.as_bytes()).unwrap();
-            assert_eq!(can_anchor_cursors(&ops, std::slice::from_ref(&record)), expected, "{data}");
+            assert_eq!(can_anchor_cursors(&ops, std::slice::from_ref(&record), &cursor_neutral_scopes(&ops)), expected, "{data}");
         }
     }
 
@@ -969,6 +1129,22 @@ mod tests {
 #[cfg(test)]
 mod cursor_tests {
     use super::*;
+    #[test]
+    fn cursor_neutral_scopes_require_balanced_groups_without_text_positioning() {
+        for (content,safe) in [
+            ("q 0.2 0.3 0.4 rg Q",true),
+            ("q q 1 0 0 1 5 6 cm 0 0 1 1 re f Q Q",true),
+            ("q /F1 12 Tf Q",true),
+            ("q (A) Tj Q",false), ("q 1 0 Td Q",false),
+            ("q BT ET Q",false), ("q /Form Do Q",false),
+            ("q q (A) Tj Q Q",false),
+            ("q 0 g",false), ("Q",false),
+        ] {
+            let ops=Content::decode(content.as_bytes()).unwrap();
+            let flags=cursor_neutral_scopes(&ops);
+            assert!(flags.iter().all(|value|*value==safe),"{content}: {flags:?}");
+        }
+    }
     #[test]
     fn graphics_boundaries_defer_propagation_until_an_absolute_reset() {
         for boundary in ["q", "Q", "cm"] {

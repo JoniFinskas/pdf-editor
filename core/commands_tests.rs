@@ -26,6 +26,25 @@ fn rejected(s: &mut CommandSession<'_>, mut v: Value) {
 }
 
 #[test]
+fn command_cv_drafts_roundtrip_incomplete_text_without_changing_the_open_document() {
+    let _lock=PDFIUM.lock().unwrap_or_else(|e|e.into_inner());let e=engine();
+    let root=folder("command-cv-drafts");let mut s=CommandSession::new(&e,&root).unwrap();
+    let request=json!({"op":"cv.draft.write","path":"unfinished.cvdraft","name":"","contact":["fictional@example.org",""],"sections":[{"heading":"","body":"Generated äöå experience"}]});
+    call(&mut s,request.clone());
+    let spec=call(&mut s,json!({"op":"cv.draft.read","path":"unfinished.cvdraft"}));
+    assert_eq!(spec["name"],"");assert_eq!(spec["sections"][0]["body"],"Generated äöå experience");
+    call(&mut s,json!({"op":"new"}));
+    let bytes=s.doc.as_ref().unwrap().bytes.clone();
+    call(&mut s,json!({"op":"cv.draft.read","path":"unfinished.cvdraft"}));
+    assert_eq!(s.doc.as_ref().unwrap().bytes,bytes);assert!(!s.doc.as_ref().unwrap().can_undo());
+    rejected(&mut s,request);
+    rejected(&mut s,json!({"op":"cv.draft.read","path":"../outside.cvdraft"}));
+    let mut build=spec;build["op"]=json!("cv.create");build["discard"]=json!(true);build["name"]=json!("Avery Example");build["sections"][0]["heading"]=json!("Experience");
+    call(&mut s,build);
+    assert!(e.check_cv(s.doc.as_ref().unwrap()).unwrap().text.contains("Generated äöå experience"));
+}
+
+#[test]
 fn commands_create_edit_save_reopen_and_reject_stale_selections() {
     let _lock = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     let e = engine();

@@ -25,6 +25,8 @@ const OPS: &[(&str, &str, bool)] = &[
     ("fonts", "", false),
     ("status", "", false),
     ("cv.check", "", false),
+    ("cv.draft.read", "path", false),
+    ("cv.draft.write", "path name headline contact sections letter", false),
     ("document.policy", "substitution", true),
     ("save", "path password", false),
     ("save.update", "", false),
@@ -342,6 +344,15 @@ impl<'a> CommandSession<'a> {
                     .map_err(|_| err("Invalid capability schema"));
             }
             "fonts" => return Ok(json!(self.engine.system_fonts()?)),
+            "cv.draft.read" => {
+                let spec=CvSpec::load_draft(&self.path(a.s("path")?,false,false)?)?;
+                let value: V=serde_json::from_str(&spec.to_draft_json()?).map_err(|_|err("Invalid CV draft"))?;
+                return Ok(value["cv"].clone());
+            }
+            "cv.draft.write" => {
+                cv(&a)?.save_draft(&self.path(a.s("path")?,true,false)?)?;
+                return Ok(json!({"saved":true}));
+            }
             "new" | "cv.create" | "open" | "images.create" => {
                 if self.doc.is_some() && self.changes.is_dirty() && !a.b("discard", false)? {
                     return Err(err(
@@ -614,33 +625,7 @@ fn blank(a: &Args<'_>) -> Result<BlankPdf> {
     Ok(spec)
 }
 fn cv(a: &Args<'_>) -> Result<CvSpec> {
-    let sections = a
-        .array("sections")?
-        .iter()
-        .map(|v| {
-            let s = Args(v);
-            if v.as_object()
-                .is_none_or(|o| o.keys().any(|k| k != "heading" && k != "body"))
-            {
-                return Err(err("CV section fields are heading and body"));
-            }
-            Ok(CvSection {
-                heading: s.s("heading")?.into(),
-                body: s.s("body")?.into(),
-            })
-        })
-        .collect::<Result<_>>()?;
-    Ok(CvSpec {
-        name: a.s("name")?.into(),
-        headline: a.text("headline", "")?.into(),
-        contact: if a.0.get("contact").is_some() {
-            a.strings("contact")?
-        } else {
-            vec![]
-        },
-        sections,
-        letter: a.b("letter", false)?,
-    })
+    CvSpec::from_value(a.0)
 }
 fn image_size(value: &str) -> Result<ImagePageSize> {
     match value {

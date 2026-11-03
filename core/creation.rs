@@ -9,6 +9,8 @@ use skrifa::{
     instance::{LocationRef, Size},
 };
 use std::sync::atomic::{AtomicU64, Ordering};
+#[path = "cv_draft.rs"]
+mod draft;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BlankPdf {
