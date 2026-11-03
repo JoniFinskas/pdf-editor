@@ -1,6 +1,84 @@
 // Real worker/PDFium integration driven through egui pointer and keyboard events.
 // All files and configuration belong to generated test sessions.
 #[test]
+fn document_tabs_drag_in_both_directions_without_switching_or_mutating_sessions() {
+    let ctx=Context::default();theme::install(&ctx);
+    let mut entries=vec![];let mut inboxes=vec![];
+    for (id,name) in ["A.pdf","B.pdf","C.pdf"].iter().enumerate() {
+        let (mut app,inbox,_)=mock_app();opened(&mut app,&ctx);
+        app.doc.as_mut().unwrap().name=(*name).into();
+        if id==1 {app.doc.as_mut().unwrap().changes.edited();}
+        inbox.try_iter().for_each(drop);
+        entries.push((id as u64,app));inboxes.push(inbox);
+    }
+    let mut app=TabbedApp {sessions:Default::default(),native_guard:None,clipboard:Default::default(),tabs:entries,active:1,next_id:3,closing:None,allow_exit:false,instance:None,merge_tab:None,dragging_tab:None};
+    let frame=|app:&mut TabbedApp,events| {
+        let mut actions=None;
+        let mut out=ctx.run_ui(egui::RawInput {screen_rect:Some(Rect::from_min_size(Pos2::ZERO,vec2(800.,600.))),events,..Default::default()},|ui| {let p=theme::palette(ui);actions=Some(app.tab_bar(ui,&p));egui::CentralPanel::default().show(ui,|_|{});});
+        out.textures_delta.clear();(out,actions.unwrap())
+    };
+    let center=|out:&egui::FullOutput,name:&str|out.shapes.iter().find_map(|s|match &s.shape {Shape::Text(t) if t.galley.text()==name=>Some(t.pos+t.galley.size()*0.5),_=>None}).unwrap();
+    let button=|pos,pressed|egui::Event::PointerButton {pos,pressed,button:egui::PointerButton::Primary,modifiers:Default::default()};
+    frame(&mut app,vec![]);
+    let (out,_)=frame(&mut app,vec![]);
+    let a=center(&out,"A.pdf");let c=center(&out,"C.pdf")+vec2(18.,0.);
+    frame(&mut app,vec![egui::Event::PointerMoved(a),button(a,true)]);
+    let (out,actions)=frame(&mut app,vec![egui::Event::PointerMoved(c)]);
+    assert!(app.dragging_tab.is_some());assert_eq!(actions,(None,None,false));
+    assert!(out.shapes.iter().any(|s|matches!(&s.shape,Shape::Rect(r) if r.stroke.width==1.5)));
+    assert_eq!(app.tabs.iter().map(|t|t.0).collect::<Vec<_>>(),[0,1,2]);
+    frame(&mut app,vec![button(c,false)]);
+    assert_eq!(app.tabs.iter().map(|t|t.0).collect::<Vec<_>>(),[1,2,0]);
+    assert_eq!(app.tabs[app.active].0,1);
+    let (out,_)=frame(&mut app,vec![]);
+    let a=center(&out,"A.pdf");let b=center(&out,"B.pdf")-vec2(18.,0.);
+    frame(&mut app,vec![egui::Event::PointerMoved(a),button(a,true)]);
+    frame(&mut app,vec![egui::Event::PointerMoved(b)]);
+    frame(&mut app,vec![button(b,false)]);
+    assert_eq!(app.tabs.iter().map(|t|t.0).collect::<Vec<_>>(),[0,1,2]);
+    assert_eq!(app.tabs[app.active].0,1);
+    for cancel in [false,true] {
+        frame(&mut app,vec![egui::Event::PointerMoved(a),button(a,true)]);
+        frame(&mut app,vec![egui::Event::PointerMoved(b)]);
+        if cancel {frame(&mut app,vec![workflow_key(Key::Escape,Default::default())]);}
+        let outside=pos2(500.,300.);
+        frame(&mut app,vec![egui::Event::PointerMoved(outside),button(outside,false)]);
+        assert!(app.dragging_tab.is_none());
+        assert_eq!(app.tabs.iter().map(|t|t.0).collect::<Vec<_>>(),[0,1,2]);
+    }
+    assert!(app.tabs[1].1.doc.as_ref().unwrap().dirty());
+    assert!(inboxes.iter().all(|inbox|inbox.try_recv().is_err()));
+    let (out,_)=frame(&mut app,vec![]);
+    let a=center(&out,"A.pdf");let b=center(&out,"B.pdf");
+    let close=a+vec2((b.x-a.x-2.)*0.5-18.,0.);
+    frame(&mut app,vec![egui::Event::PointerMoved(close),button(close,true)]);
+    let (_,actions)=frame(&mut app,vec![button(close,false)]);
+    assert_eq!(actions,(None,Some(0),false));
+    assert!(app.dragging_tab.is_none());
+    for id in 3..32 {
+        let (mut tab,inbox,_)=mock_app();opened(&mut tab,&ctx);
+        tab.doc.as_mut().unwrap().name=format!("Generated-{id:02}.pdf");
+        inbox.try_iter().for_each(drop);inboxes.push(inbox);
+        app.tabs.push((id,tab));
+    }
+    frame(&mut app,vec![]);let (out,_)=frame(&mut app,vec![]);
+    let last_visible=|out:&egui::FullOutput|out.shapes.iter().filter_map(|s|match &s.shape {
+        Shape::Text(t) if t.pos.x>=0. && t.pos.x<780. =>t.galley.text().strip_prefix("Generated-").and_then(|s|s.strip_suffix(".pdf")).and_then(|s|s.parse::<usize>().ok()),_=>None
+    }).max().unwrap_or(0);
+    let old_visible=last_visible(&out);
+    let start=center(&out,"A.pdf");let edge=pos2(790.,start.y);
+    frame(&mut app,vec![egui::Event::PointerMoved(start),button(start,true)]);
+    let (mut out,_)=frame(&mut app,vec![egui::Event::PointerMoved(edge)]);
+    for _ in 0..60 {out=frame(&mut app,vec![]).0;}
+    assert!(last_visible(&out)>old_visible,"Dragging at the edge did not reveal more tabs");
+    let outside=pos2(500.,300.);
+    frame(&mut app,vec![egui::Event::PointerMoved(outside),button(outside,false)]);
+    assert_eq!(app.tabs.iter().map(|t|t.0).collect::<Vec<_>>(),(0..32).collect::<Vec<_>>());
+    assert_eq!(app.tabs[app.active].0,1);
+    assert!(inboxes.iter().all(|inbox|inbox.try_recv().is_err()));
+}
+
+#[test]
 fn keyboard_password_submission_opens_a_generated_encrypted_document() {
     let (mut app,ctx,source)=qol_worker();
     let original=std::fs::read(&source).unwrap();

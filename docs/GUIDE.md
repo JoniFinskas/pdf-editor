@@ -149,6 +149,8 @@ markup type and image export format use segmented selectors.
 
 The active document tab has an accent line. Unsaved tabs show a dot; hover a tab
 to reveal its close button. Closing a dirty tab asks whether to discard changes.
+Drag a tab before or after another to reorder it. The active document stays selected;
+hold near an edge to scroll through tabs, or press Escape to cancel the drag.
 
 - Print opens the Windows print dialog and prints rendered pages, including edits.
 - Signatures supports drawing, PNG/JPG import, and a reusable local library.

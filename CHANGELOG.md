@@ -5,6 +5,7 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 ## [Unreleased]
 
 - Keep resized text previews sharp with bounded high-resolution foreground layers and mipmap filtering.
+- Drag document tabs to reorder them, with a moving preview, insertion marker and edge scrolling; preserve the active editing session.
 
 - Clarify that crash recovery creates local backups rather than saving the PDF; correct the one-minute interval label.
 

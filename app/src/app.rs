@@ -15,6 +15,8 @@ mod tiles;
 mod affine_edit;
 #[path = "drag_preview.rs"]
 mod drag_preview;
+#[path = "tab_drag.rs"]
+mod tab_drag;
 #[path = "font_readout.rs"]
 mod font_readout;
 use crate::icons::Icon;
@@ -216,6 +218,7 @@ pub struct TabbedApp {
     allow_exit: bool,
     instance: Option<crate::instance::Instance>,
     merge_tab: Option<u64>,
+    dragging_tab: Option<(u64, Vec2)>,
 }
 impl TabbedApp {
     pub fn with_native_guard(mut self, guard: Option<Box<dyn FnMut()>>) -> Self {
@@ -238,6 +241,7 @@ impl TabbedApp {
             allow_exit: false,
             instance: None,
             merge_tab: None,
+            dragging_tab: None,
         };
         app.sessions_start(ctx,restore);
         app
@@ -362,57 +366,8 @@ impl eframe::App for TabbedApp {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.closing = Some(None);
         }
-        let mut select = None;
-        let mut close = None;
-        let mut new = false;
-        egui::Panel::top("document-tabs")
-            .frame(Frame::new().fill(p.canvas).inner_margin(Margin {
-                left: 8,
-                right: 8,
-                top: 6,
-                bottom: 0,
-            }))
-            .show_separator_line(false)
-            .show(ui, |ui| {
-                egui::ScrollArea::horizontal()
-                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 2.0;
-                            for (index, (id, tab)) in self.tabs.iter().enumerate() {
-                                ui.push_id(id, |ui| {
-                                    let name = tab
-                                        .doc
-                                        .as_ref()
-                                        .map_or("New document", |d| d.name.as_str());
-                                    let (picked, closed) = document_tab(
-                                        ui,
-                                        &p,
-                                        name,
-                                        self.active == index,
-                                        Self::needs_warning(tab),
-                                    );
-                                    if picked {
-                                        select = Some(index);
-                                    }
-                                    if closed {
-                                        close = Some(*id);
-                                    }
-                                });
-                            }
-                            if Btn::icon(Icon::Plus)
-                                .id("new-tab")
-                                .height(30.0)
-                                .tip("New tab")
-                                .show(ui, &p)
-                                .clicked()
-                            {
-                                new = true;
-                            }
-                        });
-                    });
-            });
-        if let Some(index) = select {
+        let (select, close, new) = self.tab_bar(ui, &p);
+        if let Some(index) = select.and_then(|id|self.tabs.iter().position(|(key,_)|*key==id)) {
             self.tabs[self.active].1.commit_edit();
             self.active = index;
             self.tabs[index].1.title.clear();
@@ -5181,10 +5136,8 @@ fn recent_row(
     }
 }
 
-/// Path for display, without the `\\?\` prefix of canonicalized Windows paths.
-/// One tab in the document tab strip. Returns whether the tab was picked
-/// and whether its close button was clicked.
-fn document_tab(ui: &mut Ui, p: &Palette, name: &str, active: bool, edited: bool) -> (bool, bool) {
+/// One tab's interaction response and whether its close button was clicked.
+fn document_tab(ui: &mut Ui, p: &Palette, name: &str, active: bool, edited: bool) -> (egui::Response, bool) {
     const HEIGHT: f32 = 34.0;
     const CLOSE: f32 = 22.0;
     let mut job = egui::text::LayoutJob::single_section(
@@ -5194,7 +5147,7 @@ fn document_tab(ui: &mut Ui, p: &Palette, name: &str, active: bool, edited: bool
     job.wrap = egui::text::TextWrapping::truncate_at_width(180.0);
     let galley = ui.painter().layout_job(job);
     let width = 12.0 + 16.0 + 8.0 + galley.size().x + 8.0 + CLOSE + 8.0;
-    let (rect, response) = ui.allocate_exact_size(vec2(width, HEIGHT), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, HEIGHT), Sense::click_and_drag());
     response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, active, name));
     let hot = ui.rect_contains_pointer(rect);
     let painter = ui.painter();
@@ -5248,9 +5201,10 @@ fn document_tab(ui: &mut Ui, p: &Palette, name: &str, active: bool, edited: bool
         })
         .inner
     };
-    (response.clicked(), closed)
+    (response, closed)
 }
 
+/// Path for display, without the `\\?\` prefix of canonicalized Windows paths.
 fn shown_path(path: &std::path::Path) -> String {
     let text = path.display().to_string();
     match text.strip_prefix(r"\\?\") {
@@ -6991,6 +6945,7 @@ mod tests {
             allow_exit: false,
             instance: None,
             merge_tab: None,
+            dragging_tab: None,
         };
         assert!(TabbedApp::needs_warning(&tabs.tabs[0].1));
         assert!(!TabbedApp::needs_warning(&tabs.tabs[1].1));
