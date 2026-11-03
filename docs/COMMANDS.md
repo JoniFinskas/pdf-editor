@@ -61,8 +61,9 @@ required inputs. Unknown operations and misspelled fields fail. Tool groups:
 | Export and compare | `render`, `export.images/word`, `table.detect/edit/export`, `compare.load`, `compare` |
 | Save and history | `save`, `save.update`, `history.undo/redo` |
 
-For example, `objects.edit` supports move, duplicate, resize, delete, front and
-back. `draw` supports freehand, rectangle, ellipse, line and arrow. Images and
+For example, `objects.edit` supports move, duplicate, resize, resize_text, delete, front and
+back. Use `resize_text` with proportional bounds to grow fonts without stretching
+their shape; `resize` keeps general artwork transformation behavior. `draw` supports freehand, rectangle, ellipse, line and arrow. Images and
 freehand drawing can place a signature without using a persistent signature
 library. OCR uses installed Windows languages and processes a numeric `pages`
 array. `compare` uses the opening snapshot by default; null `page` or

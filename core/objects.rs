@@ -24,6 +24,10 @@ pub enum ObjectAction {
     Resize {
         bounds: Bounds,
     },
+    /// Increase text font sizes proportionally, preserving font shape and spacing.
+    ResizeText {
+        bounds: Bounds,
+    },
     Delete,
     BringToFront,
     SendToBack,
@@ -37,16 +41,21 @@ pub struct ObjectClipboard {
 
 impl Engine {
     pub(crate) fn transform_page_objects(&self, doc: &Document, page: u16,
-        indices: &[usize], matrix: [f32; 6]) -> Result<Vec<u8>> {
+        indices: &[usize], matrix: [f32; 6], positions_only: bool) -> Result<Vec<u8>> {
         let mut native = forms::NativeForm::open(self.raw, &doc.bytes, page)?;
         let [a, b, c, d, e, f] = matrix.map(f64::from);
+        let positions=if positions_only { self.text_objects(doc,page)?.into_iter().map(|o|(o.index,[o.matrix[4],o.matrix[5]])).collect::<std::collections::HashMap<_,_>>() } else {Default::default()};
         for &index in indices {
+            let transform=if positions_only {
+                let [x,y]=positions.get(&index).ok_or_else(||err("Select text only to resize its font"))?.map(f64::from);
+                [1.,0.,0.,1.,a*x+c*y+e-x,b*x+d*y+f-y]
+            } else {[a,b,c,d,e,f]};
             let index = i32::try_from(index).map_err(|_| err("Invalid page object index"))?;
             // The page and its objects stay owned by NativeForm through generation/save.
             unsafe {
                 let object = self.raw.FPDFPage_GetObject(native.page, index);
                 if object.is_null() { return Err(err("Object no longer exists")); }
-                self.raw.FPDFPageObj_Transform(object, a, b, c, d, e, f);
+                self.raw.FPDFPageObj_Transform(object, transform[0],transform[1],transform[2],transform[3],transform[4],transform[5]);
                 self.raw.FPDFPageObj_TransformClipPath(object, a, b, c, d, e, f);
             }
         }
@@ -202,7 +211,7 @@ impl Engine {
             }
             let (dx, dy) = match action {
                 ObjectAction::Move { dx, dy } | ObjectAction::Duplicate { dx, dy } => (dx, dy),
-                ObjectAction::Delete | ObjectAction::Resize { .. } | ObjectAction::BringToFront | ObjectAction::SendToBack => (0.0, 0.0),
+                ObjectAction::Delete | ObjectAction::Resize { .. } | ObjectAction::ResizeText { .. } | ObjectAction::BringToFront | ObjectAction::SendToBack => (0.0, 0.0),
             };
             if !dx.is_finite() || !dy.is_finite() || dx.abs() > 100000.0 || dy.abs() > 100000.0 {
                 return Err(err("Invalid object movement"));
@@ -210,7 +219,7 @@ impl Engine {
             if matches!(action, ObjectAction::Move { .. }) && dx == 0.0 && dy == 0.0 {
                 return Ok(());
             }
-            let resize = if let ObjectAction::Resize { bounds } = action {
+            let resize = if let ObjectAction::Resize { bounds } | ObjectAction::ResizeText { bounds } = action {
                 let current = self.page_items(doc, first.page)?;
                 let mut bounds_iter=items.iter().map(|item| current.iter().find(|c|c.index==item.index)
                     .map(|c|c.bounds).ok_or_else(||err("Object no longer exists")));
@@ -241,6 +250,9 @@ impl Engine {
                 }
                 let sx = dimensions[2] / dimensions[0];
                 let sy = dimensions[3] / dimensions[1];
+                if matches!(action,ObjectAction::ResizeText {..}) && (sx-sy).abs()>sx.max(sy)*0.002 {
+                    return Err(err("Text font resizing must preserve proportions"));
+                }
                 if !(0.0001..=10000.0).contains(&sx) || !(0.0001..=10000.0).contains(&sy) {
                     return Err(err("Object scale exceeds limits"));
                 }
@@ -253,7 +265,7 @@ impl Engine {
             } else {
                 None
             };
-            if matches!(action,ObjectAction::Move {..}|ObjectAction::Resize {..}|ObjectAction::Delete) {
+            if matches!(action,ObjectAction::Move {..}|ObjectAction::Resize {..}|ObjectAction::ResizeText {..}|ObjectAction::Delete) {
                 let text=self.text_objects(doc,first.page)?;
                 let ordinals:Option<Vec<_>>=items.iter().map(|item|text.iter().position(|o|o.index==item.index)).collect();
                 if let Some(mut ordinals)=ordinals {
@@ -265,11 +277,36 @@ impl Engine {
                     } else {
                         let matrix=resize.map_or([1.0,0.0,0.0,1.0,dx,dy],
                             |(sx,sy,tx,ty)|[sx,0.0,0.0,sy,tx,ty]);
-                        content::transform_text(self,doc,first.page,&ordinals,matrix)?
+                        if matches!(action,ObjectAction::ResizeText {..}) {
+                            let factor=matrix[0];
+                            for &ordinal in &ordinals {
+                                let o=&text[ordinal];
+                                let [a,b,c,d,_,_]=o.matrix;
+                                let size=o.size*(a*d-b*c).abs().sqrt()*factor;
+                                if !size.is_finite() || !(1.0..=1000.0).contains(&size) {return Err(err("Font size must be from 1 to 1000 points"));}
+                            }
+                            let targets=ordinals.iter().map(|&i|(i,text[i].text.clone())).collect::<Vec<_>>();
+                            let bytes=content::scale_text(self,doc,&text[ordinals[0]],&targets,factor)?;
+                            let candidate=self.candidate(doc,parse(&bytes)?)?;
+                            let bytes=content::transform_text(self,&candidate,first.page,&ordinals,matrix,true)?;
+                            let verified=self.candidate(doc,parse(&bytes)?)?;
+                            let after=self.text_objects(&verified,first.page)?;
+                            if after.len()!=text.len() {return Err(err("Font resize changed text structure"));}
+                            for (i,(old,new)) in text.iter().zip(&after).enumerate() {
+                                let expected=old.size*if ordinals.contains(&i) {factor}else{1.};
+                                if old.font!=new.font || old.color!=new.color || (new.size-expected).abs()>0.001
+                                    || !old.text.chars().filter(|c|!c.is_whitespace()).eq(new.text.chars().filter(|c|!c.is_whitespace())) {
+                                    return Err(err("Font resize verification failed; document unchanged"));
+                                }
+                            }
+                            operation::checkpoint("Resizing text",1,1)?;
+                            bytes
+                        } else {content::transform_text(self,doc,first.page,&ordinals,matrix,false)?}
                     };
                     doc.accept(bytes);
                     return Ok(());
                 }
+                if matches!(action,ObjectAction::ResizeText {..}) {return Err(err("Select text only to resize its font"));}
             }
             let text_before=self.text_objects(doc,first.page)?;
             let mut expected_text:Vec<_>=text_before.iter()
@@ -283,7 +320,7 @@ impl Engine {
             let bytes = if matches!(action, ObjectAction::Move { .. } | ObjectAction::Resize { .. }) {
                 let matrix = resize.map_or([1., 0., 0., 1., dx, dy],
                     |(sx, sy, tx, ty)| [sx, 0., 0., sy, tx, ty]);
-                self.transform_page_objects(doc, first.page, &indices, matrix)?
+                self.transform_page_objects(doc, first.page, &indices, matrix,false)?
             } else {
                 let pdf = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
                 let source = self.pdfium.load_pdf_from_byte_slice(&doc.bytes, None)?;
@@ -325,7 +362,7 @@ impl Engine {
                 for index in indices {
                     match action {
                         ObjectAction::BringToFront | ObjectAction::SendToBack => unreachable!(),
-                        ObjectAction::Resize { .. } | ObjectAction::Move { .. } => unreachable!(),
+                        ObjectAction::Resize { .. } | ObjectAction::ResizeText { .. } | ObjectAction::Move { .. } => unreachable!(),
                         ObjectAction::Delete => {
                             page.objects_mut().remove_object_at_index(index)?;
                         }

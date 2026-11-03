@@ -390,7 +390,10 @@ impl Engine {
             if text.chars().count() > 16384 || text.chars().any(|c| c.is_control() && c != '\n') {
                 return Err(err("Paragraph requires at most 16384 printable characters"));
             }
-            let width = selected.wrap_width.unwrap_or(p.bounds.right - p.bounds.left);
+            // Glyph bearings are not the text origin; using them as the left
+            // margin moves a paragraph a little farther on every replacement.
+            let left=if matches!(p.alignment,ParagraphAlignment::Left|ParagraphAlignment::Justified) {first.matrix[4]} else {p.bounds.left};
+            let width = selected.wrap_width.unwrap_or(p.bounds.right - left);
             if !width.is_finite() || width <= 0.0 {
                 return Err(err("Invalid text box width"));
             }
@@ -507,8 +510,8 @@ impl Engine {
                 return Err(err("Invalid visible page bounds"));
             }
             if width > visible[2] - visible[0]
-                || p.bounds.left < visible[0]
-                || p.bounds.left + width > visible[2]
+                || left < visible[0]
+                || left + width > visible[2]
             {
                 return Err(err("Paragraph bounds exceed the page"));
             }
@@ -519,9 +522,9 @@ impl Engine {
                 }
                 let w = measure(l)?;
                 let x = match p.alignment {
-                    ParagraphAlignment::Right => p.bounds.left + width - w,
-                    ParagraphAlignment::Center => p.bounds.left + (width - w) / 2.0,
-                    _ => p.bounds.left,
+                    ParagraphAlignment::Right => left + width - w,
+                    ParagraphAlignment::Center => left + (width - w) / 2.0,
+                    _ => left,
                 };
                 let y = first.matrix[5] - i as f32 * p.line_spacing;
                 if y + vertical.descent * first.matrix[3] < visible[1]
@@ -761,6 +764,26 @@ mod tests {
     }
     fn engine() -> Engine {
         Engine::new(&root().join("target/debug/pdfium.dll")).unwrap()
+    }
+    #[test]
+    fn repeated_left_paragraph_edits_keep_the_original_text_origin() {
+        let e=engine();
+        let source=root().join("tests/fixtures/generated/paragraph-Left.pdf");
+        let mut doc=e.open(&source).unwrap();
+        let original=doc.bytes.clone();
+        let before=paragraphs(&e.text_objects(&doc,0).unwrap()).remove(0).objects[0].clone();
+        for text in ["Muutos ä ö å €","Tämä rivi","Muutos lyhyt teksti","Muutos ä ö å €"] {
+            let mut paragraph=paragraphs(&e.text_objects(&doc,0).unwrap()).remove(0);
+            paragraph.wrap_width=Some(410.);
+            e.edit_paragraph(&mut doc,&paragraph,text).unwrap();
+            let after=e.text_objects(&doc,0).unwrap().into_iter().find(|o|o.text==text).unwrap();
+            assert!((after.matrix[4]-before.matrix[4]).abs()<0.001,"Paragraph shifted from {} to {}",before.matrix[4],after.matrix[4]);
+            assert_eq!(after.matrix[5],before.matrix[5]);
+            assert_eq!(after.size,before.size);assert_eq!(after.font,before.font);
+        }
+        for _ in 0..4 {assert!(doc.undo());}
+        assert!(doc.bytes==original);assert!(!doc.can_undo());
+        assert_eq!(fs::read(source).unwrap(),original);
     }
     #[test]
     fn writable_width_reflows_scaled_text_and_rejects_new_heading_overlap_atomically() {

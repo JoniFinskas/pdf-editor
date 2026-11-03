@@ -331,7 +331,7 @@ fn cursor_neutral_scopes(ops: &Content<Vec<Operation>>) -> Vec<bool> {
 
 /// Transform selected text shows without regenerating their font resources.
 pub(crate) fn transform_text(engine: &Engine, state: &Document, page_index: u16,
-    selected: &[usize], matrix: [f32;6]) -> Result<Vec<u8>> {
+    selected: &[usize], matrix: [f32;6], positions_only: bool) -> Result<Vec<u8>> {
     fn multiply(a:[f32;6],b:[f32;6])->[f32;6] {
         [a[0]*b[0]+a[2]*b[1],a[1]*b[0]+a[3]*b[1],
          a[0]*b[2]+a[2]*b[3],a[1]*b[2]+a[3]*b[3],
@@ -349,15 +349,15 @@ pub(crate) fn transform_text(engine: &Engine, state: &Document, page_index: u16,
     let records=runs(&pdf,page,&content)?;
     let before=engine.text_objects(state,page_index)?;
     verify_mapping(&records,&before)?;
-    let selected_ops:std::collections::HashSet<_>=selected.iter().map(|ordinal|
-        records.get(*ordinal).map(|r|r.op).ok_or_else(||err("Text selection is stale"))).collect::<Result<_>>()?;
+    let selected_ops:std::collections::HashMap<_,_>=selected.iter().map(|ordinal|
+        records.get(*ordinal).map(|r|(r.op,*ordinal)).ok_or_else(||err("Text selection is stale"))).collect::<Result<_>>()?;
     let mut ctm=[1.0,0.0,0.0,1.0,0.0,0.0];
     let mut clipped=false;
     let mut move_clip=false;
     let mut stack=vec![];
     let mut output=vec![];
     for (index,mut op) in content.operations.into_iter().enumerate() {
-        if selected_ops.contains(&index) {
+        if let Some(&ordinal) = selected_ops.get(&index) {
             move_clip |= clipped;
             // Quote operators also change line position and spacing, which must
             // remain outside the temporary graphics transform.
@@ -369,7 +369,11 @@ pub(crate) fn transform_text(engine: &Engine, state: &Document, page_index: u16,
                 output.push(Operation::new("T*",vec![]));
                 op=Operation::new("Tj",vec![op.operands.last().ok_or_else(||err("Invalid text show"))?.clone()]);
             }
-            let local=multiply(multiply(inverse(ctm)?,matrix),ctm);
+            let transform = if positions_only {
+                let [_,_,_,_,x,y]=before[ordinal].matrix;
+                [1.,0.,0.,1.,matrix[0]*x+matrix[2]*y+matrix[4]-x,matrix[1]*x+matrix[3]*y+matrix[5]-y]
+            } else {matrix};
+            let local=multiply(multiply(inverse(ctm)?,transform),ctm);
             if local.iter().any(|v|!v.is_finite() || v.abs()>1.0e8) {
                 return Err(err("Text transform exceeds limits"));
             }
@@ -393,7 +397,18 @@ pub(crate) fn transform_text(engine: &Engine, state: &Document, page_index: u16,
     }
     if move_clip {
         let indices=selected.iter().map(|&ordinal|before[ordinal].index).collect::<Vec<_>>();
-        pdf=parse(&engine.transform_page_objects(state,page_index,&indices,matrix)?)?;
+        pdf=parse(&engine.transform_page_objects(state,page_index,&indices,matrix,positions_only)?)?;
+        // Native regeneration keeps TJ kerning but drops absolute Tc/Tw state.
+        // Restore every run, including neighbors, without regenerating it again.
+        let spacing=records.iter().map(|r|[r.spacing[0],r.spacing[1]]).collect::<Vec<_>>();
+        if spacing.iter().any(|s|*s!=[0.,0.]) {
+            let native=engine.candidate(state,pdf)?;
+            let text=engine.text_objects(&native,page_index)?;
+            if text.len()!=spacing.len() || text.is_empty() {return Err(err("Text spacing mapping changed"));}
+            let targets=text.iter().enumerate().map(|(i,o)|(i,o.text.clone())).collect::<Vec<_>>();
+            let bytes=edit_with_font(engine,&native,&text[0],&targets,Some(Appearance::Spacing(&spacing)),None,false)?.0;
+            pdf=parse(&bytes)?;
+        }
     } else {
         pdf.change_page_content(page,Content {operations:output}.encode()?)?;
     }
@@ -408,7 +423,8 @@ pub(crate) fn transform_text(engine: &Engine, state: &Document, page_index: u16,
     let after=engine.text_objects(&candidate,page_index)?;
     if before.len()!=after.len() {return Err(err("Text transform changed the object structure"));}
     for (ordinal,(old,new)) in before.iter().zip(&after).enumerate() {
-        let expected=if selected.contains(&ordinal) {multiply(matrix,old.matrix)} else {old.matrix};
+        let mut expected=if selected.contains(&ordinal) {multiply(matrix,old.matrix)} else {old.matrix};
+        if positions_only {expected[..4].copy_from_slice(&old.matrix[..4]);}
         // Native extraction can suppress overlapping identical glyphs. Verify
         // encoded text above and every native transform here.
         if expected.iter().zip(new.matrix).any(|(a,b)|(a-b).abs()>0.05) {
@@ -435,7 +451,18 @@ pub(crate) fn edit_styled(
     targets: &[(usize, String)],
     style: Option<(f32, [u8; 3])>,
 ) -> Result<(Vec<u8>, EditResult)> {
-    edit_with_font(engine, state, selected, targets, style, None, false)
+    edit_with_font(engine, state, selected, targets, style.map(|(size,color)|Appearance::Style(size,color)), None, false)
+}
+
+#[derive(Clone, Copy)]
+enum Appearance<'a> {
+    Style(f32, [u8;3]),
+    Scale(f32),
+    Spacing(&'a [[f32;2]]),
+}
+pub(crate) fn scale_text(engine: &Engine, state: &Document, selected: &TextObject,
+    targets: &[(usize,String)], factor: f32) -> Result<Vec<u8>> {
+    Ok(edit_with_font(engine,state,selected,targets,Some(Appearance::Scale(factor)),None,false)?.0)
 }
 
 pub(crate) fn edit_for_reflow(
@@ -448,7 +475,7 @@ pub(crate) fn edit_formatted(
     engine: &Engine, state: &Document, selected: &TextObject,
     targets: &[(usize, String)], font: &fonts::Font, size: f32, color: [u8; 3],
 ) -> Result<(Vec<u8>, EditResult)> {
-    edit_with_font(engine, state, selected, targets, Some((size, color)), Some(font), false)
+    edit_with_font(engine, state, selected, targets, Some(Appearance::Style(size,color)), Some(font), false)
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -546,7 +573,7 @@ fn update_labeled_spans(pdf: &mut lopdf::Document, page: ObjectId, ops: &mut Con
 
 fn edit_with_font(
     engine: &Engine, state: &Document, selected: &TextObject,
-    targets: &[(usize, String)], style: Option<(f32, [u8; 3])>,
+    targets: &[(usize, String)], style: Option<Appearance<'_>>,
     forced_font: Option<&fonts::Font>,
     require_metrics: bool,
 ) -> Result<(Vec<u8>, EditResult)> {
@@ -754,13 +781,26 @@ fn edit_with_font(
                     vec![Object::Name(key.clone()), r.size.into()],
                 ));
             }
-            if let Some((size, color)) = style {
+            if let Some(appearance) = style {
+                let size=match appearance {Appearance::Style(size,_)=>size,Appearance::Scale(factor)=>r.size*factor,Appearance::Spacing(_)=>r.size};
+                if !size.is_finite() || size<=0.0 || size>1.0e6 {return Err(err("Invalid scaled font size"));}
                 revised.push(Operation::new("q", vec![]));
-                revised.push(Operation::new(
+                if !matches!(appearance,Appearance::Spacing(_)) {revised.push(Operation::new(
                     "Tf",
                     vec![Object::Name(new_key.clone().unwrap_or_else(|| r.key.clone())), size.into()],
-                ));
-                for operator in ["rg", "RG"] {
+                ));}
+                if let Appearance::Scale(factor)=appearance {
+                    for (operator,value) in [("Tc",r.spacing[0]),("Tw",r.spacing[1])] {
+                        if !(value*factor).is_finite() {return Err(err("Text spacing exceeds limits"));}
+                        revised.push(Operation::new(operator,vec![(value*factor).into()]));
+                    }
+                }
+                if let Appearance::Spacing(values)=appearance {
+                    let [tc,tw]=*values.get(*i).ok_or_else(||err("Text spacing mapping changed"))?;
+                    revised.push(Operation::new("Tc",vec![tc.into()]));
+                    revised.push(Operation::new("Tw",vec![tw.into()]));
+                }
+                if let Appearance::Style(_,color)=appearance { for operator in ["rg", "RG"] {
                     revised.push(Operation::new(
                         operator,
                         color
@@ -768,7 +808,7 @@ fn edit_with_font(
                             .map(|c| Object::Real(*c as f32 / 255.0))
                             .collect(),
                     ));
-                }
+                } }
                 revised.push(if forced_font.is_some() {
                     Operation::new("Tj", vec![Object::String(bytes, lopdf::StringFormat::Hexadecimal)])
                 } else if original.operator == "'" || original.operator == "\"" {
@@ -846,7 +886,8 @@ fn edit_with_font(
                 #[cfg(test)] ORDINAL_PROBES.with(|count| count.set(count.get() + 1));
                 let wanted = change_by_ordinal.get(ordinal).copied()
                     .unwrap_or(&old.text);
-                if wanted != new.text {
+                let matches=if matches!(style,Some(Appearance::Scale(_)|Appearance::Spacing(_))) {same_text(wanted,&new.text)} else {wanted==new.text};
+                if !matches {
                     return Err(err("Text encoding verification failed"));
                 }
                 if old.matrix[..4]
@@ -895,8 +936,9 @@ fn edit_with_font(
                     let a = old.matrix[0];
                     let b = old.matrix[1];
                     let norm = a * a + b * b;
+                    let cursor_size=records[position].size;
                     if norm < 0.000001
-                        || old.size.abs() < 0.000001
+                        || cursor_size.abs() < 0.000001
                         || (dx * b - dy * a).abs() > 0.001
                     {
                         if !corrections.is_empty() {
@@ -904,7 +946,7 @@ fn edit_with_font(
                         }
                         return Err(err("Cannot safely restore text cursor"));
                     }
-                    let amount = -1000.0 * (dx * a + dy * b) / norm / old.size;
+                    let amount = -1000.0 * (dx * a + dy * b) / norm / cursor_size;
                     if !amount.is_finite() {
                         return Err(err("Invalid text cursor correction"));
                     }

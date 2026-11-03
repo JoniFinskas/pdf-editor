@@ -772,6 +772,25 @@ struct ItemDrag {
     snap_state: crate::snapping::State,
     snap_targets: Vec<Rect>,
     snap_baselines: crate::snapping::Baselines,
+    font_resize: Option<FontResize>,
+}
+
+struct FontResize {
+    minimum: f32,
+    maximum: f32,
+    size: Option<f32>,
+}
+impl FontResize {
+    fn bounds(&self, original: Rect, handle: usize, factor: f32) -> Rect {
+        let factor=factor.clamp(self.minimum,self.maximum);
+        let anchor=resize_handles(original)[(handle+4)%8];
+        Rect::from_min_max(anchor+(original.min-anchor)*factor,anchor+(original.max-anchor)*factor)
+    }
+    fn drag(&self, original: Rect, handle: usize, delta: Vec2) -> Rect {
+        let handles=resize_handles(original);
+        let direction=handles[handle]-handles[(handle+4)%8];
+        self.bounds(original,handle,1.+delta.dot(direction)/direction.length_sq().max(0.0001))
+    }
 }
 
 /// Adjacent text objects that read as one line, edited together. Browser
@@ -999,7 +1018,7 @@ impl EditorApp {
 
     fn send(&mut self, request: Request) {
         self.markup.prepare_request(&request);
-        if let Request::EditItems(items,pdf_editor_core::ObjectAction::Move {..}|pdf_editor_core::ObjectAction::Resize {..})|Request::LayoutItems(items,_) = &request {
+        if let Request::EditItems(items,pdf_editor_core::ObjectAction::Move {..}|pdf_editor_core::ObjectAction::Resize {..}|pdf_editor_core::ObjectAction::ResizeText {..})|Request::LayoutItems(items,_) = &request {
             self.qol.restore_objects=items.first().map(|first|(first.page,items.iter().map(|i|i.index).collect()));
         }
 
@@ -1161,7 +1180,7 @@ impl EditorApp {
     fn open_comparison(&mut self) {
         if self.compare.is_current() {self.refresh_comparison();return;}
         self.commit_edit();
-        if self.doc.as_ref().and_then(|d|d.edit.as_ref()).is_some_and(|e|e.text!=e.line.text) {
+        if self.doc.as_ref().and_then(|d|d.edit.as_ref()).is_some_and(|e|e.changed()) {
             self.banner(BannerKind::Warning,"Apply or discard the text edit before comparing.");return;
         }
         let Some(doc)=&self.doc else {self.compare.open_for(None);return;};
@@ -1173,7 +1192,7 @@ impl EditorApp {
     fn refresh_comparison(&mut self) {
         if !self.compare.is_current() {self.open_comparison();return;}
         self.commit_edit();
-        if self.doc.as_ref().and_then(|d|d.edit.as_ref()).is_some_and(|e|e.text!=e.line.text) {
+        if self.doc.as_ref().and_then(|d|d.edit.as_ref()).is_some_and(|e|e.changed()) {
             self.banner(BannerKind::Warning,"Apply or discard the text edit before comparing.");return;
         }
         self.pending_comparison=Some(self.compare.prepare_current());
@@ -3823,6 +3842,13 @@ impl EditorApp {
                             let snap_targets = objects.items.iter().filter(|item|!moving.contains(&item.index))
                                 .map(|item|bounds_rect(&objects.transform,item.bounds)).collect();
                             let snap_baselines = text_snap_baselines(objects,&moving,bounds);
+                            let text=objects.lines.iter().flat_map(|line|&line.objects).filter(|o|moving.contains(&o.index)).collect::<Vec<_>>();
+                            let sizes=text.iter().map(|o|{let [a,b,c,d,_,_]=o.matrix;o.size*(a*d-b*c).abs().sqrt()}).collect::<Vec<_>>();
+                            let font_resize=(text.len()==items.len() && items.iter().all(|i|i.kind=="Text") && sizes.iter().all(|s|s.is_finite() && *s>0.)).then(||FontResize {
+                                minimum:sizes.iter().map(|s|1./s).fold(0.,f32::max),
+                                maximum:sizes.iter().map(|s|1000./s).fold(f32::INFINITY,f32::min),
+                                size:sizes.iter().all(|s|(s-sizes[0]).abs()<0.01).then_some(sizes[0]),
+                            }).filter(|font|font.minimum<=font.maximum);
                             let preview_scale = wanted.min((1_900_000. / (page.info.width * page.info.height)).sqrt());
                             if let Some(id) = self.drag_preview.plan(doc.generation,index,&items,preview_scale) {
                                 requests.push(Request::ObjectPreview {id,items:items.clone(),scale:preview_scale});
@@ -3838,6 +3864,7 @@ impl EditorApp {
                                 snap_state: Default::default(),
                                 snap_targets,
                                 snap_baselines,
+                                font_resize,
                             });
                         }
                     }
@@ -3849,7 +3876,7 @@ impl EditorApp {
                         }
                         let mut preview_bounds = drag.resize_handle.map_or_else(
                             || drag.bounds.translate(drag.delta),
-                            |handle| resized_rect(drag.bounds, handle, drag.delta),
+                            |handle| drag.font_resize.as_ref().map_or_else(||resized_rect(drag.bounds,handle,drag.delta),|font|font.drag(drag.bounds,handle,drag.delta)),
                         );
                         let mut guides = None;
                         if self.snap_enabled && !ctx.input(|i| i.modifiers.alt)
@@ -3857,7 +3884,17 @@ impl EditorApp {
                         {
                             let page_bounds = Rect::from_min_size(Pos2::ZERO,vec2(page.info.width,page.info.height));
                             let targets = drag.snap_targets.iter().copied();
-                            let snapped = crate::snapping::align_text(preview_bounds,drag.resize_handle,page_bounds,targets,6.0/scale,&mut drag.snap_state,&drag.snap_baselines);
+                            let mut snapped = crate::snapping::align_text(preview_bounds,drag.resize_handle,page_bounds,targets,6.0/scale,&mut drag.snap_state,&drag.snap_baselines);
+                            if let (Some(font),Some(handle))=(&drag.font_resize,drag.resize_handle) {
+                                let axis=match (snapped.x,snapped.y) {
+                                    (Some(_),Some(_))=>Some(usize::from((snapped.bounds.height()-preview_bounds.height()).abs()<(snapped.bounds.width()-preview_bounds.width()).abs())),
+                                    (Some(_),None)=>Some(0),(None,Some(_))=>Some(1),_=>None,
+                                };
+                                if let Some(axis)=axis {snapped.bounds=font.bounds(drag.bounds,handle,snapped.bounds.size()[axis]/drag.bounds.size()[axis]);}
+                                let active=resize_handles(snapped.bounds)[handle];
+                                if snapped.x.is_some_and(|g|(active.x-g.position).abs()>0.1) {snapped.x=None;}
+                                if snapped.y.is_some_and(|g|(active.y-g.position).abs()>0.1) {snapped.y=None;}
+                            }
                             preview_bounds = snapped.bounds;
                             guides = Some(snapped);
                         } else {
@@ -3868,6 +3905,12 @@ impl EditorApp {
                         self.drag_preview.paint(&painter,rect,scale,index,doc.generation,page.texture.as_ref(),p.accent);
                         if let Some(guides) = &guides { crate::snapping::paint(&painter,guides,rect,scale,p.accent); }
                         let preview = to_screen(preview_bounds, rect, scale);
+                        if let (Some(font),Some(_))=(&drag.font_resize,drag.resize_handle) {
+                            let factor=preview_bounds.width()/drag.bounds.width();
+                            let label=font.size.map_or_else(||format!("{:.1}%",factor*100.),|size|format!("{:.1} pt",size*factor));
+                            painter.text(preview.right_top()+vec2(0.,-5.),Align2::RIGHT_BOTTOM,
+                                label,FontId::proportional(12.),p.accent);
+                        }
                         painter.rect_stroke(
                             preview,
                             2.0,
@@ -3889,7 +3932,8 @@ impl EditorApp {
                                 let action = if drag.resize_handle.is_some() {
                                     let bounds = preview_bounds;
                                     raster_bounds(&objects.transform, bounds).map(|bounds| {
-                                        pdf_editor_core::ObjectAction::Resize { bounds }
+                                        if drag.font_resize.is_some() {pdf_editor_core::ObjectAction::ResizeText { bounds }}
+                                        else {pdf_editor_core::ObjectAction::Resize { bounds }}
                                     })
                                 } else {
                                     Some(pdf_editor_core::ObjectAction::Move { dx, dy })
@@ -5383,10 +5427,12 @@ fn edit_box(
             let mut raster=edit.line.rect;
             raster.max.x=(right-page_rect.left())/scale;
             if let Some(bounds)=raster_bounds(&transform,raster) {
-                let paragraph = edit.line.paragraph.clone().or_else(||pdf_editor_core::paragraphs(&edit.line.objects).into_iter().next());
-                if let Some(mut paragraph)=paragraph.filter(|p|p.fallback.is_none()) {
-                    paragraph.wrap_width=Some(bounds.right-bounds.left);
-                    edit.line.paragraph=Some(paragraph);
+                if edit.line.paragraph.is_none() {
+                    edit.line.paragraph=pdf_editor_core::paragraphs(&edit.line.objects).into_iter().next().filter(|p|p.fallback.is_none());
+                }
+                if let Some(paragraph)=edit.line.paragraph.as_mut() {
+                    let left=if matches!(paragraph.alignment,pdf_editor_core::ParagraphAlignment::Left|pdf_editor_core::ParagraphAlignment::Justified) {paragraph.objects[0].matrix[4]} else {bounds.left};
+                    paragraph.wrap_width=Some(bounds.right-left);
                     edit.line.rect=raster;
                     edit.rejected_text=None;
                     screen=to_screen(raster,page_rect,scale);
@@ -6422,6 +6468,9 @@ mod tests {
                                 .try_iter()
                                 .any(|r| matches!(r, Request::EditItems(..)))
                         );
+                        let drag=app.doc.as_ref().unwrap().dragging_item.as_ref().unwrap();
+                        let preview=drag.preview.unwrap();
+                        let font_resize=drag.font_resize.is_some();
                         frame(&mut app, &ctx, vec![button(end, false)]);
                         let edits: Vec<_> = inbox
                             .try_iter()
@@ -6429,14 +6478,15 @@ mod tests {
                                 Request::EditItems(
                                     _,
                                     pdf_editor_core::ObjectAction::Resize { bounds },
-                                ) => Some(bounds),
+                                ) if !font_resize => Some(bounds),
+                                Request::EditItems(_,pdf_editor_core::ObjectAction::ResizeText {bounds}) if font_resize=>Some(bounds),
                                 _ => None,
                             })
                             .collect();
                         assert_eq!(edits.len(), 1, "handle {handle}");
                         let expected = raster_bounds(
                             &transform,
-                            resized_rect(bounds, handle, vec2(12.0, 12.0) / scale),
+                            preview,
                         )
                         .unwrap();
                         assert!((edits[0].left - expected.left).abs() < 0.1);
@@ -7022,6 +7072,26 @@ mod tests {
         assert_eq!(escape, Some(false));
         app.cancel_edit();
         assert!(!app.commit_edit());
+    }
+
+    #[test]
+    fn rejected_width_only_draft_blocks_comparison_open_and_refresh() {
+        let ctx=Context::default();theme::install(&ctx);
+        let (mut app,inbox,_)=mock_app();opened(&mut app,&ctx);
+        let (object,rect)=glyph("draft",30.,40.);
+        let mut paragraph=pdf_editor_core::paragraphs(std::slice::from_ref(&object)).remove(0);
+        paragraph.wrap_width=Some(20.);
+        let edit=EditState {page:0,line:Line {paragraph:Some(paragraph),fallback:None,objects:vec![object],rect,text:"draft".into()},text:"draft".into(),focus:false,rejected_text:Some("draft".into())};
+        app.doc.as_mut().unwrap().edit=Some(edit.clone());
+        app.open_comparison();
+        assert!(app.pending_comparison.is_none());assert!(!app.compare.is_current());
+        assert!(app.doc.as_ref().unwrap().edit.as_ref().unwrap().changed());
+        assert!(inbox.try_iter().all(|r|!matches!(r,Request::ComparisonSnapshot {..})));
+        app.compare.open_current("generated.pdf".into(),None,None);
+        app.doc.as_mut().unwrap().edit=Some(edit);
+        app.refresh_comparison();
+        assert!(app.pending_comparison.is_none());
+        assert!(inbox.try_iter().all(|r|!matches!(r,Request::ComparisonSnapshot {..})));
     }
 
     #[test]

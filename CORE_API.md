@@ -338,6 +338,12 @@ when visibility cannot be verified.
 ObjectAction::Resize accepts a selection on one page. Its common bounding box
 maps to the requested bounds; each object's transform uses the same scale and
 translation, preserving relative placement. The operation remains atomic.
+`ObjectAction::ResizeText` requires text-only selections and proportional bounds.
+It changes font sizes and absolute character/word spacing, preserves each text
+matrix's shape, and moves baseline origins and clipping paths proportionally as
+one undo step. Visible font sizes remain within 1–1000 points. Clipped text
+transforms restore character/word spacing for selected and neighboring runs
+after native regeneration.
 
 Page insertion/merge and extraction/split preserve AcroForm field ancestry,
 normal appearances, values and default fonts. Imported fields with colliding root

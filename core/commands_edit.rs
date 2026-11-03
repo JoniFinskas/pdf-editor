@@ -136,6 +136,9 @@ pub(super) fn execute(
                 "resize" => ObjectAction::Resize {
                     bounds: a.bounds()?,
                 },
+                "resize_text" => ObjectAction::ResizeText {
+                    bounds: a.bounds()?,
+                },
                 "delete" => ObjectAction::Delete,
                 "front" => ObjectAction::BringToFront,
                 "back" => ObjectAction::SendToBack,

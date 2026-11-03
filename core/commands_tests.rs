@@ -26,6 +26,25 @@ fn rejected(s: &mut CommandSession<'_>, mut v: Value) {
 }
 
 #[test]
+fn command_font_resize_changes_size_without_stretching_and_rejects_bad_proportions() {
+    let _lock=PDFIUM.lock().unwrap_or_else(|e|e.into_inner());let e=engine();
+    let root=folder("command-font-resize");let mut s=CommandSession::new(&e,&root).unwrap();
+    call(&mut s,json!({"op":"new"}));
+    call(&mut s,json!({"op":"text.add","text":"Generated font resize","x":50,"y":700}));
+    let before=e.text_objects(s.doc.as_ref().unwrap(),0).unwrap().remove(0);
+    let b=e.page_items(s.doc.as_ref().unwrap(),0).unwrap().remove(0).bounds;
+    let original=s.doc.as_ref().unwrap().bytes.clone();
+    rejected(&mut s,json!({"op":"objects.edit","indices":[before.index],"action":"resize_text","bounds":[b.left,b.bottom,b.left+(b.right-b.left)*1.5,b.top]}));
+    call(&mut s,json!({"op":"objects.edit","indices":[before.index],"action":"resize_text","bounds":[b.left,b.bottom,b.left+(b.right-b.left)*1.5,b.bottom+(b.top-b.bottom)*1.5]}));
+    let after=e.text_objects(s.doc.as_ref().unwrap(),0).unwrap().remove(0);
+    assert!((after.size-before.size*1.5).abs()<0.01);
+    assert_eq!(after.text,before.text);assert_eq!(after.font,before.font);
+    assert!(after.matrix[..4].iter().zip(&before.matrix[..4]).all(|(a,b)|(a-b).abs()<0.001));
+    call(&mut s,json!({"op":"history.undo"}));
+    assert!(s.doc.as_ref().unwrap().bytes==original);
+}
+
+#[test]
 fn command_cv_drafts_roundtrip_incomplete_text_without_changing_the_open_document() {
     let _lock=PDFIUM.lock().unwrap_or_else(|e|e.into_inner());let e=engine();
     let root=folder("command-cv-drafts");let mut s=CommandSession::new(&e,&root).unwrap();

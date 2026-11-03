@@ -4,6 +4,10 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Resize selected text by changing its font size proportionally, with live text and size feedback; keep the original font shape.
+- Preserve character and word spacing when transforming clipped text, including neighboring runs.
+- Keep the original left text origin across repeated paragraph edits and avoid copying paragraph data on each width-drag frame.
+
 - Reflow text by dragging its writable width without scaling the font; join likely soft wraps, preserve axis-aligned text scale and reject new overlaps with nearby text.
 - Snap dragged text to real baselines and shorten paragraph editing hints.
 

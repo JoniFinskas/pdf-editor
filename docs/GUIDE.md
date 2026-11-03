@@ -89,7 +89,7 @@ creates another copy. Encryption settings are retained in memory for repeated sa
   Text snaps to matching baselines so words with different glyph heights align.
 - Click once to select and drag logical text blocks,
   images, vector icons or grouped artwork. Drag any of the eight selection handles
-  to resize; text scales without reflowing, with one undo step on release. Right-click for **Copy**, **Paste on
+  to resize. Text grows proportionally by font size, with live text and point-size feedback; release commits one undo step. Right-click for **Copy**, **Paste on
   this page**, **Duplicate** or **Delete**; Ctrl+C, Ctrl+V, Ctrl+D and Delete also
   act on the selection when a text field is not focused. Copy/paste uses a private
   in-memory clipboard shared between document tabs and pages. A copy survives closing

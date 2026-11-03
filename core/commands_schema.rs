@@ -86,7 +86,7 @@ fn field_schema(op: &str, field: &str) -> V {
             }
             _ => json!({"enum":["highlight","underline","strikethrough","note"]}),
         },
-        "action" => json!({"enum":["move","duplicate","resize","delete","front","back"]}),
+        "action" => json!({"enum":["move","duplicate","resize","resize_text","delete","front","back"]}),
         "alignment" => {
             json!({"enum":["left","right","top","bottom","horizontal_center","vertical_center","distribute_horizontal","distribute_vertical"]})
         }

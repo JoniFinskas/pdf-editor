@@ -130,6 +130,77 @@ fn gesture_button(pos: Pos2, pressed: bool) -> egui::Event {
 }
 
 #[test]
+fn text_font_handles_preserve_proportions_fixed_anchor_and_size_limits() {
+    let font=FontResize {minimum:0.1,maximum:10.,size:Some(10.)};
+    let original=Rect::from_min_max(pos2(20.,30.),pos2(140.,70.));
+    for handle in 0..8 {
+        for delta in [vec2(35.,8.),vec2(-22.,-13.),vec2(10000.,10000.)] {
+            let result=font.drag(original,handle,delta);
+            let factor=result.width()/original.width();
+            assert!((factor-result.height()/original.height()).abs()<0.001);
+            assert!((0.099..=10.001).contains(&factor));
+            assert!((resize_handles(result)[(handle+4)%8]-resize_handles(original)[(handle+4)%8]).length()<0.001);
+        }
+    }
+}
+
+#[test]
+fn generated_font_resize_shows_proportional_ink_and_size_before_one_commit() {
+    let (mut app,ctx,source)=qol_worker();
+    let bytes=std::fs::read(&source).unwrap();
+    app.set_object_mode(true);
+    for (zoom,snap) in [(0.75,false),(1.5,true)] {
+        app.snap_enabled=snap;
+        app.set_zoom(zoom,None);workflow_settle(&mut app,&ctx);
+        workflow_frame_at(&mut app,&ctx,vec![],Some(ctx.input(|i|i.time)+1.));
+        let at=workflow_line(&app,&ctx,0);workflow_click(&mut app,&ctx,at);
+        let doc=app.doc.as_ref().unwrap();
+        let objects=doc.pages[0].objects.as_ref().unwrap();
+        let before=objects.lines[0].objects[0].clone();
+        let original=bounds_rect(&objects.transform,doc.selected_item.as_ref().unwrap().bounds);
+        let page=ctx.read_response(Id::new(("pdf-page",0usize))).unwrap().rect;
+        let start=page.min+original.right_bottom().to_vec2()*doc.scale();
+        let generation=doc.generation;
+        workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start),gesture_button(start,true)]);
+        let end=start+vec2(55.,4.);
+        workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(end)]);
+        let deadline=std::time::Instant::now()+std::time::Duration::from_secs(10);
+        while !app.drag_preview.ready() {
+            workflow_frame(&mut app,&ctx,vec![]);
+            assert!(std::time::Instant::now()<deadline);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let doc=app.doc.as_ref().unwrap();
+        let drag=doc.dragging_item.as_ref().unwrap();
+        let preview=drag.preview.unwrap();
+        let factor=preview.width()/original.width();
+        assert!(factor>1.);
+        assert!((factor-preview.height()/original.height()).abs()<0.001);
+        assert!((preview.min-original.min).length()<0.001);
+        assert_eq!(doc.generation,generation);assert_eq!(app.busy,0);
+        assert_eq!(app.drag_preview.placement(),Some(preview));
+        let label=format!("{:.1} pt",drag.font_resize.as_ref().unwrap().size.unwrap()*factor);
+        app.poll(&ctx);
+        let mut painted=ctx.run_ui(egui::RawInput {screen_rect:Some(Rect::from_min_size(Pos2::ZERO,vec2(1000.,900.))),..Default::default()},|ui| {
+            let p=theme::palette(ui);egui::CentralPanel::default().show(ui,|ui|app.canvas(ui,&p));
+        });
+        assert!(painted.shapes.iter().any(|shape|matches!(&shape.shape,egui::epaint::Shape::Text(t) if t.galley.text()==label)),"Live font size missing");
+        painted.textures_delta.clear();
+        workflow_frame(&mut app,&ctx,vec![gesture_button(end,false)]);
+        assert_eq!(app.busy,1);workflow_settle(&mut app,&ctx);
+        let objects=app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap();
+        let resized=objects.lines.iter().flat_map(|line|&line.objects).find(|o|o.index==before.index).unwrap();
+        assert!((resized.size-before.size*factor).abs()<0.01);
+        assert_eq!(resized.font,before.font);assert_eq!(resized.text,before.text);
+        assert!(resized.matrix[..4].iter().zip(&before.matrix[..4]).all(|(a,b)|(a-b).abs()<0.001));
+        app.undo();workflow_settle(&mut app,&ctx);
+        assert!(!app.doc.as_ref().unwrap().dirty());
+        assert!(!app.doc.as_ref().unwrap().can_undo);
+    }
+    assert_eq!(std::fs::read(source).unwrap(),bytes);
+}
+
+#[test]
 fn perpendicular_edge_drag_does_not_create_a_phantom_edit() {
     let (mut app, ctx, source) = qol_worker();
     let bytes = std::fs::read(&source).unwrap();
@@ -246,7 +317,7 @@ fn generated_multi_object_gestures_keep_geometry_across_rotation_zoom_and_histor
                 assert_eq!(app.doc.as_ref().unwrap().generation, generation);
                 let delta = delta + vec2(8., 7.);
                 let expected = if resize {
-                    resized_rect(bounds, 4, delta / scale)
+                    drag.font_resize.as_ref().unwrap().drag(bounds, 4, delta / scale)
                 } else {
                     bounds.translate(delta / scale)
                 };
@@ -466,7 +537,7 @@ fn zoom_during_generated_drag_keeps_the_page_anchor_and_release_position() {
         let end = pointer + vec2(18., 12.);
         let delta = ((end - page.min) / doc.scale()).to_pos2() - anchor;
         let expected = if resize {
-            resized_rect(bounds, 4, delta)
+            app.doc.as_ref().unwrap().dragging_item.as_ref().unwrap().font_resize.as_ref().unwrap().drag(bounds, 4, delta)
         } else {
             bounds.translate(delta)
         };
