@@ -14,13 +14,8 @@ pub fn hint(
     fallback: Option<&str>,
     color: Color32,
 ) {
-    let message = paragraph.map(|p| {
-        format!(
-            "{:?} paragraph · Ctrl+Enter applies · Escape cancels · Alt+click edits a line",
-            p.alignment
-        )
-    });
-    if let Some(text) = message.as_deref().or(fallback) {
+    let message = paragraph.map(|_| "Ctrl+Enter applies · Escape cancels");
+    if let Some(text) = message.or(fallback) {
         ui.painter().text(
             rect.left_top() - egui::vec2(0.0, 5.0),
             egui::Align2::LEFT_BOTTOM,

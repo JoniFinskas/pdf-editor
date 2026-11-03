@@ -86,6 +86,7 @@ creates another copy. Encryption settings are retained in memory for repeated sa
 - Drag empty page space or the gray canvas to pan. Drag text before entering its
   editor to move the selected object; finish or cancel an open edit first. The selected
   text or artwork stays visible in the drag preview, and release commits one undoable move.
+  Text snaps to matching baselines so words with different glyph heights align.
 - Click once to select and drag logical text blocks,
   images, vector icons or grouped artwork. Drag any of the eight selection handles
   to resize; text scales without reflowing, with one undo step on release. Right-click for **Copy**, **Paste on
@@ -360,11 +361,13 @@ requires removing/re-registering its shell entries from Settings.
 
 ## Paragraph editing
 
-Click a compatible multiline paragraph to edit the block. Enter adds a line break;
+Double-click a compatible multiline paragraph to edit the block. Enter adds a line break;
 **Ctrl+Enter** applies and **Escape** cancels. **Alt+click** selects one line instead.
 The editor preserves the detected width, line spacing, alignment and supported
-font metrics. Longer text extends downward with an overlap warning; it never
-moves neighboring content. Unsupported metrics, overwide words and page overflow
+font metrics. Drag the side grip to change the writable width without scaling the font.
+Likely wrapped rows edit as one sentence. Longer text can use more lines; edits
+that would overlap other text are rejected so the draft can be adjusted. The editor
+never moves neighboring content. Unsupported metrics, overwide words and page overflow
 fail without modifying the document. Mixed styles, rotated text and unclear
 columns retain line editing with a short explanation. Font substitution is scoped
 to the paragraph to preserve its neighbors.

@@ -497,3 +497,137 @@ fn zoom_during_generated_drag_keeps_the_page_anchor_and_release_position() {
         assert!(!app.doc.as_ref().unwrap().dirty());
     }
 }
+#[test]
+fn generated_single_line_width_grip_remains_usable_after_typing() {
+    let (mut app,ctx,source)=qol_worker();
+    let bytes=std::fs::read(&source).unwrap();
+    let at=workflow_line(&app,&ctx,0);
+    workflow_edit(&mut app,&ctx,at);
+    workflow_frame(&mut app,&ctx,vec![]);
+    workflow_frame(&mut app,&ctx,vec![egui::Event::Text(" additional words to widen the draft".into())]);
+    // Let TextEdit's changed layout reach the cached interaction geometry.
+    workflow_frame(&mut app,&ctx,vec![]);
+    workflow_frame(&mut app,&ctx,vec![]);
+    workflow_frame(&mut app,&ctx,vec![]);
+    let edit=app.doc.as_ref().unwrap().edit.as_ref().unwrap();
+    assert!(edit.line.paragraph.is_none());
+    let before=edit.line.objects[0].clone();
+    let text=edit.text.clone();
+    let id=Id::new(("text-width",edit.page,before.index,before.revision));
+    let grip=ctx.read_response(id).unwrap().rect.center();
+    let editor=ctx.read_response(Id::new(("edit-box",edit.page,before.index,before.revision))).unwrap().rect;
+    assert!(!editor.contains(grip),"The text editor must not cover its width grip");
+    assert!(app.doc.as_ref().unwrap().viewport.contains(grip),"Grip {grip:?} outside viewport {:?}, editor {editor:?}",app.doc.as_ref().unwrap().viewport);
+    workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(grip),gesture_button(grip,true)]);
+    assert!(app.doc.as_ref().unwrap().edit.is_some(),"Press closed editor: {:?}",ctx.read_response(id));
+    assert!(ctx.read_response(id).unwrap().is_pointer_button_down_on(),"Grip {grip:?} did not own press at {:?}: {:?}; viewport {:?}",ctx.input(|i|i.pointer.interact_pos()),ctx.read_response(id),app.doc.as_ref().unwrap().viewport);
+    let end=grip+vec2(30.,0.);
+    workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(end)]);
+    assert!(app.doc.as_ref().unwrap().edit.is_some(),"Drag closed editor: {:?}",ctx.read_response(id));
+    assert!(ctx.read_response(id).unwrap().dragged(),"Grip did not drag: {:?}",ctx.read_response(id));
+    workflow_frame(&mut app,&ctx,vec![gesture_button(end,false)]);
+    let edit=app.doc.as_ref().unwrap().edit.as_ref().unwrap();
+    assert!(edit.line.paragraph.as_ref().unwrap().wrap_width.is_some());
+    assert_eq!(edit.text,text);
+    assert_eq!(edit.line.objects[0].size,before.size);
+    workflow_frame(&mut app,&ctx,vec![workflow_key(Key::Escape,Default::default())]);
+    assert!(app.doc.as_ref().unwrap().edit.is_none());
+    assert!(!app.doc.as_ref().unwrap().dirty());
+    assert_eq!(std::fs::read(source).unwrap(),bytes);
+}
+
+#[test]
+fn generated_drag_aligns_different_glyph_heights_to_the_same_baseline() {
+    let (mut app,ctx,source)=qol_worker();
+    let bytes=std::fs::read(&source).unwrap();
+    let transform=app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap().transform;
+    let info=&app.doc.as_ref().unwrap().pages[0].info;
+    let (w,h)=(info.width,info.height);
+    for (text,x,y) in [("HIT",w*0.15,h*0.5),("gyp",w*0.55,h*0.35)] {
+        app.busy+=1;
+        app.send(Request::AddText { text:pdf_editor_core::NewText {
+            page:0,x,y,text:text.into(),font:"Arial".into(),size:14.,color:[0,0,0],
+        },raster:transform.apply(x,y) });
+        workflow_settle(&mut app,&ctx);
+    }
+    app.set_object_mode(true);
+    workflow_frame_at(&mut app,&ctx,vec![],Some(ctx.input(|i|i.time)+1.));
+    let doc=app.doc.as_ref().unwrap();
+    let objects=doc.pages[0].objects.as_ref().unwrap();
+    let index=objects.lines.iter().position(|line|line.text=="gyp").unwrap();
+    let before=objects.lines[index].objects[0].clone();
+    let target=objects.lines.iter().find(|line|line.text=="HIT").unwrap().objects[0].clone();
+    let old_baseline=transform.apply(before.matrix[4],before.matrix[5]).1;
+    let target_baseline=transform.apply(target.matrix[4],target.matrix[5]).1;
+    let scale=doc.scale();
+    let generation=doc.generation;
+    let start=workflow_line(&app,&ctx,index);
+    let end=start+vec2(20.,target_baseline-old_baseline+2.)*scale;
+    workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start),gesture_button(start,true)]);
+    workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(end)]);
+    let drag=app.doc.as_ref().unwrap().dragging_item.as_ref().unwrap();
+    let offset=drag.snap_baselines.moving.unwrap().1;
+    assert!((drag.preview.unwrap().top()+offset-target_baseline).abs()<0.001);
+    assert_eq!(app.doc.as_ref().unwrap().generation,generation);
+    workflow_frame(&mut app,&ctx,vec![gesture_button(end,false)]);
+    workflow_settle(&mut app,&ctx);
+    let objects=app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap();
+    let moved=objects.lines.iter().flat_map(|line|&line.objects).find(|o|o.text=="gyp").unwrap();
+    assert!((moved.matrix[5]-target.matrix[5]).abs()<0.01);
+    assert_eq!(moved.size,before.size);
+    assert_eq!(moved.font,before.font);
+    app.undo();workflow_settle(&mut app,&ctx);
+    let objects=app.doc.as_ref().unwrap().pages[0].objects.as_ref().unwrap();
+    assert_eq!(objects.lines.iter().flat_map(|line|&line.objects).find(|o|o.text=="gyp").unwrap().matrix,before.matrix);
+    assert_eq!(std::fs::read(source).unwrap(),bytes);
+}
+
+#[test]
+fn generated_text_width_drag_reflows_without_scaling_or_losing_focus() {
+    let (mut app, ctx, _) = qol_worker();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let source = root.join("tests/fixtures/generated/paragraph-Left.pdf");
+    let bytes = std::fs::read(&source).unwrap();
+    app.open_path(source.clone());
+    workflow_settle(&mut app,&ctx);
+    let at = workflow_line(&app,&ctx,0);
+    workflow_edit(&mut app,&ctx,at);
+    workflow_frame(&mut app,&ctx,vec![]);
+    let doc = app.doc.as_ref().unwrap();
+    let edit = doc.edit.as_ref().expect("Paragraph editor opened");
+    let before = edit.line.objects[0].clone();
+    let old_width = edit.line.rect.width();
+    let scale = doc.scale();
+    let generation = doc.generation;
+    let id = Id::new(("text-width",0usize,before.index,before.revision));
+    let start = ctx.read_response(id).expect("Text width handle").rect.center();
+    workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start),gesture_button(start,true)]);
+    for dx in [30.,70.,140.] {
+        workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start+vec2(dx,0.))]);
+        let doc=app.doc.as_ref().unwrap();
+        let edit=doc.edit.as_ref().expect("Width drag keeps draft open");
+        assert!((edit.line.rect.width()-old_width-dx/scale).abs()<0.1);
+        assert!(edit.line.paragraph.as_ref().unwrap().wrap_width.is_some());
+        assert!(edit.changed());
+        assert_eq!(edit.line.objects[0].size,before.size);
+        assert_eq!(doc.generation,generation);
+        assert_eq!(app.busy,0);
+    }
+    workflow_frame(&mut app,&ctx,vec![gesture_button(start+vec2(140.,0.),false)]);
+    assert!(app.doc.as_ref().unwrap().edit.is_some());
+    assert_eq!(app.busy,0);
+    workflow_frame(&mut app,&ctx,vec![workflow_key(Key::Enter,egui::Modifiers::CTRL)]);
+    assert_eq!(app.busy,1);
+    workflow_settle(&mut app,&ctx);
+    let doc=app.doc.as_ref().unwrap();
+    assert!(doc.edit.is_none());
+    let objects=doc.pages[0].objects.as_ref().unwrap();
+    let edited=objects.lines.iter().flat_map(|line|&line.objects).filter(|o|o.text!="untouched").collect::<Vec<_>>();
+    assert!(edited.len()<3,"Widening reflows original soft wraps");
+    assert!(edited.iter().all(|o|o.size==before.size && o.font==before.font && o.matrix[..4]==before.matrix[..4]));
+    app.undo();workflow_settle(&mut app,&ctx);
+    assert!(!app.doc.as_ref().unwrap().dirty());
+    app.redo();workflow_settle(&mut app,&ctx);
+    assert!(app.doc.as_ref().unwrap().dirty());
+    assert_eq!(std::fs::read(source).unwrap(),bytes);
+}

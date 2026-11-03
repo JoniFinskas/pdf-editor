@@ -6,6 +6,7 @@ pub enum Kind {
     Center,
     Edge,
     Gap,
+    Baseline,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Guide {
@@ -24,6 +25,56 @@ pub struct Snapped {
     pub bounds: Rect,
     pub x: Option<Guide>,
     pub y: Option<Guide>,
+}
+#[derive(Clone, Copy)]
+pub struct Baseline {
+    pub axis: usize,
+    pub position: f32,
+    pub from: f32,
+    pub to: f32,
+}
+#[derive(Default)]
+pub struct Baselines {
+    pub moving: Option<(usize, f32)>,
+    pub targets: Vec<Baseline>,
+}
+pub fn align_text(
+    proposed: Rect,
+    handle: Option<usize>,
+    page: Rect,
+    targets: impl Iterator<Item = Rect> + Clone,
+    tolerance: f32,
+    state: &mut State,
+    baselines: &Baselines,
+) -> Snapped {
+    let previous = [state.x, state.y];
+    let mut snapped = align(proposed, handle, page, targets, tolerance, state);
+    if handle.is_some() || !proposed.is_finite() || !proposed.is_positive()
+        || !tolerance.is_finite() || tolerance <= 0.0 {
+        return snapped;
+    }
+    let Some((axis, offset)) = baselines.moving else { return snapped };
+    let mut best: Option<(f32, Guide)> = None;
+    let mut held = None;
+    for target in &baselines.targets {
+        if target.axis != axis { continue; }
+        let distance = (target.position - proposed.min[axis] - offset).abs();
+        let guide = Guide { position: target.position, from: target.from, to: target.to,
+            kind: Kind::Baseline, anchor: 0 };
+        if previous[axis].is_some_and(|old| old.kind == Kind::Baseline && (old.position-target.position).abs()<0.001)
+            && distance <= tolerance*1.7 { held = Some(guide); }
+        if distance <= tolerance && best.is_none_or(|(d,g)| distance < d || (distance == d && guide.position < g.position)) {
+            best = Some((distance,guide));
+        }
+    }
+    if let Some(guide) = held.or(best.map(|(_,g)|g)) {
+        let delta = guide.position - proposed.min[axis] - offset;
+        snapped.bounds.min[axis] = proposed.min[axis] + delta;
+        snapped.bounds.max[axis] = proposed.max[axis] + delta;
+        if axis == 0 { snapped.x=Some(guide);state.x=Some(guide); }
+        else { snapped.y=Some(guide);state.y=Some(guide); }
+    }
+    snapped
 }
 fn values(r: Rect, axis: usize) -> [f32; 3] {
     [r.min[axis], r.center()[axis], r.max[axis]]
@@ -236,6 +287,30 @@ mod tests {
     use eframe::egui::{pos2, vec2};
     fn page() -> Rect {
         Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 800.0))
+    }
+    #[test]
+    fn text_baselines_override_glyph_edges_without_changing_size() {
+        for axis in 0..2 {
+            for scale in [0.5,1.,2.,4.] {
+                let mut r=Rect::from_min_size(pos2(150.,180.),vec2(40.,20.));
+                r.min[axis]=200.-2./scale;
+                r.max[axis]=r.min[axis]+20.;
+                let baseline=Baseline {axis,position:213.,from:50.,to:100.};
+                let baselines=Baselines {moving:Some((axis,13.)),targets:vec![baseline]};
+                let mut target=r;
+                target.min[axis]=201.;target.max[axis]=221.;
+                let mut state=State::default();
+                let snapped=align_text(r,None,page(),[target].into_iter(),6./scale,&mut state,&baselines);
+                assert!((snapped.bounds.min[axis]+13.-213.).abs()<0.001);
+                assert_eq!(snapped.bounds.size(),r.size());
+                assert_eq!([snapped.x,snapped.y][axis].unwrap().kind,Kind::Baseline);
+                let held=r.translate({let mut v=Vec2::ZERO;v[axis]=10./scale;v});
+                let held=align_text(held,None,page(),[target].into_iter(),6./scale,&mut state,&baselines);
+                assert_eq!([held.x,held.y][axis].unwrap().kind,Kind::Baseline);
+                let resized=align_text(r,Some(4),page(),[target].into_iter(),6./scale,&mut state,&baselines);
+                assert_ne!([resized.x,resized.y][axis].map(|g|g.kind),Some(Kind::Baseline));
+            }
+        }
     }
     #[test]
     fn page_center_matches_center_not_an_edge() {

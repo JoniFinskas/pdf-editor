@@ -24,6 +24,8 @@ pub struct Paragraph {
     pub alignment: ParagraphAlignment,
     pub line_spacing: f32,
     pub line_count: usize,
+    /// Optional writable width in PDF points; changing it reflows without scaling.
+    pub wrap_width: Option<f32>,
     /// Some means the selection must use ordinary line editing.
     pub fallback: Option<String>,
 }
@@ -34,8 +36,8 @@ fn horizontal(o: &TextObject) -> bool {
         && o.matrix.iter().all(|v| v.is_finite())
         && o.matrix[1].abs() < 0.001
         && o.matrix[2].abs() < 0.001
-        && (o.matrix[0] - 1.0).abs() < 0.001
-        && (o.matrix[3] - 1.0).abs() < 0.001
+        && o.matrix[0] > 0.0
+        && o.matrix[3] > 0.0
         && o.size.is_finite()
         && o.size > 0.0
         && o.color[3] == 255
@@ -46,6 +48,7 @@ fn same(a: &TextObject, b: &TextObject) -> bool {
         && fonts::family(&a.font) == fonts::family(&b.font)
         && fonts::base_name(&a.font).eq_ignore_ascii_case(fonts::base_name(&b.font))
         && (a.size - b.size).abs() < 0.05
+        && a.matrix[..4].iter().zip(&b.matrix[..4]).all(|(x,y)|(x-y).abs()<0.001)
         && a.color == b.color
 }
 fn union(a: Bounds, b: Bounds) -> Bounds {
@@ -56,13 +59,19 @@ fn union(a: Bounds, b: Bounds) -> Bounds {
         top: a.top.max(b.top),
     }
 }
+fn list_marker(text: &str) -> bool {
+    let text=text.trim();
+    matches!(text,"•"|"●"|"▪"|"◦"|"-")
+        || text.strip_suffix(['.',')']).is_some_and(|n|
+            !n.is_empty() && n.len()<=6 && n.chars().all(|c|c.is_ascii_digit()))
+}
 fn line(objects: Vec<TextObject>, fallback: Option<String>) -> Paragraph {
     let first = &objects[0];
     let mut text = String::new();
     let mut bounds = first.bounds;
     let mut end = first.bounds.left;
     for o in &objects {
-        if !text.is_empty() && o.bounds.left - end > o.size * 0.15 && !text.ends_with(' ') {
+        if !text.is_empty() && o.bounds.left - end > o.size * o.matrix[0] * 0.15 && !text.ends_with(' ') {
             text.push(' ')
         }
         text.push_str(&o.text);
@@ -70,8 +79,9 @@ fn line(objects: Vec<TextObject>, fallback: Option<String>) -> Paragraph {
         bounds = union(bounds, o.bounds);
     }
     Paragraph {
-        line_spacing: first.size * 1.2,
+        line_spacing: first.size * first.matrix[3] * 1.2,
         line_count: 1,
+        wrap_width: None,
         objects,
         bounds,
         text,
@@ -95,7 +105,7 @@ pub fn paragraphs(objects: &[TextObject]) -> Vec<Paragraph> {
     }
     let mut sorted: Vec<_> = objects
         .iter()
-        .filter(|o| !o.text.trim().is_empty())
+        .filter(|o| !o.text.trim().is_empty() && !list_marker(&o.text))
         .cloned()
         .collect();
     sorted.sort_by(|a, b| {
@@ -108,10 +118,10 @@ pub fn paragraphs(objects: &[TextObject]) -> Vec<Paragraph> {
         if let Some(last) = lines.last_mut() {
             let a = &last.objects[0];
             if a.page == o.page
-                && (a.matrix[5] - o.matrix[5]).abs() < a.size * 0.15
+                && (a.matrix[5] - o.matrix[5]).abs() < a.size * a.matrix[3] * 0.15
                 && horizontal(a)
                 && horizontal(&o)
-                && o.bounds.left - last.bounds.right < a.size * 1.5
+                && o.bounds.left - last.bounds.right < a.size * a.matrix[0] * 1.5
             {
                 let mixed = !same(a, &o);
                 let mut items = last.objects.clone();
@@ -138,24 +148,30 @@ pub fn paragraphs(objects: &[TextObject]) -> Vec<Paragraph> {
                 continue;
             }
             let dy = (lines[i].objects[0].matrix[5] - lines[j].objects[0].matrix[5]).abs();
-            if dy < lines[i].objects[0].size * 0.2 {
+            let em = lines[i].objects[0].size * lines[i].objects[0].matrix[3].abs();
+            if dy < em * 0.2 {
                 lines[i].fallback = Some("Unclear columns; editing this line only".into());
                 lines[j].fallback = lines[i].fallback.clone();
             }
-            if dy > lines[i].objects[0].size * 4.0 {
+            if dy > em * 4.0 {
                 break;
             }
         }
     }
     let mut groups: Vec<Vec<Paragraph>> = vec![];
     for l in lines {
+        let starts_item = objects.iter().any(|o| list_marker(&o.text)
+            && o.page == l.objects[0].page
+            && (o.matrix[5]-l.objects[0].matrix[5]).abs()<l.objects[0].size*l.objects[0].matrix[3]*0.15
+            && o.bounds.right<=l.bounds.left);
         let joins = groups.last().is_some_and(|g| {
             let prev = &g[g.len() - 1];
             let first = &g[0];
             let spacing = prev.objects[0].matrix[5] - l.objects[0].matrix[5];
-            let size = l.objects[0].size;
-            let tol = size * 0.35;
+            let size = l.objects[0].size * l.objects[0].matrix[3];
+            let tol = l.objects[0].size * l.objects[0].matrix[0] * 0.35;
             same(&first.objects[0], &l.objects[0])
+                && !starts_item
                 && l.fallback.is_none()
                 && prev.fallback.is_none()
                 && spacing > size * 0.7
@@ -178,7 +194,7 @@ pub fn paragraphs(objects: &[TextObject]) -> Vec<Paragraph> {
             groups.push(vec![l])
         }
     }
-    groups
+    let mut result: Vec<_> = groups
         .into_iter()
         .map(|g| {
             let mut p = g[0].clone();
@@ -187,7 +203,7 @@ pub fn paragraphs(objects: &[TextObject]) -> Vec<Paragraph> {
             }
             p.line_count = g.len();
             p.line_spacing = g[0].objects[0].matrix[5] - g[1].objects[0].matrix[5];
-            let tol = p.objects[0].size * 0.35;
+            let tol = p.objects[0].size * p.objects[0].matrix[0] * 0.35;
             let left = g
                 .iter()
                 .all(|l| (l.bounds.left - p.bounds.left).abs() < tol);
@@ -217,15 +233,30 @@ pub fn paragraphs(objects: &[TextObject]) -> Vec<Paragraph> {
                 p.fallback = Some("Unclear alignment; editing individual lines only".into());
                 ParagraphAlignment::Left
             };
-            for l in &g[1..] {
+            let widest = g.iter().map(|l| l.bounds.right - l.bounds.left).fold(0.0, f32::max);
+            for (previous, l) in g.iter().zip(&g[1..]) {
                 p.bounds = union(p.bounds, l.bounds);
-                p.text.push('\n');
+                // PDF rows have no paragraph markers. Join likely soft wraps;
+                // retain short rows and new list items as explicit breaks.
+                let list = l.text.trim_start();
+                let list_start = list.starts_with(['•', '●', '▪', '-'])
+                    || list.split_once(['.', ')']).is_some_and(|(n, rest)|
+                        !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) && rest.starts_with(' '));
+                let short = previous.bounds.right - previous.bounds.left < widest * 0.6;
+                p.text.push(if short || list_start { '\n' } else { ' ' });
                 p.text.push_str(&l.text);
                 p.objects.extend(l.objects.clone());
             }
             p
         })
-        .collect()
+        .collect();
+    // A separate bullet can use a symbol font without splitting its prose block.
+    result.extend(objects.iter().filter(|o|list_marker(&o.text)).cloned().map(|o| {
+        let fallback=(!horizontal(&o)).then(||"Rotated or transformed text; editing this line only".into());
+        line(vec![o],fallback)
+    }));
+    result.sort_by(|a,b| b.objects[0].matrix[5].total_cmp(&a.objects[0].matrix[5]).then(a.bounds.left.total_cmp(&b.bounds.left)));
+    result
 }
 
 fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> Result<f32>) -> Result<Vec<String>> {
@@ -235,7 +266,7 @@ fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> Result<f32>) -> Result
         for word in hard.split_whitespace() {
             if measure(word)? > width + 0.01 {
                 return Err(err(
-                    "A word exceeds the paragraph width; insert a space or use line editing",
+                    "A word is wider than the text box. Widen the box or add a space.",
                 ));
             }
             let next = if current.is_empty() {
@@ -359,7 +390,11 @@ impl Engine {
             if text.chars().count() > 16384 || text.chars().any(|c| c.is_control() && c != '\n') {
                 return Err(err("Paragraph requires at most 16384 printable characters"));
             }
-            if text == p.text {
+            let width = selected.wrap_width.unwrap_or(p.bounds.right - p.bounds.left);
+            if !width.is_finite() || width <= 0.0 {
+                return Err(err("Invalid text box width"));
+            }
+            if text == p.text && selected.wrap_width.is_none() {
                 return Ok(EditResult {
                     warning: None,
                     objects_changed: 0,
@@ -435,12 +470,8 @@ impl Engine {
                             .ok_or_else(|| err("Missing paragraph glyph metrics"))
                     })
                     .sum::<Result<f32>>()?;
-                Ok((advance - spacing[0]) * spacing[2] / 100.0)
+                Ok((advance - spacing[0]) * spacing[2] / 100.0 * first.matrix[0])
             };
-            let width = p.bounds.right - p.bounds.left;
-            if !width.is_finite() || width <= 0.0 {
-                return Err(err("Invalid paragraph width"));
-            }
             let lines = wrap(text, width, measure)?;
             let key = run.key.clone();
             // Deletion repairs subsequent text cursors, retaining every other object.
@@ -477,7 +508,7 @@ impl Engine {
             }
             if width > visible[2] - visible[0]
                 || p.bounds.left < visible[0]
-                || p.bounds.right > visible[2]
+                || p.bounds.left + width > visible[2]
             {
                 return Err(err("Paragraph bounds exceed the page"));
             }
@@ -488,13 +519,13 @@ impl Engine {
                 }
                 let w = measure(l)?;
                 let x = match p.alignment {
-                    ParagraphAlignment::Right => p.bounds.right - w,
-                    ParagraphAlignment::Center => (p.bounds.left + p.bounds.right - w) / 2.0,
+                    ParagraphAlignment::Right => p.bounds.left + width - w,
+                    ParagraphAlignment::Center => p.bounds.left + (width - w) / 2.0,
                     _ => p.bounds.left,
                 };
                 let y = first.matrix[5] - i as f32 * p.line_spacing;
-                if y + vertical.descent < visible[1]
-                    || y + vertical.ascent > visible[3]
+                if y + vertical.descent * first.matrix[3] < visible[1]
+                    || y + vertical.ascent * first.matrix[3] > visible[3]
                 {
                     return Err(err("Paragraph would extend beyond the page"));
                 }
@@ -516,7 +547,7 @@ impl Engine {
                     ),
                     Operation::new(
                         "Tm",
-                        vec![1.into(), 0.into(), 0.into(), 1.into(), x.into(), y.into()],
+                        vec![first.matrix[0].into(), 0.into(), 0.into(), first.matrix[3].into(), x.into(), y.into()],
                     ),
                 ]);
                 let justify = p.alignment == ParagraphAlignment::Justified
@@ -539,7 +570,7 @@ impl Engine {
                         ));
                         if n + 1 < words.len() {
                             items.push(Object::Real(
-                                -extra / template.size * 1000.0 * 100.0 / spacing[2],
+                                -extra / first.matrix[0] / template.size * 1000.0 * 100.0 / spacing[2],
                             ))
                         }
                     }
@@ -589,8 +620,19 @@ impl Engine {
                     return Err(err("Paragraph failed text verification"));
                 }
             }
+            let intersects = |a: Bounds, b: Bounds| {
+                a.left < b.right - 0.1 && a.right > b.left + 0.1
+                    && a.bottom < b.top - 0.1 && a.top > b.bottom + 0.1
+            };
+            for neighbor in &unaffected {
+                if !p.objects.iter().any(|old| intersects(old.bounds, neighbor.bounds))
+                    && after[unaffected.len()..].iter().any(|new| intersects(new.bounds, neighbor.bounds))
+                {
+                    return Err(err("Not enough room for this text. Widen the box or shorten it."));
+                }
+            }
             if lines.len() > p.line_count {
-                let warning = "Paragraph extended downward; content below may overlap";
+                let warning = "Text uses more lines";
                 result.warning = Some(
                     result
                         .warning
@@ -719,6 +761,91 @@ mod tests {
     }
     fn engine() -> Engine {
         Engine::new(&root().join("target/debug/pdfium.dll")).unwrap()
+    }
+    #[test]
+    fn writable_width_reflows_scaled_text_and_rejects_new_heading_overlap_atomically() {
+        let e = engine();
+        let original = e.open(&root().join("tests/fixtures/generated/paragraph-Left.pdf")).unwrap();
+        for [sx, sy] in [[1., 1.], [0.75, 0.75], [1.3, 1.1]] {
+            let mut pdf = parse(&original.bytes).unwrap();
+            let page = pdf.get_pages()[&1];
+            let mut ops = Content::decode(&pdf.get_page_content(page)).unwrap();
+            let mut index = 0;
+            for op in &mut ops.operations {
+                if op.operator == "Tm" {
+                    op.operands[0] = Object::Real(sx);
+                    op.operands[3] = Object::Real(sy);
+                    if index == 3 {
+                        op.operands[4] = 60.into();
+                        op.operands[5] = 195.into();
+                    }
+                    index += 1;
+                }
+            }
+            pdf.change_page_content(page, ops.encode().unwrap()).unwrap();
+            let mut doc = e.candidate(&original, pdf).unwrap();
+            let before = doc.bytes.clone();
+            let image = e.render(&doc, 0, 1.).unwrap();
+            let objects = e.text_objects(&doc, 0).unwrap();
+            let mut selected = paragraphs(&objects).remove(0);
+            assert_eq!(selected.line_count, 3);
+            assert!(selected.fallback.is_none());
+            assert!(selected.text.starts_with("Finnish ääkköset täällä Tämä rivi"));
+            let text = "Muutos lyhyt pidempi teksti ".repeat(4).trim().to_owned();
+            let history = doc.recovery_bytes().unwrap();
+            let error = e.edit_paragraph(&mut doc, &selected, &text).unwrap_err().to_string();
+            assert!(error.contains("Widen the box"), "{sx},{sy}: {error}");
+            assert!(doc.bytes == before);
+            assert!(doc.recovery_bytes().unwrap() == history);
+            for invalid in [f32::NAN, f32::INFINITY, -1., 0., 500.] {
+                selected.wrap_width = Some(invalid);
+                assert!(e.edit_paragraph(&mut doc, &selected, &text).is_err());
+                assert!(doc.bytes == before);
+            }
+            selected.wrap_width = Some(410.);
+            e.edit_paragraph(&mut doc, &selected, &text).unwrap();
+            let after = e.text_objects(&doc, 0).unwrap();
+            assert_eq!(after.iter().filter(|o| o.text != "untouched").map(|o| o.text.as_str()).collect::<Vec<_>>().join(" "), text);
+            for o in after.iter().filter(|o| o.text != "untouched") {
+                assert!((o.size - 12.).abs() < 0.001);
+                assert!((o.matrix[0] - sx).abs() < 0.001);
+                assert!((o.matrix[3] - sy).abs() < 0.001);
+            }
+            let old = objects.iter().find(|o| o.text == "untouched").unwrap();
+            let new = after.iter().find(|o| o.text == "untouched").unwrap();
+            assert_eq!(old.matrix, new.matrix);
+            assert_eq!(old.font, new.font);
+            let rendered = e.render(&doc, 0, 1.).unwrap();
+            let region = after.iter().filter(|o| o.text != "untouched").fold(selected.bounds, |b,o| union(b,o.bounds));
+            for y in 0..image.height {
+                for x in 0..image.width {
+                    let py = image.height as f32 - y as f32;
+                    if (x as f32) < region.left-4. || x as f32 > region.right+4. || py < region.bottom-4. || py > region.top+4. {
+                        let i = ((y*image.width+x)*4) as usize;
+                        assert_eq!(&image.rgba[i..i+4], &rendered.rgba[i..i+4]);
+                    }
+                }
+            }
+            let saved = root().join(format!("target/text-width-{sx}-{sy}.pdf"));
+            if saved.exists() { fs::remove_file(&saved).unwrap(); }
+            doc.save_as(&saved).unwrap();
+            assert_eq!(e.render(&e.open(&saved).unwrap(),0,1.).unwrap().rgba,rendered.rgba);
+            let edited = doc.bytes.clone();
+            assert!(doc.undo());
+            assert!(doc.bytes == before);
+            assert!(doc.redo());
+            assert!(doc.bytes == edited);
+            fs::remove_file(saved).unwrap();
+        }
+        let mut doc = e.candidate(&original, parse(&original.bytes).unwrap()).unwrap();
+        let mut p = paragraphs(&e.text_objects(&doc,0).unwrap()).remove(0);
+        p.wrap_width = Some(410.);
+        assert!(e.edit_paragraph(&mut doc,&p,&p.text).unwrap().objects_changed > 0);
+        let p = paragraphs(&e.text_objects(&doc,0).unwrap()).remove(0);
+        assert!(p.line_count < 3);
+        e.edit_paragraph(&mut doc,&p,"Muutos\nlyhyt\npidempi").unwrap();
+        assert_eq!(e.text_objects(&doc,0).unwrap().iter().filter(|o|o.text!="untouched").count(),3);
+        assert_eq!(fs::read(root().join("tests/fixtures/generated/paragraph-Left.pdf")).unwrap(),original.bytes);
     }
     #[test]
     fn paragraph_edits_use_unrotated_visible_bounds_with_crop_and_origin_offsets() {
@@ -997,7 +1124,7 @@ mod tests {
             let p = paragraphs(&e.text_objects(&doc, 0).unwrap()).remove(0);
             let long = "pidempi teksti ä ö å € ".repeat(12);
             let result = e.edit_paragraph(&mut doc, &p, long.trim()).unwrap();
-            assert!(result.warning.as_deref().unwrap().contains("overlap"));
+            assert!(result.warning.as_deref().unwrap().contains("more lines"));
             let longer = e.render(&doc, 0, 1.0).unwrap();
             let after_objects = e.text_objects(&doc, 0).unwrap();
             let extended = after_objects
@@ -1075,5 +1202,26 @@ mod tests {
                 .unwrap()
                 .contains("Mixed")
         );
+    }
+    #[test]
+    fn separate_symbol_bullets_do_not_split_wrapped_prose_or_merge_list_items() {
+        let e=engine();
+        let doc=e.open(&root().join("tests/fixtures/generated/paragraph-Left.pdf")).unwrap();
+        let mut objects=e.text_objects(&doc,0).unwrap();
+        let mut bullet=objects[0].clone();
+        bullet.text="•".into();bullet.font="Symbol".into();bullet.index=999;
+        bullet.bounds.left=40.;bullet.bounds.right=45.;bullet.matrix[4]=40.;
+        objects.push(bullet.clone());
+        let p=paragraphs(&objects);
+        let prose=p.iter().find(|p|p.line_count==3).unwrap();
+        assert!(prose.fallback.is_none());
+        assert!(!prose.text.contains('•'));
+        bullet.index=1000;bullet.matrix[5]=objects[2].matrix[5];
+        objects.push(bullet);
+        let p=paragraphs(&objects);
+        assert_eq!(p.iter().filter(|p|p.line_count==2).count(),1);
+        assert!(!p.iter().any(|p|p.line_count==3));
+        objects.iter_mut().find(|o|o.index==999).unwrap().matrix[1]=0.2;
+        assert!(paragraphs(&objects).iter().find(|p|p.objects[0].index==999).unwrap().fallback.is_some());
     }
 }

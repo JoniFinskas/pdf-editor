@@ -4,6 +4,9 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Reflow text by dragging its writable width without scaling the font; join likely soft wraps, preserve axis-aligned text scale and reject new overlaps with nearby text.
+- Snap dragged text to real baselines and shorten paragraph editing hints.
+
 - Edit, delete and style supported accessibility-labelled icon text; update local labels without changing shared properties or unrelated symbols.
 - Batch text-cursor repairs across closed styling and painting groups without text-position changes.
 - Save and reopen unfinished CV drafts from the builder, undo loading a draft, and exchange draft data through local commands. Draft copies protect existing files.

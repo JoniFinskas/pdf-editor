@@ -22,6 +22,9 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
 
 ## Current limitations
 
+Paragraph reflow infers wrapping from visual rows. Mixed styles and angled text
+retain line editing; reflow does not move neighboring content or repaginate it.
+
 Icon text requires a verifiable Unicode or accessibility-label mapping. Shared
 labels must be selected in full; ambiguous or unmapped symbols remain protected.
 Graphics groups that affect text positioning retain conservative cursor repair.

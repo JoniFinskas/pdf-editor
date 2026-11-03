@@ -314,7 +314,7 @@ impl TabbedApp {
     fn needs_warning(tab: &EditorApp) -> bool {
         tab.busy > 0
             || tab.doc.as_ref().is_some_and(|d| {
-                d.dirty() || d.edit.as_ref().is_some_and(|e| e.text != e.line.text)
+                d.dirty() || d.edit.as_ref().is_some_and(|e| e.changed())
             })
     }
     fn remove(&mut self, id: u64, ctx: &Context) {
@@ -771,6 +771,7 @@ struct ItemDrag {
     preview: Option<Rect>,
     snap_state: crate::snapping::State,
     snap_targets: Vec<Rect>,
+    snap_baselines: crate::snapping::Baselines,
 }
 
 /// Adjacent text objects that read as one line, edited together. Browser
@@ -792,6 +793,34 @@ struct EditState {
     text: String,
     focus: bool,
     rejected_text: Option<String>,
+}
+impl EditState {
+    fn changed(&self) -> bool {
+        self.text != self.line.text || self.line.paragraph.as_ref().is_some_and(|p| p.wrap_width.is_some())
+    }
+}
+
+fn text_snap_baselines(objects: &PageObjects, moving: &std::collections::HashSet<usize>, bounds: Rect) -> crate::snapping::Baselines {
+    use crate::snapping::{Baseline, Baselines};
+    let mut result = Baselines::default();
+    let mut selected = Vec::new();
+    for object in objects.lines.iter().flat_map(|line| &line.objects) {
+        let m = object.matrix;
+        let (x,y) = objects.transform.apply(m[4],m[5]);
+        let (ex,ey) = objects.transform.apply(m[4]+m[0],m[5]+m[1]);
+        let axis = if (ey-y).abs()<0.001 && (ex-x).abs()>0.001 { 1 }
+            else if (ex-x).abs()<0.001 && (ey-y).abs()>0.001 { 0 }
+            else { continue };
+        let rect = bounds_rect(&objects.transform,object.bounds);
+        let baseline = Baseline { axis, position: [x,y][axis], from: rect.min[1-axis], to:rect.max[1-axis] };
+        if moving.contains(&object.index) { selected.push(baseline); }
+        else { result.targets.push(baseline); }
+    }
+    if selected.len() == moving.len() && let Some(first) = selected.first()
+        && selected.iter().all(|b| b.axis==first.axis && (b.position-first.position).abs()<0.1) {
+        result.moving=Some((first.axis,first.position-bounds.min[first.axis]));
+    }
+    result
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -998,7 +1027,7 @@ impl EditorApp {
         if let Some(doc) = &mut self.doc { doc.restore_failed_edit(); }
         if self.engine_alive {
             self.engine_alive = false;
-            let draft = self.doc.as_ref().is_some_and(|doc|doc.edit.as_ref().is_some_and(|edit|edit.text != edit.line.text));
+            let draft = self.doc.as_ref().is_some_and(|doc|doc.edit.as_ref().is_some_and(|edit|edit.changed()));
             self.banner(
                 BannerKind::Error,
                 if draft {"The PDF engine stopped. Copy the draft before restarting."}
@@ -1029,7 +1058,7 @@ impl EditorApp {
             return;
         }
         let committed = self.commit_edit();
-        if committed || self.busy > 0 || self.doc.as_ref().is_some_and(|d| d.dirty() || d.edit.as_ref().is_some_and(|e|e.text != e.line.text)) {
+        if committed || self.busy > 0 || self.doc.as_ref().is_some_and(|d| d.dirty() || d.edit.as_ref().is_some_and(|e|e.changed())) {
             self.confirm = Some(Pending::Open(path));
         } else {
             self.open_dialog_or_path(path);
@@ -1071,7 +1100,7 @@ impl EditorApp {
         // applied before the save.
         let committed = self.commit_edit();
         let Some(doc) = &self.doc else { return };
-        if doc.edit.as_ref().is_some_and(|e|e.text != e.line.text) {
+        if doc.edit.as_ref().is_some_and(|e|e.changed()) {
             self.banner(BannerKind::Warning,"Correct the rejected text edit or press Escape to discard it before saving.");
             return;
         }
@@ -1115,7 +1144,7 @@ impl EditorApp {
                 return;
             }
             self.commit_edit();
-            if self.doc.as_ref().and_then(|d|d.edit.as_ref()).is_some_and(|e|e.text != e.line.text) {
+            if self.doc.as_ref().and_then(|d|d.edit.as_ref()).is_some_and(|e|e.changed()) {
                 self.banner(BannerKind::Warning,"Apply the text edit or press Escape to discard it first.");
                 return;
             }
@@ -1177,7 +1206,7 @@ impl EditorApp {
             .doc
             .as_ref()
             .and_then(|d| d.edit.as_ref())
-            .is_some_and(|e| e.text != e.line.text)
+            .is_some_and(|e| e.changed())
         {
             self.cancel_edit();
             return;
@@ -1213,7 +1242,7 @@ impl EditorApp {
         let Some(edit) = doc.edit.take() else {
             return false;
         };
-        if edit.text == edit.line.text {
+        if !edit.changed() {
             self.text_tool.selection.clear();
             return false;
         }
@@ -2199,7 +2228,7 @@ impl EditorApp {
                 .doc
                 .as_ref()
                 .and_then(|d| d.edit.as_ref())
-                .is_some_and(|e| e.text != e.line.text);
+                .is_some_and(|e| e.changed());
         let font = font_readout::Readout::new(self.text_tool.selection.get(self.text_tool.selected).into_iter().map(|o|o.font.as_str()));
         let label = font.as_ref().map_or_else(||"Font…".to_owned(),|font|format!("Font: {}",shorten(&font.name,28)));
         let tip = font.as_ref().map_or_else(||"Change font and style".to_owned(),|font|format!("{}\nChange font and style",font.detail));
@@ -2601,7 +2630,7 @@ impl EditorApp {
             return;
         }
         let committed = self.commit_edit();
-        if committed || self.busy > 0 || self.doc.as_ref().is_some_and(|d| d.dirty() || d.edit.as_ref().is_some_and(|e|e.text != e.line.text)) {
+        if committed || self.busy > 0 || self.doc.as_ref().is_some_and(|d| d.dirty() || d.edit.as_ref().is_some_and(|e|e.changed())) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.confirm = Some(Pending::Close);
         }
@@ -3733,7 +3762,7 @@ impl EditorApp {
                             let keep=response.secondary_clicked()&&item_hit.is_some_and(|item|self.qol.objects.iter().any(|picked|picked.page==item.page&&picked.revision==item.revision&&picked.index==item.index));
                             if !keep {doc.selected_item=self.qol.select(objects,item_hit,extend);}
                         }
-                        if doc.edit.as_ref().is_none_or(|e| e.text == e.line.text) {
+                        if doc.edit.as_ref().is_none_or(|e| !e.changed()) {
                             doc.edit = None;
                             self.text_tool.selection.clear();
                         }
@@ -3793,6 +3822,7 @@ impl EditorApp {
                             let moving = items.iter().map(|item|item.index).collect::<std::collections::HashSet<_>>();
                             let snap_targets = objects.items.iter().filter(|item|!moving.contains(&item.index))
                                 .map(|item|bounds_rect(&objects.transform,item.bounds)).collect();
+                            let snap_baselines = text_snap_baselines(objects,&moving,bounds);
                             let preview_scale = wanted.min((1_900_000. / (page.info.width * page.info.height)).sqrt());
                             if let Some(id) = self.drag_preview.plan(doc.generation,index,&items,preview_scale) {
                                 requests.push(Request::ObjectPreview {id,items:items.clone(),scale:preview_scale});
@@ -3807,6 +3837,7 @@ impl EditorApp {
                                 preview: None,
                                 snap_state: Default::default(),
                                 snap_targets,
+                                snap_baselines,
                             });
                         }
                     }
@@ -3826,7 +3857,7 @@ impl EditorApp {
                         {
                             let page_bounds = Rect::from_min_size(Pos2::ZERO,vec2(page.info.width,page.info.height));
                             let targets = drag.snap_targets.iter().copied();
-                            let snapped = crate::snapping::align(preview_bounds,drag.resize_handle,page_bounds,targets,6.0/scale,&mut drag.snap_state);
+                            let snapped = crate::snapping::align_text(preview_bounds,drag.resize_handle,page_bounds,targets,6.0/scale,&mut drag.snap_state,&drag.snap_baselines);
                             preview_bounds = snapped.bounds;
                             guides = Some(snapped);
                         } else {
@@ -4073,7 +4104,7 @@ impl EditorApp {
                     self.text_tool.size = o.size;
                     self.text_tool.color = [o.color[0], o.color[1], o.color[2]];
                 }
-                let changed = doc.edit.as_ref().is_some_and(|e| e.text != e.line.text);
+                let changed = doc.edit.as_ref().is_some_and(|e| e.changed());
                 if changed {
                     outcome = Some(true);
                     doc.reopen = clicked_at;
@@ -4257,7 +4288,7 @@ impl EditorApp {
         if self.autosave.0.is_none() { return "Recovery off"; }
         if self.session.is_none() || self.session_error.is_some() { return "Recovery unavailable"; }
         if let Some(doc) = &self.doc {
-            if doc.edit.as_ref().is_some_and(|e| e.text != e.line.text) { return "Draft not applied"; }
+            if doc.edit.as_ref().is_some_and(|e| e.changed()) { return "Draft not applied"; }
             if doc.copying { return "Writing recovery…"; }
             if doc.dirty() && doc.copied_generation == Some(doc.generation) { return "Recovery saved"; }
             if doc.dirty() { return "Recovery pending"; }
@@ -5300,8 +5331,7 @@ fn edit_box(
 ) -> Option<bool> {
     let edit = doc.edit.as_mut()?;
     let page_rect = *page_rects.get(edit.page)?;
-    let screen = to_screen(edit.line.rect, page_rect, scale);
-    let first = &edit.line.objects[0];
+    let first = edit.line.objects[0].clone();
     let transform=doc.pages.get(edit.page).and_then(|page|page.objects.as_ref()).map(|objects|objects.transform);
     if let Some(transform)=transform
         && let Some((plane,size))=affine_edit::line_plane(&edit.line,&transform,page_rect,scale)
@@ -5318,7 +5348,8 @@ fn edit_box(
     // 0.7 em), so they only serve as a fallback when the content stream adds
     // its own scaling.
     let [a, b, c, d, _, _] = first.matrix;
-    let from_matrix = first.size * (a * d - b * c).abs().sqrt() * scale;
+    let from_matrix = first.size * d.abs() * scale;
+    let mut screen = to_screen(edit.line.rect, page_rect, scale);
     let height = screen.height().max(4.0);
     let font_px = if edit.line.paragraph.is_some()
         || (from_matrix > height * 0.6 && from_matrix < height * 2.4)
@@ -5335,17 +5366,46 @@ fn edit_box(
     } else {
         Color32::from_rgb(r, g, bl)
     };
-
-    let text_width = ui.fonts_mut(|f| {
-        f.layout_no_wrap(edit.text.clone(), font.clone(), color)
-            .size()
-            .x
-    });
-    let box_height = screen.height().max(font_px * 1.25);
-    let mut rect = Rect::from_center_size(screen.center(), vec2(screen.width(), box_height))
-        .expand2(vec2(3.0, 1.0));
+    let mut resizing = false;
+    let can_resize=edit.line.fallback.is_none() && b.abs()<0.001 && c.abs()<0.001 && a>0.0 && d>0.0 && transform.is_some();
+    if can_resize && let Some(transform) = transform {
+        let right = if edit.line.paragraph.is_some() {screen.right()} else {
+            let width=ui.fonts_mut(|f|f.layout_no_wrap(edit.text.clone(),font.clone(),color).size().x);
+            screen.right().max(screen.left()+width+4.)
+        }.min((page_rect.right()-12.).max(screen.left()+font_px*2.));
+        let grip = Rect::from_center_size(pos2(right+8.,screen.center().y),vec2(10.,20.));
+        let response = ui.interact(grip,Id::new(("text-width",edit.page,first.index,first.revision)),Sense::drag())
+            .on_hover_cursor(CursorIcon::ResizeHorizontal)
+            .on_hover_text("Text width");
+        resizing = response.dragged() || response.drag_stopped() || response.is_pointer_button_down_on();
+        if response.dragged() && let Some(pointer)=response.interact_pointer_pos() {
+            let right = (pointer.x-8.).clamp(screen.left()+font_px*2.,(page_rect.right()-12.).max(screen.left()+font_px*2.));
+            let mut raster=edit.line.rect;
+            raster.max.x=(right-page_rect.left())/scale;
+            if let Some(bounds)=raster_bounds(&transform,raster) {
+                let paragraph = edit.line.paragraph.clone().or_else(||pdf_editor_core::paragraphs(&edit.line.objects).into_iter().next());
+                if let Some(mut paragraph)=paragraph.filter(|p|p.fallback.is_none()) {
+                    paragraph.wrap_width=Some(bounds.right-bounds.left);
+                    edit.line.paragraph=Some(paragraph);
+                    edit.line.rect=raster;
+                    edit.rejected_text=None;
+                    screen=to_screen(raster,page_rect,scale);
+                }
+            }
+        }
+    }
+    let paragraph = edit.line.paragraph.is_some();
+    let layout = ui.fonts_mut(|f| f.layout(edit.text.clone(),font.clone(),color,
+        if paragraph {screen.width()} else {f32::INFINITY}));
+    let box_height = screen.height().max(font_px*1.25).max(layout.size().y);
+    let mut rect = if paragraph {
+        Rect::from_min_size(screen.min,vec2(screen.width(),box_height)).expand2(vec2(3.,1.))
+    } else {
+        Rect::from_center_size(screen.center(),vec2(screen.width(),box_height)).expand2(vec2(3.,1.))
+    };
     if edit.line.paragraph.is_none() {
-        rect.max.x = rect.max.x.max(rect.min.x + text_width + 10.0);
+        rect.max.x = rect.max.x.max(rect.min.x + layout.size().x + 10.0);
+        rect.max.x = rect.max.x.min((page_rect.right()-9.).max(rect.min.x+font_px*2.+6.));
     }
     crate::paragraph::hint(
         ui,
@@ -5397,11 +5457,19 @@ fn edit_box(
         .frame(Frame::NONE)
         .margin(Margin::symmetric(3, 0))
         .desired_width(rect.width() - 6.0)
-        .vertical_align(Align::Center)
+        .vertical_align(if paragraph {Align::Min} else {Align::Center})
         .cursor_at_end(true)
         .char_limit(16_384);
     let response = ui.put(rect, editor);
+    if can_resize {
+        ui.painter().rect_filled(Rect::from_center_size(pos2(rect.right()+5.,screen.center().y),vec2(3.,16.)),2.,p.accent);
+    }
     spelling.menu(&response, &mut edit.text);
+    if resizing {
+        response.request_focus();
+        edit.focus=false;
+        return None;
+    }
     if edit.focus {
         response.request_focus();
         edit.focus = false;
