@@ -402,6 +402,7 @@ serialized or persisted in session/recovery files.
 - `Engine::render_tiles(document, page, scale, rectangles) -> Result<Vec<Image>>`: opens one document/page for a batch of 1–16 tiles, at most 4,194,304 returned pixels total. Shares tile validation and preserves input order.
 - `Engine::object_preview(document, items, scale) -> Result<ObjectPreview>`: renders a temporary page background without selected objects plus their transparent foreground and raster rectangle. Validates one-page current selection and a 2-megapixel raster limit; preserves source bytes, history, forms and annotations. Foreground excludes form/annotation overlays.
 - `ObjectPreview { background, foreground, rect }`: independent RGBA drag layers; `rect` is `[x, y, width, height]` in background raster pixels.
+- `Engine::object_preview_sharp(document, items, scale, max_side) -> Result<ObjectPreview>`: renders the same read-only layers with up to 8× foreground density for resizing. The caller supplies a 1 to 16384 pixel texture-side limit. Background and foreground each stay within that limit and 2 megapixels; `rect` remains in background pixels.
 
 The desktop requests 512-pixel tiles only for visible regions above the whole-page
 render cap. At most one batch is in flight per page; stale scale/generation replies

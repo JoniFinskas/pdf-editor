@@ -16,7 +16,17 @@ impl Engine {
         items: &[PageItem],
         scale: f32,
     ) -> Result<ObjectPreview> {
+        self.object_preview_layers(doc, items, scale, None)
+    }
+
+    /// Render a bounded, higher-density foreground for interactive enlargement.
+    pub fn object_preview_sharp(&self, doc: &Document, items: &[PageItem], scale: f32, max_side: u32) -> Result<ObjectPreview> {
+        self.object_preview_layers(doc, items, scale, Some(max_side))
+    }
+
+    fn object_preview_layers(&self, doc: &Document, items: &[PageItem], scale: f32, max_side: Option<u32>) -> Result<ObjectPreview> {
         guarded(|| {
+            if max_side.is_some_and(|side| side==0 || side>16_384) {return Err(err("Invalid preview texture limit"));}
             let first = items.first().ok_or_else(|| err("Select an object first"))?;
             let selected: HashSet<_> = items.iter().map(|item| item.index).collect();
             if items.len() > 20000
@@ -31,7 +41,8 @@ impl Engine {
             let mut page = pdf.pages().get(i32::from(first.page))?;
             page.set_content_regeneration_strategy(PdfPageContentRegenerationStrategy::Manual);
             let config = render_config(&page, scale)?;
-            if page.width().value * page.height().value * scale * scale > 2_000_000. {
+            let width=(page.width().value * scale).ceil();let height=(page.height().value * scale).ceil();
+            if width * height > 2_000_000. || max_side.is_some_and(|side|width>side as f32 || height>side as f32) {
                 return Err(err("Drag preview exceeds limits"));
             }
             let count = page.objects().len();
@@ -82,8 +93,9 @@ impl Engine {
             drop(page);
             drop(pdf);
             let native = forms::NativeForm::open(self.raw, &doc.bytes, first.page)?;
-            let width = right - x;
-            let height = bottom - y;
+            let density = max_side.map_or(1,|side| ((2_000_000. / ((right-x) as f64 * (bottom-y) as f64)).sqrt().floor() as i32).min(side as i32/(right-x)).min(side as i32/(bottom-y)).clamp(1,8));
+            let width = (right - x) * density;
+            let height = (bottom - y) * density;
             let mut rgba = vec![0; width as usize * height as usize * 4];
             // Render the native display matrix without a form overlay. The wrapper's
             // matrix path ignores bitmap origins when form rendering is disabled.
@@ -109,10 +121,10 @@ impl Engine {
                 self.raw.FPDF_RenderPageBitmap(
                     bitmap,
                     native.page,
-                    -x,
-                    -y,
-                    background.width as i32,
-                    background.height as i32,
+                    -x * density,
+                    -y * density,
+                    background.width as i32 * density,
+                    background.height as i32 * density,
                     0,
                     0,
                 );

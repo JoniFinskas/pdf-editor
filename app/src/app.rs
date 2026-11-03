@@ -3797,9 +3797,9 @@ impl EditorApp {
                         && let Some(objects) = &page.objects
                         && let Some(item) = resize_handle.and(doc.selected_item.as_ref()).or(item_hit) {
                         let items = self.qol.items(objects,item);
-                        let preview_scale = wanted.min((1_900_000. / (page.info.width * page.info.height)).sqrt());
-                        if let Some(id) = self.drag_preview.plan(doc.generation,index,&items,preview_scale) {
-                            requests.push(Request::ObjectPreview {id,items,scale:preview_scale});
+                        let (preview_scale,max_side) = drag_preview::Preview::raster_scale(&ctx,page.info.width,page.info.height,wanted);
+                        if let Some(id) = self.drag_preview.plan(doc.generation,index,&items,preview_scale,max_side) {
+                            requests.push(Request::ObjectPreview {id,items,scale:preview_scale,max_side});
                         }
                     }
                     if response.drag_started() && can_drag {
@@ -3849,9 +3849,9 @@ impl EditorApp {
                                 maximum:sizes.iter().map(|s|1000./s).fold(f32::INFINITY,f32::min),
                                 size:sizes.iter().all(|s|(s-sizes[0]).abs()<0.01).then_some(sizes[0]),
                             }).filter(|font|font.minimum<=font.maximum);
-                            let preview_scale = wanted.min((1_900_000. / (page.info.width * page.info.height)).sqrt());
-                            if let Some(id) = self.drag_preview.plan(doc.generation,index,&items,preview_scale) {
-                                requests.push(Request::ObjectPreview {id,items:items.clone(),scale:preview_scale});
+                            let (preview_scale,max_side) = drag_preview::Preview::raster_scale(&ctx,page.info.width,page.info.height,wanted);
+                            if let Some(id) = self.drag_preview.plan(doc.generation,index,&items,preview_scale,max_side) {
+                                requests.push(Request::ObjectPreview {id,items:items.clone(),scale:preview_scale,max_side});
                             }
                             doc.dragging_item = Some(ItemDrag {
                                 page: index,

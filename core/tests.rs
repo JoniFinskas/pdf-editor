@@ -2637,6 +2637,30 @@ fn object_drag_preview_separates_real_ink_from_colored_background_without_mutati
                 .zip(&original.rgba)
                 .any(|(a, b)| a != b)
         );
+        let sharp=e.object_preview_sharp(&doc,std::slice::from_ref(&item),0.25,2048).unwrap();
+        let [sx,sy,sw,sh]=sharp.rect;
+        assert_eq!((sharp.foreground.width,sharp.foreground.height),(sw*8,sh*8));
+        assert!(sharp.foreground.width as u64*sharp.foreground.height as u64<=2_000_000);
+        // Compare isolated glyph pixels with the native 2x reference, not the
+        // intentionally lower-resolution background containing neighboring text.
+        let mut sharp_ink=0;
+        for row in 0..sharp.foreground.height {for col in 0..sharp.foreground.width {
+            let f=((row*sharp.foreground.width+col)*4) as usize;
+            let px=sx*8+col;let py=sy*8+row;
+            sharp_ink+=usize::from(sharp.foreground.rgba[f+3]>0);
+            if px>=x && px<x+width && py>=y && py<y+height {
+                let r=(((py-y)*width+px-x)*4) as usize;
+                assert_eq!(&sharp.foreground.rgba[f..f+4],&preview.foreground.rgba[r..r+4],"Sharp glyphs differ from native pixels: rotation={rotation}, pixel={col},{row}");
+            } else {assert_eq!(sharp.foreground.rgba[f+3],0,"Ink clipped by the reference rectangle");}
+        }}
+        assert!(sharp_ink>100);
+        let limited=e.object_preview_sharp(&doc,std::slice::from_ref(&item),0.125,128).unwrap();
+        assert!(limited.foreground.width<=128 && limited.foreground.height<=128);
+        assert!(limited.foreground.rgba.as_chunks::<4>().0.iter().any(|p|p[3]>0));
+        assert!(e.object_preview_sharp(&doc,std::slice::from_ref(&item),0.25,16).is_err());
+        assert!(e.object_preview_sharp(&doc,std::slice::from_ref(&item),0.25,0).is_err());
+        assert_eq!(doc.bytes,bytes);
+        assert!(!doc.can_undo());
         assert!(e.object_preview(&doc, &[], 2.).is_err());
         assert!(
             e.object_preview(&doc, &[item.clone(), item.clone()], 2.)

@@ -24,7 +24,7 @@ pub enum Request {
     New(pdf_editor_core::BlankPdf),
     CreateCv(pdf_editor_core::CvSpec),
     CheckCv,
-    ObjectPreview { id: u64, items: Vec<pdf_editor_core::PageItem>, scale: f32 },
+    ObjectPreview { id: u64, items: Vec<pdf_editor_core::PageItem>, scale: f32, max_side: u32 },
     RenderTiles {page:u16,scale:f32,regions:Vec<[u32;4]>},
     ComparisonSnapshot(u64),
     Characters(u16),
@@ -573,7 +573,7 @@ fn handle(state: &mut State, request: Request) -> Option<Reply> {
         }
         Request::CheckCv=>match engine.check_cv(state.doc.as_ref()?) {Ok(report)=>Some(Reply::CvChecked(report)),Err(error)=>failed(error)},
 
-        Request::ObjectPreview {id,items,scale} => Some(Reply::ObjectPreview {id,generation:state.generation,result:engine.object_preview(state.doc.as_ref()?,&items,scale)}),
+        Request::ObjectPreview {id,items,scale,max_side} => Some(Reply::ObjectPreview {id,generation:state.generation,result:engine.object_preview_sharp(state.doc.as_ref()?,&items,scale,max_side)}),
         Request::RenderTiles {page,scale,regions}=>{
             let doc=state.doc.as_ref()?;
             let images=engine.render_tiles(doc,page,scale,&regions).map(|images|regions.into_iter().zip(images).collect()).map_err(|e|e.to_string());

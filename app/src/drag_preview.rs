@@ -6,6 +6,7 @@ struct Key {
     page: usize,
     indices: Vec<usize>,
     scale: u32,
+    max_side: u32,
 }
 struct Layers {
     background: TextureHandle,
@@ -22,6 +23,10 @@ pub(super) struct Preview {
     handoff: Option<u64>,
 }
 impl Preview {
+    pub fn raster_scale(ctx:&Context,width:f32,height:f32,wanted:f32)->(f32,u32) {
+        let side=ctx.input(|i|i.max_texture_side).clamp(1,16_384) as u32;
+        (wanted.min((1_900_000./(width*height)).sqrt()).min(side as f32*0.99/width.max(height)),side)
+    }
     #[cfg(test)]
     pub fn ready(&self) -> bool {
         self.layers.is_some()
@@ -32,6 +37,7 @@ impl Preview {
         page: usize,
         items: &[pdf_editor_core::PageItem],
         scale: f32,
+        max_side: u32,
     ) -> Option<u64> {
         let mut indices = items.iter().map(|item| item.index).collect::<Vec<_>>();
         indices.sort_unstable();
@@ -40,6 +46,7 @@ impl Preview {
             page,
             indices,
             scale: scale.to_bits(),
+            max_side,
         };
         if self.key.as_ref() == Some(&key) {
             return None;
@@ -73,16 +80,19 @@ impl Preview {
         let bg = &preview.background;
         let fg = &preview.foreground;
         let [x, y, w, h] = preview.rect;
+        let max_side=ctx.input(|i|i.max_texture_side) as u64;
         if bg.width == 0
             || bg.height == 0
             || w == 0
             || h == 0
-            || fg.width != w
-            || fg.height != h
+            || fg.width < w || fg.height < h
+            || !fg.width.is_multiple_of(w) || !fg.height.is_multiple_of(h)
+            || fg.width / w != fg.height / h || fg.width / w > 8
             || x.checked_add(w).is_none_or(|right| right > bg.width)
             || y.checked_add(h).is_none_or(|bottom| bottom > bg.height)
             || [bg, fg].iter().any(|image| {
                 image.width as u64 * image.height as u64 > 2_000_000
+                    || image.width as u64 > max_side || image.height as u64 > max_side
                     || image.rgba.len() as u64 != image.width as u64 * image.height as u64 * 4
             })
         {
@@ -95,20 +105,20 @@ impl Preview {
                 (y + h) as f32 / bg.height as f32,
             ),
         );
-        let texture = |name, image: pdf_editor_core::Image| {
+        let texture = |name, image: pdf_editor_core::Image, options| {
             ctx.load_texture(
                 name,
                 egui::ColorImage::from_rgba_unmultiplied(
                     [image.width as usize, image.height as usize],
                     &image.rgba,
                 ),
-                TextureOptions::LINEAR,
+                options,
             )
         };
         self.layers = Some(Layers {
             source,
-            background: texture("drag-background", preview.background),
-            foreground: texture("drag-foreground", preview.foreground),
+            background: texture("drag-background", preview.background, TextureOptions::LINEAR),
+            foreground: texture("drag-foreground", preview.foreground, TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear))),
         });
     }
     pub fn place(&mut self, original: Rect, current: Rect) {
@@ -225,9 +235,9 @@ mod tests {
     fn stale_preview_replies_and_handoff_rasters_cannot_replace_current_layers() {
         let ctx = Context::default();
         let mut preview = Preview::default();
-        let id = preview.plan(1, 0, &[item()], 1.).unwrap();
-        assert!(preview.plan(1, 0, &[item()], 1.).is_none());
-        let newer = preview.plan(1, 0, &[item()], 2.).unwrap();
+        let id = preview.plan(1, 0, &[item()], 1.,2048).unwrap();
+        assert!(preview.plan(1, 0, &[item()], 1.,2048).is_none());
+        let newer = preview.plan(1, 0, &[item()], 2.,2048).unwrap();
         preview.receive(&ctx, id, 1, Ok(layers()));
         assert!(!preview.ready());
         preview.receive(&ctx, newer, 0, Ok(layers()));
@@ -249,10 +259,39 @@ mod tests {
         assert!(!preview.ready());
     }
     #[test]
+    fn high_density_foreground_keeps_its_page_coordinates_and_memory_limit() {
+        let ctx=Context::default();
+        let mut preview=Preview::default();
+        let id=preview.plan(1,0,&[item()],1.,2048).unwrap();
+        let mut data=layers();
+        data.foreground=pdf_editor_core::Image {width:32,height:16,rgba:vec![90;32*16*4]};
+        preview.receive(&ctx,id,1,Ok(data));
+        let loaded=preview.layers.as_ref().unwrap();
+        assert_eq!(loaded.foreground.size(),[32,16]);
+        assert_eq!(loaded.source,Rect::from_min_max(pos2(0.2,0.3),pos2(0.6,0.5)));
+        let texture=loaded.foreground.id();
+        preview.place(Rect::from_min_size(Pos2::ZERO,vec2(40.,20.)),Rect::from_min_size(pos2(20.,30.),vec2(160.,80.)));
+        assert_eq!(preview.layers.as_ref().unwrap().foreground.id(),texture);
+        let id=preview.plan(1,0,&[item()],2.,2048).unwrap();
+        let mut invalid=layers();invalid.foreground.width=2_000_001;
+        preview.receive(&ctx,id,1,Ok(invalid));assert!(!preview.ready());
+        let id=preview.plan(1,0,&[item()],2.,1024).unwrap();
+        let invalid=pdf_editor_core::ObjectPreview {
+            background:pdf_editor_core::Image {width:600,height:10,rgba:vec![0;600*10*4]},
+            foreground:pdf_editor_core::Image {width:2052,height:4,rgba:vec![0;2052*4*4]},rect:[0,0,513,1]
+        };
+        preview.receive(&ctx,id,1,Ok(invalid));assert!(!preview.ready());
+        let mut measured=None;
+        let mut output=ctx.run_ui(egui::RawInput {max_texture_side:Some(1024),..Default::default()},|_|measured=Some(Preview::raster_scale(&ctx,500.,300.,4.)));
+        output.textures_delta.clear();
+        let (scale,side)=measured.unwrap();assert_eq!(side,1024);
+        assert!((500.*scale).ceil()<=1024. && (300.*scale).ceil()<=1024.);
+    }
+    #[test]
     fn foreground_mesh_uses_current_frame_position_and_original_uvs() {
         let ctx = Context::default();
         let mut preview = Preview::default();
-        let id = preview.plan(1, 0, &[item()], 1.).unwrap();
+        let id = preview.plan(1, 0, &[item()], 1.,2048).unwrap();
         preview.receive(&ctx, id, 1, Ok(layers()));
         let foreground = preview.layers.as_ref().unwrap().foreground.id();
         preview.place(
