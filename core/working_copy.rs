@@ -55,6 +55,32 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn working_copy_parent_redirect_cannot_overwrite_the_original() {
+        use std::os::windows::process::CommandExt;
+        let root=Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let dir=root.join(format!("target/working-copy-parent-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let original=dir.join("original");let copies=dir.join("copies");let held=dir.join("held");
+        fs::create_dir_all(&original).unwrap();fs::create_dir(&copies).unwrap();
+        let bytes=fs::read(root.join("tests/fixtures/generated/unicode-cid.pdf")).unwrap();
+        let source=original.join("document.pdf");fs::write(&source,&bytes).unwrap();
+        let engine=Engine::new(&root.join("target/debug/pdfium.dll")).unwrap();
+        let mut doc=engine.open(&source).unwrap();
+        let mut copy=doc.create_working_copy(&copies.join("document.pdf"),"").unwrap();
+        assert_eq!(fs::read(copy.path()).unwrap(),bytes);
+        let selected=engine.text_objects(&doc,0).unwrap().remove(0);engine.edit(&mut doc,&selected,"AB").unwrap();
+        fs::rename(&copies,&held).unwrap();
+        let output=std::process::Command::new("powershell.exe").args(["-NoProfile","-NonInteractive","-Command","$ErrorActionPreference='Stop'; New-Item -ItemType Junction -Path $env:PDF_EDITOR_TEST_LINK -Value $env:PDF_EDITOR_TEST_TARGET | Out-Null"])
+            .env("PDF_EDITOR_TEST_LINK",&copies).env("PDF_EDITOR_TEST_TARGET",&original).creation_flags(0x08000000).output().unwrap();
+        assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
+        assert!(doc.update_working_copy(&mut copy).is_err(),"A redirected parent was accepted as the working copy");
+        assert_eq!(fs::read(&source).unwrap(),bytes);
+        assert_eq!(fs::read(held.join("document.pdf")).unwrap(),bytes);
+        fs::remove_dir(&copies).unwrap();
+        fs::remove_file(source).unwrap();fs::remove_file(held.join("document.pdf")).unwrap();
+        fs::remove_dir(original).unwrap();fs::remove_dir(held).unwrap();fs::remove_dir(dir).unwrap();
+    }
     #[test]
     fn working_copy_updates_refuse_external_changes_and_keep_original_bytes() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();

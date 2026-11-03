@@ -23,7 +23,12 @@ fn write_with(path: &Path, write: impl FnOnce(&mut fs::File) -> io::Result<()>) 
 }
 
 pub(crate) fn write_replacing(path: &Path, bytes: &[u8], expected: &[u8]) -> io::Result<()> {
-    transaction(path, |file| file.write_all(bytes), Some(expected))
+    let verify_path=|| {
+        if path.canonicalize()?!=path {return Err(io::Error::other("Working-copy path was redirected"));}
+        Ok(())
+    };
+    verify_path()?;
+    transaction_verified(path, |file| file.write_all(bytes), Some(expected), |_|verify_path())
 }
 
 fn verify_existing(path: &Path, expected: &[u8]) -> io::Result<()> {

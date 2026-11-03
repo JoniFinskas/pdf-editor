@@ -389,7 +389,7 @@ and belong only in private runtime storage.
 `Document::create_working_copy(path, password)` exclusively creates a new file
 and returns an opaque `WorkingCopy` token. `update_working_copy(&mut token)`
 atomically updates only that session-owned destination, checking its last written
-bytes and rejecting redirected files or detected external changes. Original
+bytes and rejecting redirected files or parent folders, or detected external changes. Original
 identity remains protected. The token retains encryption in memory; it is never
 serialized or persisted in session/recovery files.
 

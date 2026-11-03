@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Reject working-copy saves when a parent folder has been redirected.
+
 - Keep resized text previews sharp with bounded high-resolution foreground layers and mipmap filtering.
 - Drag document tabs to reorder them, with a moving preview, insertion marker and edge scrolling; preserve the active editing session.
 
