@@ -171,8 +171,12 @@ hold near an edge to scroll through tabs, or press Escape to cancel the drag.
   Choose Place signature, move its preview onto the desired page, then click.
   Escape cancels placement. Select the placed signature to drag or resize it.
   Signatures are flattened page graphics, not digital certificates.
-- Forms lists existing text, checkbox, radio and dropdown fields. Select a field,
-  edit its value, and Apply. JavaScript and external form actions are disabled.
+- Forms lists existing text, checkbox, radio and dropdown fields. Edit a value and
+  choose **Apply**; the undo arrow reverts that field's draft. Unchanged fields
+  keep their drafts when another field is applied or refreshed. Apply or revert
+  pending entries before saving or flattening. Closing the PDF warns about
+  unapplied entries; drafts stay in memory only. JavaScript and external form
+  actions are disabled.
 - Replace counts editable matches and replaces one or all while retaining the
   existing font where possible. Unsupported text mappings produce an error.
 - Encrypted PDFs prompt for a password. Save As optionally encrypts the new copy

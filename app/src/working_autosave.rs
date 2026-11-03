@@ -103,7 +103,7 @@ impl EditorApp {
         let Some(due)=self.file_save.observe(generation,now) else {return;};
         if now<due {ctx.request_repaint_after(std::time::Duration::from_secs_f64(due-now));return;}
         if !self.engine_alive || self.opening || self.busy>0 || self.pending_action.is_some() || self.confirm.is_some()
-            || self.file_save.suspended || self.picker.pending() || doc.copying || doc.applying.is_some() || doc.pending_edit.is_some()
+            || self.file_save.suspended || self.forms.has_drafts() || self.picker.pending() || doc.copying || doc.applying.is_some() || doc.pending_edit.is_some()
             || doc.dragging_item.is_some() || doc.edit.as_ref().is_some_and(|edit|edit.changed())
             || ctx.input(|i|i.pointer.any_down() || i.pointer.any_pressed() || i.pointer.any_released() || i.viewport().close_requested()) {return;}
         if self.qol.working_copy.as_ref().is_some_and(|path|self.recovery_destination(path)) {self.file_save.paused=true;return;}

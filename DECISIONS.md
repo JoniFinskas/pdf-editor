@@ -1,5 +1,21 @@
 # Engine decisions
 
+## Form drafts and current handles
+
+Refresh field handles after acknowledged document changes while the Forms panel
+is open. Keep a committed-value snapshot on refresh and a set of changed fields;
+draft checks are constant time and pointer frames do not clone field values.
+Preserve pending values only for unchanged, writable widgets with matching page,
+annotation index, name and unique PDF object identity. Changed or ambiguous
+identities use current document values and warn when an unapplied draft is reset.
+Clear all form state when opening another document.
+
+Keep field Apply disabled until its value changes, and offer Revert for pending
+entries. Include form drafts in the existing close warnings and modified markers,
+and defer saves until entries are applied or reverted. Selected form-design
+properties retain drafts across unrelated refreshes while their native handle
+receives the latest revision; document-side property changes take precedence.
+
 ## Opt-in working-copy auto-save
 
 Keep file auto-save separate from crash recovery and disabled until selected.

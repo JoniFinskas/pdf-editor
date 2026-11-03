@@ -75,12 +75,13 @@ fn forms_panel_replaces_previous_document_fields_and_loads_only_when_open() {
 #[test]
 fn tool_list_refreshes_are_limited_to_open_panels_and_changed_generations() {
     for changed in [false, true] {
-        for flags in 0..4 {
+        for flags in 0..8 {
             let ctx = Context::default();
             let (mut app, inbox, _outbox) = mock_app();
             opened(&mut app, &ctx);
             app.markup.open = flags & 1 != 0;
             app.pictures.open = flags & 2 != 0;
+            app.forms.open = flags & 4 != 0;
             app.handle(
                 &ctx,
                 Reply::Changed {
@@ -108,7 +109,12 @@ fn tool_list_refreshes_are_limited_to_open_panels_and_changed_generations() {
                     .count(),
                 usize::from(changed && app.pictures.open)
             );
+            assert_eq!(requests.iter().filter(|r|matches!(r,Request::FormFields)).count(),usize::from(changed && app.forms.open));
             assert_eq!(app.busy as usize, requests.len());
+            if app.forms.open {
+                app.busy=1;opened(&mut app,&ctx);
+                assert_eq!(inbox.try_iter().filter(|r|matches!(r,Request::FormFields)).count(),1,"Opening a document must enumerate form fields only once");
+            }
         }
     }
 }
@@ -368,4 +374,78 @@ fn repeated_extracts_wait_for_successful_edits_and_keep_failed_drafts_private() 
     }
     assert_eq!(std::fs::read(source).unwrap(), original);
     std::fs::remove_dir_all(folder).unwrap();
+}
+
+fn form_panel_frame(app:&mut EditorApp,ctx:&Context,events:Vec<egui::Event>)->egui::FullOutput {
+    app.poll(ctx);
+    let mut request=None;
+    let mut out=ctx.run_ui(egui::RawInput {screen_rect:Some(Rect::from_min_size(Pos2::ZERO,vec2(1000.,900.))),events,..Default::default()},|ui| {
+        let p=theme::palette(ui);egui::CentralPanel::default().show(ui,|_|{});
+        request=app.forms.show(ctx,&p,app.busy==0);
+    });out.textures_delta.clear();
+    if let Some(request)=request {app.document_action(request);}
+    out
+}
+fn form_panel_text_center(out:&egui::FullOutput,label:&str)->Pos2 {
+    out.shapes.iter().find_map(|s|match &s.shape {Shape::Text(t) if t.galley.text()==label=>Some(t.pos+t.galley.size()*0.5),_=>None}).unwrap_or_else(||panic!("Missing form text: {label}"))
+}
+fn form_panel_click(app:&mut EditorApp,ctx:&Context,at:Pos2) {
+    let button=|pressed|egui::Event::PointerButton {pos:at,pressed,button:egui::PointerButton::Primary,modifiers:Default::default()};
+    form_panel_frame(app,ctx,vec![egui::Event::PointerMoved(at),button(true)]);
+    form_panel_frame(app,ctx,vec![button(false)]);
+}
+#[test]
+fn generated_form_edits_keep_other_drafts_and_refresh_handles_after_apply() {
+    use pdf_editor_core::{Bounds,DesignFieldKind,FieldValue,FormDesignEdit,NewFormField};
+    let(mut app,ctx,source)=qol_worker();let original=std::fs::read(&source).unwrap();
+    for (i,name) in ["First field","Second field"].iter().enumerate() {
+        app.document_action(Request::DesignForm(FormDesignEdit::Add(NewFormField {page:0,name:(*name).into(),required:false,kind:DesignFieldKind::Text,
+            bounds:Bounds {left:36.,right:220.,bottom:100.+i as f32*45.,top:128.+i as f32*45.}})));
+        workflow_settle(&mut app,&ctx);
+    }
+    app.open_tool(Tool::Forms);workflow_settle(&mut app,&ctx);
+    let folder=recovery_safety_folder("form-multiple-drafts");let path=folder.join("working.pdf");
+    app.document_action(Request::SaveAs(path.clone()));workflow_settle(&mut app,&ctx);
+    let saved=std::fs::read(&path).unwrap();assert!(!TabbedApp::needs_warning(&app));
+    form_panel_frame(&mut app,&ctx,vec![]);form_panel_frame(&mut app,&ctx,vec![]);
+    let generation=app.doc.as_ref().unwrap().generation;
+    let out=form_panel_frame(&mut app,&ctx,vec![]);let apply=form_panel_text_center(&out,"Apply");
+    form_panel_click(&mut app,&ctx,apply);assert_eq!(app.busy,0);assert_eq!(app.doc.as_ref().unwrap().generation,generation);
+    for (name,value) in [("First field","First entry"),("Second field","Second draft")] {
+        let out=form_panel_frame(&mut app,&ctx,vec![]);
+        let at=form_panel_text_center(&out,name)+vec2(70.,31.);
+        form_panel_click(&mut app,&ctx,at);
+        form_panel_frame(&mut app,&ctx,vec![egui::Event::Text(value.into())]);
+        assert_eq!(app.forms.fields.iter().find(|f|f.name==name).unwrap().value,FieldValue::Text(value.into()));
+    }
+    assert!(app.forms.has_drafts());assert!(TabbedApp::needs_warning(&app));assert!(!app.doc.as_ref().unwrap().dirty());
+    let blocked=folder.join("unfinished.pdf");app.document_action(Request::SaveAs(blocked.clone()));
+    assert_eq!(app.busy,0);assert!(!blocked.exists());
+    app.file_save.configure(working_autosave::Mode::AfterEdits);
+    let old_revision=app.forms.fields[0].revision;
+    let out=form_panel_frame(&mut app,&ctx,vec![]);let at=form_panel_text_center(&out,"Apply");
+    form_panel_click(&mut app,&ctx,at);workflow_settle(&mut app,&ctx);
+    let fresh=app.forms.fields[0].revision>old_revision;
+    working_auto_frame(&mut app,&ctx,30.);working_auto_frame(&mut app,&ctx,32.);
+    assert!(app.file_save.in_flight.is_none());assert_eq!(std::fs::read(&path).unwrap(),saved);
+    app.document_action(Request::FormFields);workflow_settle(&mut app,&ctx);
+    assert_eq!((fresh,app.forms.fields[1].value.clone()),(true,FieldValue::Text("Second draft".into())),"Applying one field must retain other drafts and refresh native handles");
+    let second=app.forms.fields[1].clone();app.document_action(Request::FillField(second.clone(),second.value));workflow_settle(&mut app,&ctx);
+    assert!(!app.forms.has_drafts());
+    app.document_action(Request::SaveWorkingCopy);workflow_settle(&mut app,&ctx);assert!(!TabbedApp::needs_warning(&app));
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let engine=pdf_editor_core::Engine::new(&root.join("target/debug/pdfium.dll")).unwrap();
+    let fields=engine.form_fields(&engine.open(&path).unwrap()).unwrap();
+    assert_eq!(fields[0].value,FieldValue::Text("First entry".into()));assert_eq!(fields[1].value,FieldValue::Text("Second draft".into()));
+    app.undo();workflow_settle(&mut app,&ctx);assert_eq!(app.forms.fields[1].value,FieldValue::Text(String::new()));
+    app.redo();workflow_settle(&mut app,&ctx);assert_eq!(app.forms.fields[1].value,FieldValue::Text("Second draft".into()));
+    assert!(!TabbedApp::needs_warning(&app));
+    form_panel_frame(&mut app,&ctx,vec![]);let out=form_panel_frame(&mut app,&ctx,vec![]);
+    let at=form_panel_text_center(&out,"First field")+vec2(70.,31.);form_panel_click(&mut app,&ctx,at);
+    form_panel_frame(&mut app,&ctx,vec![workflow_key(Key::A,egui::Modifiers::COMMAND)]);
+    form_panel_frame(&mut app,&ctx,vec![egui::Event::Text("Discard this draft".into())]);assert!(app.forms.has_drafts());
+    form_panel_frame(&mut app,&ctx,vec![]);
+    let at=ctx.read_response(widgets::tool_id("form-revert-0-0")).unwrap().rect.center();form_panel_click(&mut app,&ctx,at);
+    assert_eq!(app.forms.fields[0].value,FieldValue::Text("First entry".into()));assert!(!app.forms.has_drafts());assert!(!TabbedApp::needs_warning(&app));
+    assert_eq!(std::fs::read(source).unwrap(),original);std::fs::remove_file(path).unwrap();std::fs::remove_dir(folder).unwrap();
 }

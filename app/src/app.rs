@@ -319,7 +319,7 @@ impl TabbedApp {
         self.active = self.tabs.len() - 1;
     }
     fn needs_warning(tab: &EditorApp) -> bool {
-        tab.busy > 0 || tab.file_save.in_flight.is_some()
+        tab.busy > 0 || tab.file_save.in_flight.is_some() || tab.forms.has_drafts()
             || tab.doc.as_ref().is_some_and(|d| {
                 d.dirty() || d.edit.as_ref().is_some_and(|e| e.changed())
             })
@@ -1050,7 +1050,7 @@ impl EditorApp {
             return;
         }
         let committed = self.commit_edit();
-        if committed || self.busy > 0 || self.file_save.in_flight.is_some() || self.doc.as_ref().is_some_and(|d| d.dirty() || d.edit.as_ref().is_some_and(|e|e.changed())) {
+        if committed || self.busy > 0 || self.file_save.in_flight.is_some() || self.forms.has_drafts() || self.doc.as_ref().is_some_and(|d| d.dirty() || d.edit.as_ref().is_some_and(|e|e.changed())) {
             self.confirm = Some(Pending::Open(path));
         } else {
             self.open_dialog_or_path(path);
@@ -1127,6 +1127,9 @@ impl EditorApp {
             Request::Split(_,folder)|Request::SplitBookmarks(folder)|Request::ExportImages(_,_,_,folder) => self.recovery_destination(&folder.join("output")),
             _ => false,
         };
+        if self.forms.has_drafts() && matches!(request,Request::SaveAs(..)|Request::SavePassword(..)|Request::SaveWorkingCopy|Request::ExportSanitized(..)) {
+            self.banner(BannerKind::Warning,"Apply or revert the form fields before saving.");return;
+        }
         if reserved {
             self.banner(BannerKind::Warning,"Choose a folder outside recovery storage.");
             return;
@@ -1184,6 +1187,7 @@ impl EditorApp {
             (self.markup.open && !self.markup.links_mode, Request::Annotations),
             (self.markup.open && self.markup.links_mode, Request::Links),
             (self.pictures.open, Request::Pictures),
+            (self.forms.open, Request::FormFields),
         ] {
             if open {
                 self.busy += 1;
@@ -1481,8 +1485,7 @@ impl EditorApp {
             }
             Reply::FormFields(fields, designed) => {
                 self.busy = self.busy.saturating_sub(1);
-                self.forms.fields = fields;
-                self.forms.designer.refresh(designed);
+                if self.forms.receive(fields,designed)>0 {self.banner(BannerKind::Warning,"Some form drafts were reset after the fields changed.");}
                 self.forms.designer.page_sizes = self
                     .doc
                     .as_ref()
@@ -1662,13 +1665,8 @@ impl EditorApp {
                 self.markup.selected = None;
                 self.pictures.items.clear();
                 self.pictures.selected = None;
+                self.forms.reset_document();
                 self.refresh_tool_lists();
-                self.forms.fields.clear();
-                self.forms.designer = Default::default();
-                if self.forms.open {
-                    self.busy += 1;
-                    self.send(Request::FormFields);
-                }
             }
             Reply::Rendered {
                 generation,
@@ -2603,7 +2601,7 @@ impl EditorApp {
             return;
         }
         let committed = self.commit_edit();
-        if committed || self.busy > 0 || self.file_save.in_flight.is_some() || self.doc.as_ref().is_some_and(|d| d.dirty() || d.edit.as_ref().is_some_and(|e|e.changed())) {
+        if committed || self.busy > 0 || self.file_save.in_flight.is_some() || self.forms.has_drafts() || self.doc.as_ref().is_some_and(|d| d.dirty() || d.edit.as_ref().is_some_and(|e|e.changed())) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.confirm = Some(Pending::Close);
         }
@@ -2611,7 +2609,7 @@ impl EditorApp {
 
     fn update_title(&mut self, ctx: &Context) {
         let title = match &self.doc {
-            Some(doc) if doc.dirty() => format!("• {} — PDF Editor", doc.name),
+            Some(doc) if doc.dirty() || self.forms.has_drafts() => format!("• {} — PDF Editor", doc.name),
             Some(doc) => format!("{} — PDF Editor", doc.name),
             None => "PDF Editor".to_string(),
         };
@@ -2825,7 +2823,7 @@ impl EditorApp {
                     ui.add(egui::Label::new(name).truncate())
                         .on_hover_text(shown_path(&doc.source));
                 });
-                if doc.dirty() {
+                if doc.dirty() || self.forms.has_drafts() {
                     ui.add_space(6.0);
                     widgets::dot(ui, p.accent_strong);
                     ui.label(RichText::new("Edited").size(13.5).color(p.muted));

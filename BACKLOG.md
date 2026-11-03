@@ -22,6 +22,10 @@ CHANGELOG.md when it ships, and record design choices in DECISIONS.md.
 
 ## Current limitations
 
+Unapplied form drafts survive refresh for unchanged, uniquely identified widgets.
+Replaced or ambiguous fields can reset drafts with a warning; review the form
+after structural changes.
+
 Paragraph reflow infers wrapping from visual rows. Mixed styles and angled text
 retain line editing; reflow does not move neighboring content or repaginate it.
 

@@ -35,12 +35,12 @@ impl Default for Designer {
 }
 impl Designer {
     pub fn refresh(&mut self, fields: Vec<DesignedField>) {
-        if let Some(selected) = &self.selected {
+        if let Some(selected) = self.selected.take() {
             self.selected = fields.iter().find(|field| field.id == selected.id).cloned();
             if let Some(field) = &self.selected {
-                self.name = field.name.clone();
-                self.required = field.required;
-                self.bounds = field.bounds;
+                if self.name==selected.name || field.name!=selected.name {self.name=field.name.clone();}
+                if self.required==selected.required || field.required!=selected.required {self.required=field.required;}
+                if self.bounds==selected.bounds || field.bounds!=selected.bounds {self.bounds=field.bounds;}
                 self.page = field.page + 1;
             }
         }
@@ -314,5 +314,33 @@ mod tests {
         assert!(d.bounds.bottom < before.bottom);
         assert_eq!(d.bounds.left, before.left);
         assert_eq!(d.bounds.top, before.top);
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+    #[test]
+    fn form_designer_refresh_preserves_drafts_and_uses_fresh_apply_handles() {
+        let field=DesignedField {id:(7,0),revision:1,page:0,name:"Generated field".into(),required:false,
+            bounds:Bounds {left:36.,right:220.,bottom:100.,top:128.},kind:"Text".into()};
+        let mut designer=Designer {selected:Some(field.clone()),name:"Draft name".into(),required:true,
+            bounds:Bounds {right:240.,..field.bounds},..Default::default()};
+        let mut current=field.clone();current.revision=2;designer.refresh(vec![current.clone()]);
+        assert_eq!(designer.name,"Draft name");assert!(designer.required);assert_eq!(designer.bounds.right,240.);
+        let ctx=egui::Context::default();crate::theme::install(&ctx);let mut request=None;
+        let mut frame=|designer:&mut Designer,events| {
+            let mut out=ctx.run_ui(egui::RawInput {screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(700.,750.))),events,..Default::default()},|ui| {
+                let p=crate::theme::palette(ui);egui::CentralPanel::default().show(ui,|ui|request=designer.show(ui,&p,true));
+            });out.textures_delta.clear();out
+        };
+        frame(&mut designer,vec![]);let out=frame(&mut designer,vec![]);
+        let at=out.shapes.iter().find_map(|s|match &s.shape {egui::Shape::Text(t) if t.galley.text()=="Apply field"=>Some(t.pos+t.galley.size()*0.5),_=>None}).unwrap();
+        let button=|pressed|egui::Event::PointerButton {pos:at,pressed,button:egui::PointerButton::Primary,modifiers:Default::default()};
+        frame(&mut designer,vec![egui::Event::PointerMoved(at),button(true)]);frame(&mut designer,vec![button(false)]);
+        assert!(matches!(request,Some(Request::DesignForm(FormDesignEdit::Update {field,name,required:true,bounds})) if field.revision==2 && name=="Draft name" && bounds.right==240.));
+        current.name="Changed in document".into();current.required=true;current.bounds.right=260.;current.revision=3;
+        designer.refresh(vec![current]);assert_eq!(designer.name,"Changed in document");assert_eq!(designer.bounds.right,260.);
+        designer.refresh(vec![]);assert!(designer.selected.is_none());
     }
 }

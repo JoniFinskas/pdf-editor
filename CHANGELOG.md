@@ -4,6 +4,9 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Refresh form handles after edits and keep drafts for unchanged fields; protect unapplied entries when saving or closing, and add a per-field revert action.
+- Keep form-design name and geometry drafts across unrelated refreshes; disable unchanged field updates to avoid redundant PDF writes.
+
 - Add optional local auto-save for session-owned working copies, with a two-second edit delay or minute intervals; preserve originals, encryption and unfinished drafts.
 - Reject working-copy saves when a parent folder has been redirected.
 
