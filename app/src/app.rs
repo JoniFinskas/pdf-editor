@@ -222,7 +222,7 @@ pub struct TabbedApp {
     allow_exit: bool,
     instance: Option<crate::instance::Instance>,
     merge_tab: Option<u64>,
-    dragging_tab: Option<(u64, Vec2)>,
+    dragging_tab: Option<tab_drag::TabDrag>,
 }
 impl TabbedApp {
     pub fn with_native_guard(mut self, guard: Option<Box<dyn FnMut()>>) -> Self {
@@ -5096,74 +5096,6 @@ fn recent_row(
     } else {
         response
     }
-}
-
-/// One tab's interaction response and whether its close button was clicked.
-fn document_tab(ui: &mut Ui, p: &Palette, name: &str, active: bool, edited: bool) -> (egui::Response, bool) {
-    const HEIGHT: f32 = 34.0;
-    const CLOSE: f32 = 22.0;
-    let mut job = egui::text::LayoutJob::single_section(
-        name.to_string(),
-        egui::TextFormat::simple(FontId::proportional(13.5), Color32::PLACEHOLDER),
-    );
-    job.wrap = egui::text::TextWrapping::truncate_at_width(180.0);
-    let galley = ui.painter().layout_job(job);
-    let width = 12.0 + 16.0 + 8.0 + galley.size().x + 8.0 + CLOSE + 8.0;
-    let (rect, response) = ui.allocate_exact_size(vec2(width, HEIGHT), Sense::click_and_drag());
-    response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, active, name));
-    let hot = ui.rect_contains_pointer(rect);
-    let painter = ui.painter();
-    let top = CornerRadius {
-        nw: 8,
-        ne: 8,
-        sw: 0,
-        se: 0,
-    };
-    if active {
-        painter.rect_filled(rect, top, p.chrome);
-        painter.rect_filled(
-            Rect::from_min_size(rect.left_top(), vec2(rect.width(), 2.0)),
-            top,
-            p.accent,
-        );
-    } else if hot {
-        painter.rect_filled(rect, top, p.hover);
-    }
-    let icon = Rect::from_min_size(
-        pos2(rect.left() + 12.0, rect.center().y - 8.0),
-        vec2(16.0, 16.0),
-    );
-    crate::icons::paint(
-        painter,
-        icon,
-        Icon::File,
-        if active { p.accent_strong } else { p.muted },
-    );
-    painter.galley(
-        pos2(icon.right() + 8.0, rect.center().y - galley.size().y / 2.0),
-        galley,
-        if active { p.text } else { p.muted },
-    );
-    let close_rect = Rect::from_min_size(
-        pos2(rect.right() - 8.0 - CLOSE, rect.center().y - CLOSE / 2.0),
-        vec2(CLOSE, CLOSE),
-    );
-    // Edited documents show a dot in place of the close button until the
-    // pointer is over the tab.
-    let closed = if edited && !hot {
-        painter.circle_filled(close_rect.center(), 4.0, p.accent_strong);
-        false
-    } else {
-        ui.scope_builder(egui::UiBuilder::new().max_rect(close_rect), |ui| {
-            Btn::icon(Icon::Close)
-                .height(CLOSE)
-                .tip("Close tab")
-                .show(ui, p)
-                .clicked()
-        })
-        .inner
-    };
-    (response, closed)
 }
 
 /// Path for display, without the `\\?\` prefix of canonicalized Windows paths.

@@ -1319,3 +1319,7 @@ Use cached, exact serde_json 1.0.150 instead of implementing JSON parsing. Its t
 ## Creation draft validation and section state
 
 Reuse core CV and blank-page validation before desktop submission so invalid drafts stay in their builder and do not open empty tabs. Landscape normalizes to wide dimensions only when requested; explicit wide dimensions are not swapped back to portrait. Use stable local section IDs across reorder/removal and a contextual last-removal restore action to retain text-editor history with its content. The command `status` exposes current document/save authority metadata with workspace-relative paths and no passwords. Font/layout failures reopen the entered creation draft and retain their own error or cancellation message instead of a file-open error. No CV draft file is persisted automatically.
+
+## Document tab placement
+
+Keep document sessions in their existing order until a valid drop, preserving the active session by ID. Show one pointer-bound tab and a full-width destination gap; translate neighboring tabs over at most 120 ms using native cubic-out easing. Respect a zero native animation duration. Determine slot boundaries from fixed tab widths and the original grab offset, with a four-point tolerance to prevent boundary jitter. Accept empty space at either end of the strip and resolve release coordinates before later pointer events. Cancel interrupted gestures without changing document order. Tab motion uses cached text layout and performs no PDF rendering or worker operations.

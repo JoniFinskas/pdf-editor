@@ -1,5 +1,149 @@
 // Real worker/PDFium integration driven through egui pointer and keyboard events.
 // All files and configuration belong to generated test sessions.
+fn tab_drag_fixture() -> (TabbedApp, Context) {
+    let ctx=Context::default();theme::install(&ctx);
+    let tabs=["A.pdf","A much longer generated document.pdf","C.pdf"].into_iter().enumerate().map(|(id,name)| {
+        let (mut tab,_,_)=mock_app();opened(&mut tab,&ctx);
+        tab.doc.as_mut().unwrap().name=name.into();
+        (id as u64,tab)
+    }).collect();
+    (TabbedApp {sessions:Default::default(),native_guard:None,clipboard:Default::default(),tabs,active:1,next_id:3,closing:None,allow_exit:false,instance:None,merge_tab:None,dragging_tab:None},ctx)
+}
+
+fn tab_drag_frame(app:&mut TabbedApp,ctx:&Context,events:Vec<egui::Event>)->egui::FullOutput {
+    let mut out=ctx.run_ui(egui::RawInput {screen_rect:Some(Rect::from_min_size(Pos2::ZERO,vec2(800.,600.))),events,..Default::default()},|ui| {
+        let p=theme::palette(ui);assert_eq!(app.tab_bar(ui,&p),(None,None,false));
+        egui::CentralPanel::default().show(ui,|_|{});
+    });
+    out.textures_delta.clear();out
+}
+
+fn tab_label(out:&egui::FullOutput,name:&str)->Rect {
+    out.shapes.iter().find_map(|s|match &s.shape {
+        Shape::Text(t) if t.galley.text()==name=>Some(Rect::from_min_size(t.pos,t.galley.size())),_=>None
+    }).unwrap()
+}
+
+#[test]
+fn document_tab_drag_tracks_pointer_with_a_single_preview_and_stable_landing_gap() {
+    let (mut app,ctx)=tab_drag_fixture();
+    tab_drag_frame(&mut app,&ctx,vec![]);
+    let out=tab_drag_frame(&mut app,&ctx,vec![]);
+    let a=tab_label(&out,"A.pdf");let b=tab_label(&out,"A much longer generated document.pdf");
+    let start=a.center()-vec2(8.,0.);
+    tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start),gesture_button(start,true)]);
+    let pointer=start+vec2(180.,8.);
+    let out=tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(pointer)]);
+    assert_eq!(out.shapes.iter().filter(|s|matches!(&s.shape,Shape::Text(t) if t.galley.text()=="A.pdf")).count(),1,"The original tab must become a landing gap, not a duplicate label");
+    let preview=tab_label(&out,"A.pdf");
+    assert!((preview.left()-a.left()-180.).abs()<0.1,"The tab must follow the pointer without easing");
+    assert!((preview.top()-a.top()).abs()<0.1,"The dragged tab must stay in its row");
+    for _ in 0..20 {tab_drag_frame(&mut app,&ctx,vec![]);}
+    let out=tab_drag_frame(&mut app,&ctx,vec![]);
+    assert!(tab_label(&out,"A much longer generated document.pdf").left()<b.left()-50.,"Neighbors must make room for the landing tab");
+    assert_eq!(app.tabs.iter().map(|t|t.0).collect::<Vec<_>>(),[0,1,2],"Preview must not reorder document sessions");
+    let gap=out.shapes.iter().find_map(|s|match &s.shape {
+        Shape::Rect(r) if r.rect.height()==34. && r.stroke.width==1.0=>Some(r.rect),_=>None
+    }).expect("A full-width landing gap must show the destination");
+    assert!(gap.width()>90.);
+    // Drop into the spacing next to the gap: the target must not disappear.
+    let drop=pos2(gap.left()-1.,start.y);
+    tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(drop),gesture_button(drop,false)]);
+    assert_eq!(app.tabs.iter().map(|t|t.0).collect::<Vec<_>>(),[1,0,2]);
+    assert_eq!(app.tabs[app.active].0,1);
+    assert!(app.dragging_tab.is_none());
+}
+
+fn tab_landing_gap(out:&egui::FullOutput)->Rect {
+    out.shapes.iter().find_map(|s|match &s.shape {
+        Shape::Rect(r) if r.rect.height()==34. && r.stroke.width==1.0=>Some(r.rect),_=>None
+    }).expect("The tab destination must stay visible")
+}
+
+#[test]
+fn document_tab_drag_accepts_empty_end_space_and_settles_at_the_shown_slot() {
+    for count in [1,3] {
+        let (mut app,ctx)=tab_drag_fixture();app.tabs.truncate(count);app.active=0;
+        tab_drag_frame(&mut app,&ctx,vec![]);
+        let out=tab_drag_frame(&mut app,&ctx,vec![]);
+        let label=tab_label(&out,"A.pdf");let start=label.center();
+        let end=pos2(760.,start.y);
+        tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start),gesture_button(start,true)]);
+        let out=tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(end)]);
+        let gap=tab_landing_gap(&out);
+        tab_drag_frame(&mut app,&ctx,vec![gesture_button(end,false)]);
+        assert_eq!(app.tabs.iter().map(|t|t.0).collect::<Vec<_>>(),if count==1 {vec![0]} else {vec![1,2,0]});
+        assert_eq!(app.tabs[app.active].0,0);
+        assert!(app.dragging_tab.is_none());
+        for _ in 0..20 {tab_drag_frame(&mut app,&ctx,vec![]);}
+        let out=tab_drag_frame(&mut app,&ctx,vec![]);
+        let settled=tab_label(&out,"A.pdf");
+        assert!((settled.left()-gap.left()-36.).abs()<0.1,"The tab must settle exactly inside the displayed gap");
+        assert_eq!(settled.size(),label.size(),"Dragging must preserve label quality and size");
+    }
+}
+
+#[test]
+fn document_tab_drag_snaps_consistently_from_either_grab_edge_without_jitter() {
+    for grab_left in [true,false] {
+        let (mut app,ctx)=tab_drag_fixture();
+        // The same drop behavior must work with native animations disabled.
+        ctx.global_style_mut(|s|s.animation_time=0.);
+        tab_drag_frame(&mut app,&ctx,vec![]);
+        let out=tab_drag_frame(&mut app,&ctx,vec![]);
+        let a=tab_label(&out,"A.pdf");let b=tab_label(&out,"A much longer generated document.pdf");let c=tab_label(&out,"C.pdf");
+        let start=pos2(if grab_left {a.left()-20.} else {a.right()+4.},a.center().y);
+        let tab_left=a.left()-36.;let offset=tab_left-start.x;
+        let step=c.left()-b.left();
+        let boundary=tab_left+step*0.5-offset;
+        tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start),gesture_button(start,true)]);
+        let pointer=pos2(boundary+8.,start.y);
+        let out=tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(pointer)]);
+        let gap=tab_landing_gap(&out);
+        assert!((gap.left()-tab_left-step).abs()<0.1);
+        assert!((tab_label(&out,"A much longer generated document.pdf").left()-a.left()).abs()<0.1,"Reduced motion must move neighbors straight to the destination");
+        for delta in [-1.,1.,-2.,2.,0.] {
+            let out=tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(pos2(boundary+delta,start.y))]);
+            assert_eq!(tab_landing_gap(&out),gap,"Tiny pointer movement must not flip slots");
+        }
+        let pointer=pos2(boundary-8.,start.y);
+        let out=tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(pointer)]);
+        assert!((tab_landing_gap(&out).left()-tab_left).abs()<0.1);
+        let pointer=pos2(boundary+8.,start.y);
+        tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(pointer),gesture_button(pointer,false)]);
+        assert_eq!(app.tabs.iter().map(|t|t.0).collect::<Vec<_>>(),[1,0,2]);
+        assert_eq!(app.tabs[app.active].0,1);
+    }
+}
+
+#[test]
+fn document_tab_drag_cancels_on_capture_loss_and_uses_the_first_release_position() {
+    for cancel in [egui::Event::PointerGone,egui::Event::WindowFocused(false),workflow_key(Key::Escape,Default::default())] {
+        let (mut app,ctx)=tab_drag_fixture();
+        tab_drag_frame(&mut app,&ctx,vec![]);
+        let out=tab_drag_frame(&mut app,&ctx,vec![]);
+        let start=tab_label(&out,"A.pdf").center();let end=tab_label(&out,"C.pdf").center();
+        tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start),gesture_button(start,true)]);
+        tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(end)]);
+        assert!(app.dragging_tab.is_some());
+        tab_drag_frame(&mut app,&ctx,vec![cancel]);
+        assert!(app.dragging_tab.is_none());
+        tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(end),gesture_button(end,false)]);
+        assert_eq!(app.tabs.iter().map(|t|t.0).collect::<Vec<_>>(),[0,1,2]);
+    }
+    let (mut app,ctx)=tab_drag_fixture();
+    tab_drag_frame(&mut app,&ctx,vec![]);
+    let out=tab_drag_frame(&mut app,&ctx,vec![]);
+    let start=tab_label(&out,"A.pdf").center();let end=tab_label(&out,"C.pdf").center();
+    tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start),gesture_button(start,true)]);
+    tab_drag_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(end)]);
+    // The release point wins over the later click's hover position.
+    tab_drag_frame(&mut app,&ctx,vec![gesture_button(start,false),egui::Event::PointerMoved(end),gesture_button(end,true)]);
+    assert_eq!(app.tabs.iter().map(|t|t.0).collect::<Vec<_>>(),[0,1,2]);
+    assert!(app.dragging_tab.is_none());
+    assert_eq!(app.tabs[app.active].0,1);
+}
+
 #[test]
 fn document_tabs_drag_in_both_directions_without_switching_or_mutating_sessions() {
     let ctx=Context::default();theme::install(&ctx);
@@ -71,6 +215,11 @@ fn document_tabs_drag_in_both_directions_without_switching_or_mutating_sessions(
     let (mut out,_)=frame(&mut app,vec![egui::Event::PointerMoved(edge)]);
     for _ in 0..60 {out=frame(&mut app,vec![]).0;}
     assert!(last_visible(&out)>old_visible,"Dragging at the edge did not reveal more tabs");
+    let right_visible=last_visible(&out);
+    let left=pos2(10.,start.y);
+    frame(&mut app,vec![egui::Event::PointerMoved(left)]);
+    for _ in 0..60 {out=frame(&mut app,vec![]).0;}
+    assert!(last_visible(&out)<right_visible,"Dragging back to the left must reveal earlier tabs");
     let outside=pos2(500.,300.);
     frame(&mut app,vec![egui::Event::PointerMoved(outside),button(outside,false)]);
     assert_eq!(app.tabs.iter().map(|t|t.0).collect::<Vec<_>>(),(0..32).collect::<Vec<_>>());
