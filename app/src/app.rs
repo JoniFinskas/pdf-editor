@@ -17,6 +17,8 @@ mod affine_edit;
 mod drag_preview;
 #[path = "tab_drag.rs"]
 mod tab_drag;
+#[path = "object_drag.rs"]
+mod object_drag;
 #[path = "working_autosave.rs"]
 mod working_autosave;
 #[path = "font_readout.rs"]
@@ -304,6 +306,7 @@ impl TabbedApp {
         ctx.send_viewport_cmd(ViewportCommand::Focus);
     }
     fn add(&mut self, ctx: &Context, path: Option<PathBuf>) {
+        if let Some((_,tab))=self.tabs.get_mut(self.active) {tab.cancel_item_drag();}
         if self.tabs.len() >= 32 {
             self.tabs[self.active].1.banner(
                 BannerKind::Error,
@@ -359,6 +362,7 @@ impl eframe::App for TabbedApp {
         self.sync_working_auto_save(&ctx);
         for (index, (_, tab)) in self.tabs.iter_mut().enumerate() {
             if index != self.active {
+                tab.cancel_item_drag();
                 tab.poll(&ctx);
                 tab.working_auto_save_tick(&ctx);
                 tab.autosave_tick(&ctx);
@@ -373,6 +377,7 @@ impl eframe::App for TabbedApp {
         }
         let (select, close, new) = self.tab_bar(ui, &p);
         if let Some(index) = select.and_then(|id|self.tabs.iter().position(|(key,_)|*key==id)) {
+            self.tabs[self.active].1.cancel_item_drag();
             self.tabs[self.active].1.commit_edit();
             self.active = index;
             self.tabs[index].1.title.clear();
@@ -724,6 +729,10 @@ fn selection_item(objects: &PageObjects, item: &pdf_editor_core::PageItem) -> pd
 
 struct ItemDrag {
     page: usize,
+    page_rect: Rect,
+    page_bounds: Rect,
+    scale: f32,
+    transform: PageTransform,
     items: Vec<pdf_editor_core::PageItem>,
     bounds: Rect,
     delta: Vec2,
@@ -1118,6 +1127,7 @@ impl EditorApp {
     /// Run document actions only after preceding edits have succeeded.
     /// A rejected edit cancels the intent instead of using an older version.
     fn document_action(&mut self, request: Request) {
+        self.cancel_item_drag();
         if !self.engine_alive { return; }
         let reserved = match &request {
             Request::SaveAs(path)|Request::SavePassword(path,_)|Request::ExportSanitized(_,path)
@@ -1197,6 +1207,7 @@ impl EditorApp {
     }
 
     fn undo(&mut self) {
+        if self.cancel_item_drag() {return;}
         // With uncommitted typing, Undo discards the typing only.
         if self
             .doc
@@ -1215,6 +1226,7 @@ impl EditorApp {
     }
 
     fn redo(&mut self) {
+        if self.cancel_item_drag() {return;}
         if self.busy == 0 && self.doc.as_ref().is_some_and(|d| d.can_redo) {
             self.cancel_edit();
             self.busy += 1;
@@ -3275,6 +3287,7 @@ impl EditorApp {
 
     fn canvas(&mut self, ui: &mut Ui, p: &Palette) {
         let ctx = ui.ctx().clone();
+        self.update_item_drag(&ctx);
         let surface_ready = self.surface.ready(&ctx);
         let ppp = ctx.pixels_per_point();
         let canvas_rect = ui.max_rect();
@@ -3297,11 +3310,6 @@ impl EditorApp {
         let busy = self.busy > 0;
         self.tool_anchor = None;
         let Some(doc) = &mut self.doc else { return };
-        if doc.dragging_item.is_some() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE,Key::Escape)) {
-            doc.dragging_item = None;
-            doc.panning = false;
-            self.drag_preview.cancel();
-        }
         if pointer.is_some_and(|pos| canvas_rect.contains(pos))
             && ctx.input(|i| i.events.iter().any(|event| matches!(event, egui::Event::MouseWheel { .. })) || i.pointer.is_decidedly_dragging()) {
             doc.explicit_page = None;
@@ -3428,6 +3436,7 @@ impl EditorApp {
                 y += size.y + PAGE_GAP;
                 let rect = round_rect(local.translate(origin.to_vec2()), ppp);
                 page_rects.push(rect);
+                if let Some(drag)=doc.dragging_item.as_mut().filter(|drag|drag.page==index) {drag.page_rect=rect;drag.scale=scale;}
                 if doc.explicit_page.is_none() && local.min.y <= center_y {
                     doc.current_page = index;
                 }
@@ -3571,6 +3580,7 @@ impl EditorApp {
                     doc.panning=false;doc.dragging_item=None;
                     continue;
                 }
+                let mut response_handle=None;
                 // Separate hit targets keep handles usable just outside page edges.
                 if !busy
                     && doc.object_mode
@@ -3586,14 +3596,14 @@ impl EditorApp {
                             Id::new(("object-resize", index, handle)),
                             Sense::click_and_drag(),
                         );
-                        if handle_response.hovered()
-                            || handle_response.dragged()
-                            || handle_response.drag_stopped()
-                            || handle_response.is_pointer_button_down_on()
-                            || handle_response.clicked()
-                        {
-                            response = handle_response;
-                        }
+                        let owner=doc.dragging_item.as_ref().filter(|drag|drag.page==index).map(|drag|drag.resize_handle);
+                        let use_handle=match owner {
+                            Some(owner)=>owner==Some(handle),
+                            None=>handle_response.drag_started_by(egui::PointerButton::Primary)
+                                || handle_response.dragged_by(egui::PointerButton::Primary)
+                                || handle_response.is_pointer_button_down_on() || handle_response.hovered() || handle_response.clicked(),
+                        };
+                        if use_handle {response=handle_response;response_handle=Some(handle);}
                     }
                 }
 
@@ -3711,7 +3721,9 @@ impl EditorApp {
                     if item_hit.is_some() && doc.edit.is_none() && response.hovered() {
                         ctx.set_cursor_icon(CursorIcon::Grab);
                     }
-                    let resize_handle = doc
+                    let resize_handle = if let Some(drag)=doc.dragging_item.as_ref().filter(|drag|drag.page==index) {
+                        drag.resize_handle
+                    } else {response_handle.or_else(||doc
                         .selected_item
                         .as_ref()
                         .filter(|item| doc.object_mode && item.page == page_no)
@@ -3723,7 +3735,7 @@ impl EditorApp {
                                     .iter()
                                     .position(|pos| pos.distance(at) <= 7.0 / scale)
                             })
-                        });
+                        }))};
                     if doc.object_mode
                         && resize_handle.is_none()
                         && (response.clicked() || response.secondary_clicked())
@@ -3738,7 +3750,7 @@ impl EditorApp {
                             self.text_tool.selection.clear();
                         }
                     }
-                    if response.drag_started() && resize_handle.is_none() && doc.object_mode
+                    if response.drag_started_by(egui::PointerButton::Primary) && resize_handle.is_none() && doc.object_mode
                         && let Some(objects)=&page.objects && let Some(item)=item_hit
                         && !self.qol.objects.iter().any(|picked|picked.page==item.page&&picked.index==item.index) {
                         doc.selected_item=self.qol.select(objects,Some(item),false);
@@ -3754,7 +3766,7 @@ impl EditorApp {
                             requests.push(Request::ObjectPreview {id,items,scale:preview_scale,max_side});
                         }
                     }
-                    if response.drag_started() && can_drag {
+                    if response.drag_started_by(egui::PointerButton::Primary) && can_drag {
                         let items = if resize_handle.is_some() {
                             doc.selected_item.as_ref().zip(page.objects.as_ref())
                                 .map_or_else(Vec::new,|(item,objects)|self.qol.items(objects,item))
@@ -3807,6 +3819,10 @@ impl EditorApp {
                             }
                             doc.dragging_item = Some(ItemDrag {
                                 page: index,
+                                page_rect:rect,
+                                page_bounds:Rect::from_min_size(Pos2::ZERO,vec2(page.info.width,page.info.height)),
+                                scale,
+                                transform:objects.transform,
                                 items,
                                 bounds,
                                 delta: Vec2::ZERO,
@@ -3823,36 +3839,8 @@ impl EditorApp {
                     if let Some(drag) = &mut doc.dragging_item
                         && drag.page == index
                     {
-                        if let Some(pointer) = ctx.input(|i| i.pointer.interact_pos()) {
-                            drag.delta = ((pointer - rect.min) / scale).to_pos2() - drag.anchor;
-                        }
-                        let mut preview_bounds = drag.resize_handle.map_or_else(
-                            || drag.bounds.translate(drag.delta),
-                            |handle| drag.font_resize.as_ref().map_or_else(||resized_rect(drag.bounds,handle,drag.delta),|font|font.drag(drag.bounds,handle,drag.delta)),
-                        );
-                        let mut guides = None;
-                        if self.snap_enabled && !ctx.input(|i| i.modifiers.alt)
-                            && page.objects.is_some()
-                        {
-                            let page_bounds = Rect::from_min_size(Pos2::ZERO,vec2(page.info.width,page.info.height));
-                            let targets = drag.snap_targets.iter().copied();
-                            let mut snapped = crate::snapping::align_text(preview_bounds,drag.resize_handle,page_bounds,targets,6.0/scale,&mut drag.snap_state,&drag.snap_baselines);
-                            if let (Some(font),Some(handle))=(&drag.font_resize,drag.resize_handle) {
-                                let axis=match (snapped.x,snapped.y) {
-                                    (Some(_),Some(_))=>Some(usize::from((snapped.bounds.height()-preview_bounds.height()).abs()<(snapped.bounds.width()-preview_bounds.width()).abs())),
-                                    (Some(_),None)=>Some(0),(None,Some(_))=>Some(1),_=>None,
-                                };
-                                if let Some(axis)=axis {snapped.bounds=font.bounds(drag.bounds,handle,snapped.bounds.size()[axis]/drag.bounds.size()[axis]);}
-                                let active=resize_handles(snapped.bounds)[handle];
-                                if snapped.x.is_some_and(|g|(active.x-g.position).abs()>0.1) {snapped.x=None;}
-                                if snapped.y.is_some_and(|g|(active.y-g.position).abs()>0.1) {snapped.y=None;}
-                            }
-                            preview_bounds = snapped.bounds;
-                            guides = Some(snapped);
-                        } else {
-                            drag.snap_state = Default::default();
-                        }
-                        drag.preview = Some(preview_bounds);
+                        drag.page_rect=rect;drag.scale=scale;
+                        let (preview_bounds,guides)=drag.update(ctx.input(|i|i.pointer.interact_pos()),self.snap_enabled && !ctx.input(|i|i.modifiers.alt));
                         self.drag_preview.place(drag.bounds,preview_bounds);
                         self.drag_preview.paint(&painter,rect,scale,index,doc.generation,page.texture.as_ref(),p.accent);
                         if let Some(guides) = &guides { crate::snapping::paint(&painter,guides,rect,scale,p.accent); }
@@ -3873,34 +3861,7 @@ impl EditorApp {
                             drag.resize_handle
                                 .map_or(CursorIcon::Grabbing, resize_cursor),
                         );
-                        if response.drag_stopped() {
-                            let drag = doc.dragging_item.take().unwrap();
-                            if let Some(objects) = &page.objects
-                                && let Some((dx, dy)) = raster_delta(&objects.transform, if drag.resize_handle.is_some() { drag.delta } else { preview_bounds.min-drag.bounds.min })
-                                && ((preview_bounds.min-drag.bounds.min).abs().max_elem() > 0.01
-                                    || (preview_bounds.max-drag.bounds.max).abs().max_elem() > 0.01)
-                            {
-                                self.busy += 1;
-                                let action = if drag.resize_handle.is_some() {
-                                    let bounds = preview_bounds;
-                                    raster_bounds(&objects.transform, bounds).map(|bounds| {
-                                        if drag.font_resize.is_some() {pdf_editor_core::ObjectAction::ResizeText { bounds }}
-                                        else {pdf_editor_core::ObjectAction::Resize { bounds }}
-                                    })
-                                } else {
-                                    Some(pdf_editor_core::ObjectAction::Move { dx, dy })
-                                };
-                                if let Some(action) = action {
-                                    self.drag_preview.commit();
-                                    requests.push(Request::EditItems(drag.items, action));
-                                } else {
-                                    self.busy = self.busy.saturating_sub(1);
-                                }
-                            } else {
-                                self.drag_preview.cancel();
-                            }
-                        }
-                    } else if response.dragged() && can_drag && doc.panning {
+                    } else if response.dragged_by(egui::PointerButton::Primary) && can_drag && doc.panning {
                         ui.scroll_with_delta_animation(
                             response.drag_delta(),
                             egui::style::ScrollAnimation::none(),
@@ -4600,6 +4561,7 @@ impl eframe::App for EditorApp {
         }
 
         self.poll(&ctx);
+        self.update_item_drag(&ctx);
         self.working_auto_save_tick(&ctx);
         self.autosave_tick(&ctx);
         self.close_guard(&ctx);

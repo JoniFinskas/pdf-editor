@@ -702,3 +702,145 @@ fn generated_text_width_drag_reflows_without_scaling_or_losing_focus() {
     assert!(app.doc.as_ref().unwrap().dirty());
     assert_eq!(std::fs::read(source).unwrap(),bytes);
 }
+
+#[test]
+fn generated_drag_release_over_another_handle_does_not_follow_later_clicks() {
+    let(mut app,ctx,source)=qol_worker();let original=std::fs::read(&source).unwrap();
+    app.snap_enabled=false;app.set_object_mode(true);workflow_frame(&mut app,&ctx,vec![]);
+    let start=workflow_line(&app,&ctx,0);workflow_click(&mut app,&ctx,start);
+    let doc=app.doc.as_ref().unwrap();let item=doc.selected_item.as_ref().unwrap();
+    let objects=doc.pages[0].objects.as_ref().unwrap();
+    let page=ctx.read_response(Id::new(("pdf-page",0usize))).unwrap().rect;
+    let end=to_screen(bounds_rect(&objects.transform,item.bounds),page,doc.scale()).right_bottom();
+    let generation=doc.generation;
+    workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start),gesture_button(start,true)]);
+    workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start+vec2(24.,18.))]);
+    assert!(app.doc.as_ref().unwrap().dragging_item.is_some());
+    workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(end),gesture_button(end,false)]);
+    assert!(app.doc.as_ref().unwrap().dragging_item.is_none(),"Releasing over a handle left the old drag attached");
+    workflow_settle(&mut app,&ctx);let moved=app.doc.as_ref().unwrap().generation;
+    assert_eq!(moved,generation+1);
+    for at in [start+vec2(180.,90.),pos2(960.,820.)] {
+        workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(at)]);workflow_click(&mut app,&ctx,at);
+        workflow_settle(&mut app,&ctx);assert!(app.doc.as_ref().unwrap().dragging_item.is_none());assert_eq!(app.doc.as_ref().unwrap().generation,moved);
+    }
+    app.undo();workflow_settle(&mut app,&ctx);assert!(!app.doc.as_ref().unwrap().dirty());
+    assert_eq!(std::fs::read(source).unwrap(),original);
+}
+
+#[test]
+fn generated_drag_focus_loss_or_pointer_capture_loss_cancels_without_changes() {
+    for event in [egui::Event::WindowFocused(false),egui::Event::PointerGone] {
+        let(mut app,ctx,source)=qol_worker();let original=std::fs::read(&source).unwrap();
+        app.snap_enabled=false;app.set_object_mode(true);workflow_frame(&mut app,&ctx,vec![]);
+        let start=workflow_line(&app,&ctx,0);let generation=app.doc.as_ref().unwrap().generation;
+        workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start),gesture_button(start,true)]);
+        workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start+vec2(50.,30.))]);
+        assert!(app.doc.as_ref().unwrap().dragging_item.is_some());
+        workflow_frame(&mut app,&ctx,vec![event]);
+        assert!(app.doc.as_ref().unwrap().dragging_item.is_none(),"An interrupted drag stayed attached to the pointer");
+        assert_eq!(app.busy,0);assert_eq!(app.doc.as_ref().unwrap().generation,generation);assert!(!app.doc.as_ref().unwrap().dirty());
+        let control=Some(start+vec2(60.,65.));
+        drag_controls_frame(&mut app,&ctx,vec![egui::Event::WindowFocused(true)],control,true);
+        let(out,_)=drag_controls_frame(&mut app,&ctx,vec![],control,true);
+        let at=out.shapes.iter().find_map(|s|match &s.shape {Shape::Text(t) if t.galley.text()=="Other control"=>Some(t.pos+t.galley.size()*0.5),_=>None}).unwrap();
+        drag_controls_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(at),gesture_button(at,true)],control,true);
+        let(_,clicked)=drag_controls_frame(&mut app,&ctx,vec![gesture_button(at,false)],control,true);
+        assert!(clicked,"Interrupted capture stole the next control click");assert!(app.doc.as_ref().unwrap().dragging_item.is_none());assert_eq!(app.doc.as_ref().unwrap().generation,generation);
+        assert_eq!(std::fs::read(source).unwrap(),original);
+    }
+}
+
+#[test]
+fn generated_drag_with_secondary_button_never_moves_pdf_objects() {
+    let(mut app,ctx,_)=qol_worker();app.set_object_mode(true);workflow_frame(&mut app,&ctx,vec![]);
+    let start=workflow_line(&app,&ctx,0);let generation=app.doc.as_ref().unwrap().generation;
+    let button=|pos,pressed|egui::Event::PointerButton {pos,pressed,button:egui::PointerButton::Secondary,modifiers:Default::default()};
+    workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start),button(start,true)]);
+    workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start+vec2(45.,25.))]);
+    assert!(app.doc.as_ref().unwrap().dragging_item.is_none(),"A context-menu gesture started an object drag");
+    workflow_frame(&mut app,&ctx,vec![button(start+vec2(45.,25.),false)]);workflow_settle(&mut app,&ctx);
+    assert_eq!(app.doc.as_ref().unwrap().generation,generation);assert!(!app.doc.as_ref().unwrap().dirty());
+}
+
+fn drag_controls_frame(app:&mut EditorApp,ctx:&Context,events:Vec<egui::Event>,control:Option<Pos2>,canvas:bool)->(egui::FullOutput,bool) {
+    app.poll(ctx);let mut clicked=false;
+    let mut out=ctx.run_ui(egui::RawInput {screen_rect:Some(Rect::from_min_size(Pos2::ZERO,vec2(1000.,900.))),events,..Default::default()},|ui| {
+        app.update_item_drag(ctx);let p=theme::palette(ui);
+        egui::CentralPanel::default().show(ui,|ui|if canvas {app.canvas(ui,&p);});
+        if let Some(pos)=control {egui::Window::new("Generated control").fixed_pos(pos).collapsible(false).resizable(false).show(ctx,|ui|clicked=ui.button("Other control").clicked());}
+    });out.textures_delta.clear();(out,clicked)
+}
+
+#[test]
+fn generated_drag_drop_over_a_control_finishes_once_and_the_control_still_clicks() {
+    let(mut app,ctx,source)=qol_worker();let original=std::fs::read(&source).unwrap();app.snap_enabled=false;app.set_object_mode(true);
+    workflow_frame(&mut app,&ctx,vec![]);let start=workflow_line(&app,&ctx,0);let control=Some(start+vec2(50.,35.));
+    drag_controls_frame(&mut app,&ctx,vec![],control,true);let(out,_)=drag_controls_frame(&mut app,&ctx,vec![],control,true);
+    let end=out.shapes.iter().find_map(|s|match &s.shape {Shape::Text(t) if t.galley.text()=="Other control"=>Some(t.pos+t.galley.size()*0.5),_=>None}).unwrap();
+    let generation=app.doc.as_ref().unwrap().generation;
+    drag_controls_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start),gesture_button(start,true)],control,true);
+    drag_controls_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start+vec2(25.,20.))],control,true);
+    assert!(app.doc.as_ref().unwrap().dragging_item.is_some());
+    let(_,clicked)=drag_controls_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(end),gesture_button(end,false)],control,true);
+    assert!(!clicked);assert!(app.doc.as_ref().unwrap().dragging_item.is_none());assert_eq!(app.busy,1);
+    workflow_settle(&mut app,&ctx);assert_eq!(app.doc.as_ref().unwrap().generation,generation+1);
+    drag_controls_frame(&mut app,&ctx,vec![],control,true);
+    drag_controls_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(end),gesture_button(end,true)],control,true);
+    let(_,clicked)=drag_controls_frame(&mut app,&ctx,vec![gesture_button(end,false)],control,true);
+    assert!(clicked,"The old drag stole a later control click");assert!(app.doc.as_ref().unwrap().dragging_item.is_none());assert_eq!(app.doc.as_ref().unwrap().generation,generation+1);
+    app.undo();workflow_settle(&mut app,&ctx);assert!(!app.doc.as_ref().unwrap().dirty());assert_eq!(std::fs::read(source).unwrap(),original);
+}
+
+#[test]
+fn generated_drag_rapid_release_and_next_press_use_the_release_position_once() {
+    let(mut app,ctx,_)=qol_worker();app.snap_enabled=false;app.set_object_mode(true);workflow_frame(&mut app,&ctx,vec![]);
+    let start=workflow_line(&app,&ctx,0);let doc=app.doc.as_ref().unwrap();let before=doc.pages[0].objects.as_ref().unwrap().lines[0].objects[0].clone();
+    let transform=doc.pages[0].objects.as_ref().unwrap().transform;let scale=doc.scale();let generation=doc.generation;
+    workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start),gesture_button(start,true)]);
+    workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start+vec2(30.,15.))]);
+    let end=start+vec2(55.,30.);let next=start+vec2(240.,130.);
+    workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(end),gesture_button(end,false),egui::Event::PointerMoved(next),gesture_button(next,true)]);
+    assert!(app.doc.as_ref().unwrap().dragging_item.is_none());workflow_frame(&mut app,&ctx,vec![gesture_button(next,false)]);workflow_settle(&mut app,&ctx);
+    let doc=app.doc.as_ref().unwrap();assert_eq!(doc.generation,generation+1);
+    let moved=doc.pages[0].objects.as_ref().unwrap().lines.iter().flat_map(|line|&line.objects).find(|o|o.index==before.index).unwrap();
+    let(dx,dy)=raster_delta(&transform,(end-start)/scale).unwrap();assert!((moved.matrix[4]-before.matrix[4]-dx).abs()<0.05);assert!((moved.matrix[5]-before.matrix[5]-dy).abs()<0.05);
+}
+
+#[test]
+fn generated_drag_hidden_canvas_tab_switch_and_undo_cancel_pending_geometry() {
+    for mode in 0..3 {
+        let(mut app,ctx,source)=qol_worker();let original=std::fs::read(&source).unwrap();app.snap_enabled=false;app.set_object_mode(true);workflow_frame(&mut app,&ctx,vec![]);
+        let start=workflow_line(&app,&ctx,0);let generation=app.doc.as_ref().unwrap().generation;
+        workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start),gesture_button(start,true)]);
+        workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start+vec2(65.,40.))]);assert!(app.doc.as_ref().unwrap().dragging_item.is_some());
+        if mode==0 {
+            app.settings_open=true;drag_controls_frame(&mut app,&ctx,vec![gesture_button(start+vec2(65.,40.),false)],None,false);
+            app.settings_open=false;
+        } else if mode==1 {
+            let (mut other,_,_)=mock_app();opened(&mut other,&ctx);
+            let mut tabs=TabbedApp {tabs:vec![(0,app),(1,other)],active:0,next_id:2,sessions:Default::default(),native_guard:None,clipboard:Default::default(),closing:None,allow_exit:false,instance:None,merge_tab:None,dragging_tab:None};
+            let mut out=ctx.run_ui(egui::RawInput {events:vec![workflow_key(Key::Tab,egui::Modifiers::COMMAND)],..Default::default()},|_|tabs.sessions_shortcuts(&ctx));out.textures_delta.clear();
+            assert_eq!(tabs.active,1);app=tabs.tabs.remove(0).1;
+        } else {app.undo();}
+        assert!(app.doc.as_ref().unwrap().dragging_item.is_none());assert!(app.drag_preview.placement().is_none());
+        workflow_frame(&mut app,&ctx,vec![gesture_button(start+vec2(65.,40.),false)]);workflow_settle(&mut app,&ctx);
+        assert_eq!(app.doc.as_ref().unwrap().generation,generation);assert!(!app.doc.as_ref().unwrap().dirty());assert_eq!(std::fs::read(source).unwrap(),original);
+    }
+}
+
+#[test]
+fn generated_drag_fast_resize_keeps_the_captured_handle_and_commits_on_release() {
+    let(mut app,ctx,_)=qol_worker();app.snap_enabled=false;app.set_object_mode(true);workflow_frame(&mut app,&ctx,vec![]);
+    let at=workflow_line(&app,&ctx,0);workflow_click(&mut app,&ctx,at);
+    let doc=app.doc.as_ref().unwrap();let item=doc.selected_item.as_ref().unwrap();let objects=doc.pages[0].objects.as_ref().unwrap();
+    let page=ctx.read_response(Id::new(("pdf-page",0usize))).unwrap().rect;
+    let start=resize_handles(to_screen(bounds_rect(&objects.transform,item.bounds),page,doc.scale()))[4];let generation=doc.generation;
+    workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(start)]);
+    workflow_frame(&mut app,&ctx,vec![gesture_button(start,true)]);
+    let end=start+vec2(42.,18.);workflow_frame(&mut app,&ctx,vec![egui::Event::PointerMoved(end)]);
+    assert_eq!(app.doc.as_ref().unwrap().dragging_item.as_ref().unwrap().resize_handle,Some(4));
+    workflow_frame(&mut app,&ctx,vec![gesture_button(end,false)]);assert!(app.doc.as_ref().unwrap().dragging_item.is_none());
+    workflow_settle(&mut app,&ctx);assert_eq!(app.doc.as_ref().unwrap().generation,generation+1);
+    app.undo();workflow_settle(&mut app,&ctx);assert!(!app.doc.as_ref().unwrap().dirty());
+}

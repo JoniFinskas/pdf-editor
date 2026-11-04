@@ -260,6 +260,7 @@ impl TabbedApp {
         match tab_command(ctx) {
             Some(command @ (TabCommand::Previous | TabCommand::Next)) => {
                 let backwards = command == TabCommand::Previous;
+                self.tabs[self.active].1.cancel_item_drag();
                 self.tabs[self.active].1.commit_edit();
                 self.active = if backwards {
                     (self.active + self.tabs.len() - 1) % self.tabs.len()
@@ -269,6 +270,7 @@ impl TabbedApp {
                 self.tabs[self.active].1.title.clear();
             }
             Some(TabCommand::New) => {
+                self.tabs[self.active].1.cancel_item_drag();
                 self.tabs[self.active].1.commit_edit();
                 self.add(ctx, None);
             }
@@ -288,6 +290,7 @@ impl TabbedApp {
                         "Close a tab before reopening more documents (32-tab limit).",
                     );
                 } else if let Some(entry) = self.sessions.closed.pop() {
+                    self.tabs[self.active].1.cancel_item_drag();
                     self.tabs[self.active].1.commit_edit();
                     self.sessions_open(ctx, entry);
                 }

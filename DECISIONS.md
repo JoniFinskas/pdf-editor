@@ -1,5 +1,19 @@
 # Engine decisions
 
+## Object drag ownership and release
+
+Keep one primary-button gesture per editor. Finish it from the ordered release
+event before controls run, using the last painted page transform and release
+position. Reuse the same geometry and snapping calculation for preview and commit.
+A following click in the same input frame cannot change the release position.
+Resize interactions retain their captured handle rather than following hover.
+
+Cancel pending geometry on focus or capture loss, a new press without a release,
+Escape, tool/document actions, hidden canvas or tab changes. Undo first cancels
+an uncommitted drag. Secondary-button gestures remain context-menu interactions.
+Pointer motion reuses preview textures; only a completed gesture queues one
+document edit.
+
 ## Form drafts and current handles
 
 Refresh field handles after acknowledged document changes while the Forms panel
