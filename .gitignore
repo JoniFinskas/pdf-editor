@@ -31,6 +31,8 @@ desktop.ini
 /scripts/corpus/__pycache__/
 
 # Local contributor configuration
+/dev-notes/
+/BACKLOG.md
 /AGENTS.md
 /CLAUDE.md
 /SPEC.md

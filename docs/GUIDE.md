@@ -293,7 +293,6 @@ Generated PDFs and their generator are committed. Tests also use a synthetic PDF
 exported by LibreOffice; exported inputs are never modified. Inter is obtained only
 from its official rsms release, with its OFL license. Normal tests need no Python
 or fixture-generation downloads. See [DECISIONS.md](../DECISIONS.md) and [the threat model](../repo-starter-threat-model.md).
-Open work and known limitations are tracked in [BACKLOG.md](../BACKLOG.md).
 
 Set `PDF_EDITOR_GENERATED_ONLY=1` before `cargo test --workspace --locked --offline`
 to restrict fixture traversal to generated PDFs. Stress regressions exercise
