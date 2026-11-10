@@ -345,6 +345,23 @@ impl TabbedApp {
                             {
                                 new = true;
                             }
+                            // Reveal a selection change once so manual scrolling stays independent.
+                            if self.dragging_tab.is_none()
+                                && let Some((active_id, _)) = self.tabs.get(self.active)
+                                && ctx.data_mut(|data| {
+                                    data.get_temp_mut_or_default::<Option<u64>>(
+                                        ui.id().with("active-document-tab"),
+                                    )
+                                    .replace(*active_id)
+                                        != Some(*active_id)
+                                })
+                            {
+                                let rect = Rect::from_min_size(
+                                    strip.min + vec2(positions[self.active], 0.),
+                                    vec2(widths[self.active], TAB_HEIGHT),
+                                );
+                                ui.scroll_to_rect(rect, None);
+                            }
                             if self.dragging_tab.is_some()
                                 && release.is_none()
                                 && drop_valid

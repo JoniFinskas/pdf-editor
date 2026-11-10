@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 
 ## [Unreleased]
 
+- Scroll the document tab strip to reveal a newly selected tab when it is offscreen.
+
 - Make tab reordering clearer with a full-width landing gap, sliding neighbors and stable snapping; keep the dragged tab directly under the pointer.
 
 - End object moves and resizing reliably when releasing over handles or controls; cancel interrupted drags and keep later clicks independent.

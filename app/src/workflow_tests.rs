@@ -12,6 +12,7 @@ fn tab_drag_fixture() -> (TabbedApp, Context) {
 
 fn tab_drag_frame(app:&mut TabbedApp,ctx:&Context,events:Vec<egui::Event>)->egui::FullOutput {
     let mut out=ctx.run_ui(egui::RawInput {screen_rect:Some(Rect::from_min_size(Pos2::ZERO,vec2(800.,600.))),events,..Default::default()},|ui| {
+        app.sessions_shortcuts(ui.ctx());
         let p=theme::palette(ui);assert_eq!(app.tab_bar(ui,&p),(None,None,false));
         egui::CentralPanel::default().show(ui,|_|{});
     });
@@ -22,6 +23,55 @@ fn tab_label(out:&egui::FullOutput,name:&str)->Rect {
     out.shapes.iter().find_map(|s|match &s.shape {
         Shape::Text(t) if t.galley.text()==name=>Some(Rect::from_min_size(t.pos,t.galley.size())),_=>None
     }).unwrap()
+}
+
+#[test]
+fn document_tab_shortcuts_reveal_the_selected_tab_and_allow_manual_scrolling() {
+    let (mut app, ctx) = tab_drag_fixture();
+    for id in 3..12 {
+        let (mut tab, _, _) = mock_app();
+        opened(&mut tab, &ctx);
+        tab.doc.as_mut().unwrap().name = format!("Generated document {id}.pdf");
+        app.tabs.push((id, tab));
+    }
+    app.active = 0;
+    let visible = |out: &egui::FullOutput, name: &str| {
+        out.shapes.iter().any(|shape| match &shape.shape {
+            Shape::Text(text) if text.galley.text() == name => shape.clip_rect.contains_rect(
+                Rect::from_min_size(text.pos, text.galley.size()),
+            ),
+            _ => false,
+        })
+    };
+    let last = "Generated document 11.pdf";
+    let next = egui::Modifiers::COMMAND;
+    let previous = next | egui::Modifiers::SHIFT;
+    let out = tab_drag_frame(&mut app, &ctx, vec![]);
+    assert!(!visible(&out, last));
+
+    for (shortcut, active, name) in [(previous, 11, last), (next, 0, "A.pdf"), (previous, 11, last)] {
+        tab_drag_frame(&mut app, &ctx, vec![workflow_key(Key::Tab, shortcut)]);
+        for _ in 0..24 {
+            tab_drag_frame(&mut app, &ctx, vec![]);
+        }
+        let out = tab_drag_frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.active, active);
+        assert!(visible(&out, name), "The selected tab {name} is still clipped");
+    }
+
+    tab_drag_frame(&mut app, &ctx, vec![
+        egui::Event::PointerMoved(pos2(400., 20.)),
+        egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(3000., 0.),
+            phase: egui::TouchPhase::Move,
+            modifiers: Default::default(),
+        },
+    ]);
+    for _ in 0..30 { tab_drag_frame(&mut app, &ctx, vec![]); }
+    let out = tab_drag_frame(&mut app, &ctx, vec![]);
+    assert_eq!(app.active, 11);
+    assert!(!visible(&out, last), "Manual scrolling should be able to hide the active tab");
 }
 
 #[test]
