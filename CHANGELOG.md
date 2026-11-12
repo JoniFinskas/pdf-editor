@@ -5,6 +5,7 @@ All notable changes are listed here. Versions follow [VERSIONING.md](VERSIONING.
 ## [Unreleased]
 
 - Open Compare PDFs inside the current document tab with a Back to PDF action.
+- Handle deeper balanced graphics state nesting when inspecting and editing page content.
 
 - Scroll the document tab strip to reveal a newly selected tab when it is offscreen.
 

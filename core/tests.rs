@@ -8,6 +8,26 @@ use std::sync::Mutex;
 #[path = "render_tile_tests.rs"]
 mod render_tile_tests;
 pub(super) static PDFIUM: Mutex<()> = Mutex::new(());
+
+#[test]
+fn text_runs_keep_their_state_through_deep_balanced_graphics_saves() {
+    let bytes = std::fs::read(fixture("unicode-cid.pdf")).unwrap();
+    let pdf = parse(&bytes).unwrap();
+    let page = pdf.get_pages()[&1];
+    let original = Content::decode(&pdf.get_page_content_with_limit(page, MAX_STREAM).unwrap()).unwrap();
+    let mut operations = vec![Operation::new("q", vec![]); 160];
+    operations.extend(original.operations.iter().cloned());
+    operations.extend(vec![Operation::new("Q", vec![]); 160]);
+
+    let original_runs = content::runs(&pdf, page, &original).unwrap();
+    let nested_runs = content::runs(&pdf, page, &Content { operations }).unwrap();
+    assert!(!original_runs.is_empty());
+    assert_eq!(original_runs.len(), nested_runs.len());
+    for (original, nested) in original_runs.iter().zip(&nested_runs) {
+        assert_eq!(original.key, nested.key);
+        assert_eq!(original.spacing, nested.spacing);
+    }
+}
 #[path = "sanitize_workflow_tests.rs"]
 mod sanitize_workflow_tests;
 #[path = "hyperlink_tests.rs"]
