@@ -127,8 +127,9 @@ creates another copy. Encryption settings are retained in memory for repeated sa
 
 ## Daily and extra tools
 
-**Compare PDFs** opens Original versus Current edits, including applied unsaved
-changes. Opening it applies pending text first; rejected edits must be corrected
+**Compare PDFs** opens inside the current tab. **Back to PDF** returns to the
+document view. Original versus Current edits includes applied unsaved changes.
+Opening it applies pending text first; rejected edits must be corrected
 or discarded. Saving does not reset the opening original. Copies saved by the
 app remember their original in local settings for later comparisons, except
 protected or encrypted documents. Older `_edited.pdf` copies can offer a sibling

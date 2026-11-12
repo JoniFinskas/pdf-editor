@@ -8,7 +8,7 @@ fn comparison_settle(app: &mut EditorApp, ctx: &Context) -> (usize, usize) {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200., 900.))),
                 ..Default::default()
             },
-            |ui| app.compare.show(ui.ctx(), &theme::palette(ui)),
+            |ui| app.compare.show(ui, &theme::palette(ui)),
         );
         output.textures_delta.clear();
         assert!(

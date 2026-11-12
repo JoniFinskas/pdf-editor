@@ -2,7 +2,7 @@
 use crate::{
     icons::Icon,
     theme::Palette,
-    widgets::{Btn, Look, ToolWindow},
+    widgets::{Btn, Look},
 };
 use eframe::egui::{self, Color32, TextureHandle};
 use pdf_editor_core::{ChangeKind, ComparePage, Engine, PagePair};
@@ -429,7 +429,8 @@ impl Compare {
         self.serial = self.serial.wrapping_add(1);
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette) {
+    pub fn show(&mut self, ui: &mut egui::Ui, p: &Palette) {
+        let ctx = &ui.ctx().clone();
         if let Some(path) = self.picker.poll(ctx, self.open, true) {
             if self.current_mode && self.picker_side == 0 {
                 self.origin = Some(path.clone());
@@ -518,13 +519,22 @@ impl Compare {
         if failed_session {
             self.session = None;
         }
-        let mut open = self.open;
-        let mut window = ToolWindow::new("Compare PDFs", Icon::Layers)
-            .width((ctx.content_rect().width() - 48.0).clamp(280.0, 1300.0));
-        if self.current_mode || !self.summaries.is_empty() {
-            window = window.height(ctx.content_rect().height() - 80.0);
+        let mut back = false;
+        ui.horizontal(|ui| {
+            let label = if self.current_available { "Back to PDF" } else { "Back" };
+            back = Btn::new(label).id("compare-back").show(ui, p).clicked();
+            ui.heading("Compare PDFs");
+        });
+        if back || (!ctx.text_edit_focused() && ctx.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+        })) {
+            self.open = false;
+            self.close_session();
+            ctx.request_repaint();
+            return;
         }
-        window.centered().show(ctx, p, &mut open, |ui| {
+        let bottom = ui.max_rect().bottom();
+        egui::ScrollArea::vertical().id_salt("compare-workspace").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 if self.current_available
                     && Btn::new("Current edits")
@@ -800,7 +810,7 @@ impl Compare {
                     ui.spinner();
                 }
             });
-            let height = (ctx.content_rect().height() - 235.0).clamp(120.0, 900.0);
+            let height = (bottom - ui.cursor().top() - 8.0).clamp(120.0, 900.0);
             let wide = ui.available_width() >= 650.0;
             if wide {
                 ui.horizontal_top(|ui| {
@@ -815,11 +825,6 @@ impl Compare {
                 self.previews(ui, p, height);
             }
         });
-        self.open = open;
-        if !open {
-            self.close_session();
-            return;
-        }
         let key = (self.selected, self.overlay);
         if !self.waiting
             && !self.summaries.is_empty()
@@ -1142,7 +1147,7 @@ mod tests {
             if pass>0 {let id=compare.prepare_current();compare.receive_current(&ctx,id,[current.clone(),current.clone()]);}
             let deadline=std::time::Instant::now()+std::time::Duration::from_secs(10);
             while compare.test_totals().is_none() {
-                let mut out=ctx.run_ui(egui::RawInput {screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(1200.,900.))),..Default::default()},|ui|compare.show(ui.ctx(),&crate::theme::palette(ui)));out.textures_delta.clear();
+                let mut out=ctx.run_ui(egui::RawInput {screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(1200.,900.))),..Default::default()},|ui|compare.show(ui,&crate::theme::palette(ui)));out.textures_delta.clear();
                 assert!(compare.error.is_none(),"Unlock failed after refresh");assert!(std::time::Instant::now()<deadline);std::thread::yield_now();
             }
             assert_eq!(compare.origin.as_ref(),Some(&original));
@@ -1185,7 +1190,7 @@ mod tests {
                             screen_rect: Some(bounds),
                             ..Default::default()
                         },
-                        |ui| compare.show(ui.ctx(), &crate::theme::palette(ui)),
+                        |ui| compare.show(ui, &crate::theme::palette(ui)),
                     );
                     output.textures_delta.clear();
                     for forbidden in [
@@ -1198,7 +1203,7 @@ mod tests {
                     }
                 }
                 for id in [
-                    "close-tool-Compare PDFs",
+                    "compare-back",
                     "compare-current",
                     "compare-files",
                     "compare-original",
@@ -1262,7 +1267,7 @@ mod tests {
                         )),
                         ..Default::default()
                     },
-                    |ui| compare.show(&ctx, &crate::theme::palette(ui)),
+                    |ui| compare.show(ui, &crate::theme::palette(ui)),
                 );
                 output.textures_delta.clear();
                 assert!(compare.error.is_none(), "Generated comparison failed");
@@ -1362,7 +1367,7 @@ mod tests {
                     events,
                     ..Default::default()
                 },
-                |ui| compare.show(&ctx, &crate::theme::palette(ui)),
+                |ui| compare.show(ui, &crate::theme::palette(ui)),
             );
             output.textures_delta.clear();
         };
@@ -1532,7 +1537,7 @@ mod tests {
                     )),
                     ..Default::default()
                 },
-                |ui| compare.show(&ctx, &crate::theme::palette(ui)),
+                |ui| compare.show(ui, &crate::theme::palette(ui)),
             );
             output.textures_delta.clear();
         };
@@ -1561,16 +1566,17 @@ mod tests {
             open: true,
             ..Default::default()
         };
-        let render = |compare: &mut Compare| {
+        let render = |compare: &mut Compare, events| {
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
                         egui::vec2(1180., 820.),
                     )),
+                    events,
                     ..Default::default()
                 },
-                |ui| compare.show(&ctx, &crate::theme::palette(ui)),
+                |ui| compare.show(ui, &crate::theme::palette(ui)),
             );
             output.textures_delta.clear();
         };
@@ -1590,8 +1596,21 @@ mod tests {
         compare.summaries.push(Some((1, 12)));
         compare.alignment_progress = Some((16, 32));
         compare.passwords = ["generated-secret".into(), String::new()];
-        compare.open = false;
-        render(&mut compare);
+        render(&mut compare, vec![]);
+        let pos = ctx.read_response(crate::widgets::tool_id("compare-back"))
+            .unwrap().interact_rect.center();
+        for pressed in [true, false] {
+            render(&mut compare, vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    pressed,
+                    button: egui::PointerButton::Primary,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        assert!(!compare.open);
         assert!(cancelled.load(Ordering::Relaxed));
         assert!(events.send(Event::Summary(0, 99, 99)).is_err());
         assert!(compare.summaries.is_empty());
@@ -1601,7 +1620,7 @@ mod tests {
         release.send(()).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while compare.picker.busy() {
-            render(&mut compare);
+            render(&mut compare, vec![]);
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
@@ -1611,7 +1630,7 @@ mod tests {
             .picker
             .launch(|| Some(PathBuf::from("fresh-generated.pdf")));
         while compare.picker.busy() {
-            render(&mut compare);
+            render(&mut compare, vec![]);
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
@@ -1620,7 +1639,7 @@ mod tests {
     }
 
     #[test]
-    fn comparison_window_draws_without_loading_a_document() {
+    fn comparison_page_draws_without_loading_a_document() {
         let ctx = egui::Context::default();
         crate::theme::install(&ctx);
         let mut compare = Compare {
@@ -1642,7 +1661,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    compare.show(&ctx, &crate::theme::palette(ui));
+                    compare.show(ui, &crate::theme::palette(ui));
                 },
             );
             output.textures_delta.clear();
