@@ -2559,7 +2559,7 @@ impl EditorApp {
     // ----- Input -----
 
     fn shortcuts(&mut self, ctx: &Context) {
-        if self.confirm.is_some() || self.settings_open {
+        if self.confirm.is_some() || self.settings_open || self.compare.open {
             return;
         }
         for command in crate::shortcuts::consume(ctx, ctx.text_edit_focused()) {
@@ -4568,6 +4568,21 @@ impl eframe::App for EditorApp {
         self.dropped_files(&ctx);
         self.shortcuts(&ctx);
 
+        if self.compare.open {
+            let page = egui::CentralPanel::no_frame()
+                .frame(Frame::new().fill(p.canvas).inner_margin(16))
+                .show(ui, |ui| self.compare.show(ui, &p));
+            if self.compare.take_refresh() {
+                self.refresh_comparison();
+            }
+            self.banners(&ctx, page.response.rect.top(), &p);
+            self.confirm_modal(&ctx, &p);
+            self.restore_modal(&ctx, &p);
+            self.drop_overlay(&ctx, &p);
+            self.update_title(&ctx);
+            return;
+        }
+
         let toolbar = egui::Panel::top("toolbar")
             .frame(
                 Frame::new()
@@ -4708,8 +4723,6 @@ impl eframe::App for EditorApp {
         if let Some(request) = self.stamps.show(&ctx, &p, self.busy == 0) {
             self.document_action(request);
         }
-        self.compare.show(&ctx, &p);
-        if self.compare.take_refresh() {self.refresh_comparison();}
         if let Some(request) = self.sanitize.show_for(&ctx, &p, self.busy == 0,
             self.doc.as_ref().is_some_and(|doc|doc.protected)) {
             self.document_action(request);

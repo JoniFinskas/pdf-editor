@@ -6,6 +6,10 @@ use lopdf::{
     content::{Content, Operation},
 };
 
+// Graphics saves are iterative and have fixed-size entries. Keep their limit
+// separate from the recursion limit used for nested form objects.
+pub(crate) const MAX_GRAPHICS_DEPTH: usize = 512;
+
 /// Text decoding for a font. A ToUnicode CMap takes precedence over /Encoding,
 /// matching PDFium's text extraction; lopdf otherwise ignores ToUnicode when
 /// /Encoding is present (common for Type3 fonts with custom glyph names).
@@ -43,7 +47,7 @@ pub(crate) fn runs(
 ) -> Result<Vec<Run>> {
     let fonts = doc.get_page_fonts(page)?;
     let mut encodings = std::collections::HashMap::new();
-    let mut key = Vec::new();
+    let mut key: &[u8] = &[];
     let mut size = 0.0;
     let mut spacing = [0.0, 0.0, 100.0, 0.0];
     let mut stack = vec![];
@@ -51,10 +55,10 @@ pub(crate) fn runs(
     for (index, op) in content.operations.iter().enumerate() {
         match op.operator.as_str() {
             "q" => {
-                if stack.len() > 128 {
+                if stack.len() >= MAX_GRAPHICS_DEPTH {
                     return Err(err("Excessive graphics nesting"));
                 }
-                stack.push((key.clone(), size, spacing));
+                stack.push((key, size, spacing));
             }
             "Q" => {
                 if let Some(state) = stack.pop() {
@@ -79,8 +83,7 @@ pub(crate) fn runs(
                     .operands
                     .first()
                     .ok_or_else(|| err("Invalid Tf"))?
-                    .as_name()?
-                    .to_vec();
+                    .as_name()?;
                 size = op
                     .operands
                     .get(1)
@@ -88,12 +91,14 @@ pub(crate) fn runs(
                     .as_float()?;
             }
             "Tj" | "TJ" | "'" | "\"" => {
-                let font = fonts.get(&key).ok_or_else(|| err("Missing text font"))?;
+                let font = fonts.get(key).ok_or_else(|| err("Missing text font"))?;
                 // Decode each font map once per page traversal, not once per run.
-                if !encodings.contains_key(&key) {
-                    encodings.insert(key.clone(), decoding(doc, font)?);
-                }
-                let encoding = &encodings[&key];
+                let encoding = match encodings.entry(key) {
+                    std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(decoding(doc, font)?)
+                    }
+                };
                 let items = if op.operator == "TJ" {
                     op.operands
                         .first()
@@ -121,7 +126,7 @@ pub(crate) fn runs(
                 if glyphs {
                     result.push(Run {
                         op: index,
-                        key: key.clone(),
+                        key: key.to_vec(),
                         size,
                         text,
                         font: (*font).clone(),
@@ -382,7 +387,7 @@ pub(crate) fn transform_text(engine: &Engine, state: &Document, page_index: u16,
             output.push(Operation::new("cm",inverse(local)?.into_iter().map(Object::Real).collect()));
         } else {
             match op.operator.as_str() {
-                "q"=>{if stack.len()>128{return Err(err("Excessive graphics nesting"));}stack.push((ctm,clipped));},
+                "q"=>{if stack.len()>=MAX_GRAPHICS_DEPTH{return Err(err("Excessive graphics nesting"));}stack.push((ctm,clipped));},
                 "Q"=>(ctm,clipped)=stack.pop().ok_or_else(||err("Unbalanced graphics state"))?,
                 "W"|"W*"=>clipped=true,
                 "cm"=>{

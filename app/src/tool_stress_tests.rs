@@ -24,10 +24,6 @@ fn show(app: &mut EditorApp, ctx: &Context, p: &Palette, tool: Tool, idle: bool)
         Tool::Word => app.word.show(ctx, p, idle),
         Tool::Compress => app.compression.show(ctx, p, idle),
         Tool::Sanitize => app.sanitize.show(ctx, p, idle),
-        Tool::Compare => {
-            app.compare.show(ctx, p);
-            None
-        }
         _ => unreachable!("Only tool windows belong in this matrix"),
     };
     assert!(
@@ -62,7 +58,6 @@ fn every_tool_window_keeps_close_reachable_when_idle_or_busy() {
                     (Tool::Word, "Export to Word"),
                     (Tool::Compress, "Compress images"),
                     (Tool::Sanitize, "Sanitize document"),
-                    (Tool::Compare, "Compare PDFs"),
                 ] {
                     let ctx = Context::default();
                     theme::install(&ctx);

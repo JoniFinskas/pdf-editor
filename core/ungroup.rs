@@ -152,7 +152,7 @@ impl Expander<'_> {
                 "ET" => in_text = false,
                 "q" => {
                     graphics_depth += 1;
-                    if graphics_depth > 128 {
+                    if graphics_depth > crate::content::MAX_GRAPHICS_DEPTH {
                         return Err(err("Excessive graphics nesting"));
                     }
                 }
